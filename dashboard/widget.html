@@ -3,49 +3,86 @@
 <head>
 <meta charset="utf-8">
 <title>book-to-skill · разбор источника</title>
+<script>
+  /* Тема: если кадр инжектит переменные приложения -- они победят (см. CSS).
+     Если нет (панель предпросмотра) -- работаем от системной схемы, а кнопка
+     ☀/🌙 в шапке переключает вручную. Ставим класс до первой отрисовки. */
+  (function () {
+    var saved = null;
+    try { saved = localStorage.getItem('b2s-theme'); } catch (e) {}
+    var dark = saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+    document.documentElement.className = dark ? 'dark' : 'light';
+  })();
+</script>
 <style>
   * { box-sizing: border-box; }
-  body { margin: 0; font-size: 13px; color: var(--foreground); }
+
+  /* Запасная палитра: используется ТОЛЬКО если приложение не дало своих переменных */
+  html.light { --b2s-bg: #ffffff; --b2s-fg: #14161a; --b2s-muted: #5b6470;
+               --b2s-line: #d8dce2; --b2s-accent: #2f6feb; --b2s-warn: #b8760f; }
+  html.dark  { --b2s-bg: #17181c; --b2s-fg: #eceef1; --b2s-muted: #9aa1ab;
+               --b2s-line: #2d3036; --b2s-accent: #6ea8fe; --b2s-warn: #e0a63c; }
+
+  html { color-scheme: light dark; }
+  body {
+    margin: 0; padding: 14px; font-size: 13px;
+    /* Переменные приложения, когда есть; иначе -- наша палитра */
+    background: var(--card, var(--b2s-bg));
+    color: var(--foreground, var(--b2s-fg));
+    border-radius: 10px;
+  }
   .wrap { display: block; text-align: left; }
+  .head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
   h1 { font-size: 15px; margin: 0 0 2px; font-weight: 600; }
   h2 { font-size: 12px; margin: 14px 0 6px; font-weight: 600; text-transform: uppercase;
-       letter-spacing: .04em; color: var(--muted-foreground); }
-  .url { font-family: ui-monospace, Consolas, monospace; font-size: 11px; color: var(--muted-foreground);
-         word-break: break-all; margin-bottom: 10px; }
+       letter-spacing: .04em; color: var(--muted-foreground, var(--b2s-muted)); }
+  .url { font-family: ui-monospace, Consolas, monospace; font-size: 11px;
+         color: var(--muted-foreground, var(--b2s-muted)); word-break: break-all; margin-bottom: 10px; }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
-  .chip { border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; font-size: 11px; }
+  .chip { border: 1px solid var(--border, var(--b2s-line)); border-radius: 6px; padding: 3px 8px; font-size: 11px; }
   .chip b { font-weight: 600; }
-  .ok { border-color: var(--accent); }
-  .warn { border-color: #d08a2a; }
+  .ok { border-color: var(--accent, var(--b2s-accent)); }
+  .warn { border-color: var(--b2s-warn); }
   .bad { border-color: #c0392b; }
   table { border-collapse: collapse; width: 100%; font-size: 11.5px; }
   th, td { text-align: left; padding: 4px 8px 4px 0; vertical-align: top;
-           border-bottom: 1px solid var(--border); }
-  th { color: var(--muted-foreground); font-weight: 600; }
+           border-bottom: 1px solid var(--border, var(--b2s-line)); }
+  th { color: var(--muted-foreground, var(--b2s-muted)); font-weight: 600; }
   td.mono { font-family: ui-monospace, Consolas, monospace; }
-  .panel { border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-top: 6px; }
+  .note { font-size: 11.5px; padding: 6px 8px; margin-top: 6px;
+          border-left: 2px solid var(--b2s-warn); }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
-  label { display: block; font-size: 11px; color: var(--muted-foreground); margin-bottom: 3px; }
+  label { display: block; font-size: 11px; margin-bottom: 3px;
+          color: var(--muted-foreground, var(--b2s-muted)); }
   select, input[type=text], textarea {
-    width: 100%; font: inherit; font-size: 12px; color: var(--foreground);
-    background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 5px 7px;
+    width: 100%; font: inherit; font-size: 12px;
+    color: var(--foreground, var(--b2s-fg));
+    background: var(--card, var(--b2s-bg));
+    border: 1px solid var(--border, var(--b2s-line)); border-radius: 6px; padding: 5px 7px;
   }
   textarea { resize: vertical; }
-  pre.text { max-height: 280px; overflow: auto; border: 1px solid var(--border); border-radius: 8px;
-             padding: 8px; margin: 6px 0 0; font-size: 11px; white-space: pre-wrap; word-break: break-word; }
+  pre.text { max-height: 280px; overflow: auto; border: 1px solid var(--border, var(--b2s-line));
+             border-radius: 8px; padding: 8px; margin: 6px 0 0; font-size: 11px;
+             white-space: pre-wrap; word-break: break-word; }
   .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-  button { font: inherit; font-size: 12px; color: var(--foreground); background: transparent;
-           border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
-  button.primary { border-color: var(--accent); font-weight: 600; }
-  button:hover { border-color: var(--accent); }
-  .hint { font-size: 11px; color: var(--muted-foreground); margin-top: 8px; }
-  .note { font-size: 11.5px; padding: 6px 8px; border-left: 2px solid #d08a2a; margin-top: 6px; }
+  button { font: inherit; font-size: 12px; color: var(--foreground, var(--b2s-fg));
+           background: transparent; border: 1px solid var(--border, var(--b2s-line));
+           border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  button.primary { border-color: var(--accent, var(--b2s-accent)); font-weight: 600; }
+  button.icon { padding: 4px 9px; }
+  button:hover { border-color: var(--accent, var(--b2s-accent)); }
+  .hint { font-size: 11px; margin-top: 8px; color: var(--muted-foreground, var(--b2s-muted)); }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>book-to-skill · разбор источника</h1>
-  <div class="url" id="url"></div>
+  <div class="head">
+    <div>
+      <h1>book-to-skill · разбор источника</h1>
+      <div class="url" id="url"></div>
+    </div>
+    <button class="icon" id="themeBtn" title="переключить тему">🌙</button>
+  </div>
 
   <h2>Итог каскада</h2>
   <div class="chips" id="verdict"></div>
@@ -66,7 +103,7 @@
     <tbody id="plugins"></tbody>
   </table>
   <div class="hint">Специфичные под конкретную страничку плагины кладутся новым файлом
-    <code>book_to_skill/plugins/plugin_*.py</code> — подхватываются автоматически, ядро править не нужно.
+    <code>book_to_skill/plugins/plugin_*.py</code> — подхватываются автоматически.
     Метод <code>matches(url)</code> решает, кто победит.</div>
 
   <h2>Очищенный текст (что уйдёт в пайплайн)</h2>
@@ -129,19 +166,30 @@ const DATA = __B2S_DATA__;
 const R = DATA.report || {};
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 
+/* --- тема --- */
+const themeBtn = document.getElementById('themeBtn');
+function paintBtn() {
+  themeBtn.textContent = document.documentElement.className === 'dark' ? '☀' : '🌙';
+}
+themeBtn.addEventListener('click', () => {
+  const dark = document.documentElement.className === 'dark';
+  document.documentElement.className = dark ? 'light' : 'dark';
+  try { localStorage.setItem('b2s-theme', dark ? 'light' : 'dark'); } catch (e) {}
+  paintBtn();
+});
+paintBtn();
+
 document.getElementById('url').textContent = R.url || '';
 document.getElementById('slug').value = (R.source_file || '').split(/[\\/]/).pop().replace(/\.[a-z]+$/, '') || '';
 
 /* --- verdict --- */
-const v = document.getElementById('verdict');
 const junkTotal = R.junk_total || 0;
-const chips = [
+document.getElementById('verdict').innerHTML = [
   R.ok ? '<span class="chip ok">✓ текст получен</span>' : '<span class="chip bad">✗ провал</span>',
   '<span class="chip' + (R.kind === 'markdown' ? ' ok' : '') + '">стратегия: <b>' + esc(R.strategy || '—') + '</b></span>',
   '<span class="chip">вид: <b>' + esc(R.kind || '—') + '</b></span>',
   '<span class="chip' + (junkTotal > 0 ? ' warn' : ' ok') + '">мусор сайта: <b>' + junkTotal + '</b></span>'
-];
-v.innerHTML = chips.join('');
+].join('');
 
 if (junkTotal > 0) {
   const w = document.getElementById('warning');
