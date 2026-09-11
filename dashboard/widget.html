@@ -93,6 +93,21 @@
   .srcRow button { flex: 0 0 auto; padding: 5px 9px; }
   input[readonly] { opacity: .72; }
 
+  /* Действия: один блок, три шага по порядку — чтобы «прогнать», «сделать черновик»
+     и «установить» не выглядели как три названия одной операции. */
+  .steps { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+  .step { display: flex; gap: 10px; align-items: flex-start;
+          border: 1px solid var(--border, var(--b2s-line)); border-radius: 8px; padding: 8px 10px; }
+  .stepNum { flex: 0 0 22px; height: 22px; border-radius: 50%; display: flex;
+             align-items: center; justify-content: center; font-size: 11px; font-weight: 700;
+             border: 1px solid var(--accent, var(--b2s-accent)); }
+  .stepBody { flex: 1 1 auto; min-width: 0; }
+  .stepTitle { font-weight: 600; font-size: 12px; }
+  .stepHint { font-size: 11px; margin: 2px 0 7px;
+              color: var(--muted-foreground, var(--b2s-muted)); }
+  .stepRow { display: flex; flex-wrap: wrap; gap: 8px; }
+  button[disabled] { opacity: .5; cursor: default; }
+
   /* Тумблер предпросмотра черновика */
   .switchRow { display: flex; align-items: flex-start; gap: 8px; margin-top: 6px;
                border: 1px solid var(--border, var(--b2s-line)); border-radius: 8px; padding: 8px 10px; }
@@ -177,8 +192,7 @@
     <pre class="text" id="draftText"></pre>
     <div class="hint" id="draftFiles"></div>
     <div class="row">
-      <button class="primary" onclick="send('install')">✅ Установить в skills/&lt;категория&gt;</button>
-      <button onclick="askDraft()">♻ Перегенерировать черновик</button>
+      <button onclick="send('review')">🔍 Разобрать: что не так и что поправить</button>
     </div>
   </div>
 
@@ -247,10 +261,45 @@
   <div class="chips" id="engine"></div>
   <div class="hint" id="modelSrc"></div>
 
-  <div class="row">
-    <button class="primary" onclick="send('rerun')">▶ Перепрогнать с этими настройками</button>
-    <button onclick="askDraft()">📝 Сгенерировать черновик скилла (staging)</button>
-    <button onclick="send('review')">🔍 Разбери результат и скажи, что не так</button>
+  <h2>Действия</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="stepNum">1</div>
+      <div class="stepBody">
+        <div class="stepTitle">Прогнать источник заново</div>
+        <div class="stepHint">Перекачать и переизвлечь текст под выбранной стратегией и режимом —
+          обновятся показания выше (заголовки, мусор, смета). Файлы скилла не пишутся,
+          в постоянные скиллы ничего не попадает. Бесплатно: гонять можно сколько нужно,
+          пока текст не устроит.</div>
+        <div class="stepRow">
+          <button onclick="send('rerun')">▶ Прогнать источник заново</button>
+        </div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="stepNum">2</div>
+      <div class="stepBody">
+        <div class="stepTitle">Сделать черновик скилла</div>
+        <div class="stepHint">Прочитать очищенный текст и записать скилл в <code>staging/</code>
+          (SKILL.md, главы, глоссарий, паттерны, шпаргалку). Платная операция, и каждая
+          переделка с новыми замечаниями оплачивается заново. Это та же кнопка, что и в первый
+          раз — подпись меняется сама.</div>
+        <div class="stepRow">
+          <button class="primary" id="draftBtn" onclick="askDraft()">📝 Сгенерировать черновик (в staging)</button>
+        </div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="stepNum">3</div>
+      <div class="stepBody">
+        <div class="stepTitle">Установить в скиллы Hermes</div>
+        <div class="stepHint">Перенести готовый черновик в <code>skills/&lt;категория&gt;/&lt;имя&gt;/</code>.
+          Делается только по отдельной команде, автоматически — никогда.</div>
+        <div class="stepRow">
+          <button id="installBtn" onclick="send('install')">✅ Установить в skills/&lt;категория&gt;</button>
+        </div>
+      </div>
+    </div>
   </div>
   <div class="note" id="sendStatus" hidden></div>
   <div id="fallbackBox" hidden>
@@ -260,8 +309,9 @@
       <button onclick="copyFallback()">📋 Скопировать в буфер</button>
     </div>
   </div>
-  <div class="hint">Кнопки отправляют настройки агенту. Ничего на диске в постоянные скиллы
-    не пишется — сначала черновик, потом установка.</div>
+  <div class="hint">Три шага — три разные вещи: шаг 1 добывает текст (дёшево, без записи),
+    шаг 2 пишет файлы скилла (платно, заново после каждой правки), шаг 3 ставит готовое
+    в постоянные скиллы. Кнопки сами на диск ничего не кладут — они отправляют настройки агенту.</div>
 
   <div class="modal" id="modal" hidden>
     <div class="modalBox">
@@ -476,6 +526,16 @@ function cancelDraft() {
 toggle.checked = true;
 draftBox.hidden = false;
 renderDraft();
+
+/* Одна кнопка генерации на оба случая: если черновик уже есть, она честно называется
+   перегенерацией, а «Установить» без черновика бессмысленна — гасим её. */
+const draftBtn = document.getElementById('draftBtn');
+if (draftBtn && D) draftBtn.textContent = '♻ Перегенерировать черновик (с учётом замечаний)';
+const installBtn = document.getElementById('installBtn');
+if (installBtn && !D) {
+  installBtn.disabled = true;
+  installBtn.title = 'Сначала нужен черновик — шаг 2';
+}
 
 /* --- talk back to the agent ---
    Приложение (inline-preview-directive.tsx) пропускает запрос от виджета только
