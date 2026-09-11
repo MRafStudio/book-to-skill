@@ -86,6 +86,13 @@
   .hint { font-size: 11px; margin-top: 8px; color: var(--muted-foreground, var(--b2s-muted)); }
   code { font-family: ui-monospace, Consolas, monospace; }
 
+  /* Поле источника: текст + «выбрать файл» + «вставить из буфера».
+     На узкой панели кнопки переносятся под поле, а не выдавливают его в ноль. */
+  .srcRow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; margin: 2px 0 0; }
+  .srcRow input { flex: 1 1 120px; min-width: 0; text-overflow: ellipsis; }
+  .srcRow button { flex: 0 0 auto; padding: 5px 9px; }
+  input[readonly] { opacity: .72; }
+
   /* Тумблер предпросмотра черновика */
   .switchRow { display: flex; align-items: flex-start; gap: 8px; margin-top: 6px;
                border: 1px solid var(--border, var(--b2s-line)); border-radius: 8px; padding: 8px 10px; }
@@ -109,11 +116,20 @@
   <div class="head">
     <div>
       <h1>book-to-skill · разбор источника</h1>
-      <div class="url" id="url"></div>
       <div class="chips" id="bridge"></div>
     </div>
     <button class="icon" id="themeBtn" title="переключить тему">🌙</button>
   </div>
+
+  <h2>Источник</h2>
+  <div class="srcRow">
+    <input type="text" id="src" size="1" spellcheck="false" autocomplete="off"
+           placeholder="https://… или D:\путь\к\файлу.html / папка">
+    <button class="icon" id="pickBtn" title="выбрать файл на диске для анализа">📂 Файл…</button>
+    <button class="icon" id="pasteBtn" title="вставить путь или ссылку из буфера обмена">📋 Буфер</button>
+  </div>
+  <input type="file" id="filePick" hidden>
+  <div class="hint" id="srcHint"></div>
 
   <h2>Итог каскада</h2>
   <div class="chips" id="verdict"></div>
@@ -147,13 +163,13 @@
 
   <h2>Предполагаемый скилл</h2>
   <div class="switchRow">
-    <input type="checkbox" id="showDraft" autocomplete="off">
+    <input type="checkbox" id="showDraft" autocomplete="off" checked>
     <div class="txt">
       <b>Показывать предполагаемый скилл до записи</b>
-      Выключено по умолчанию. При включении спросим подтверждение: показ черновика требует
-      прогона генерации, а каждая перегенерация после правок оплачивается заново.
-      Постоянные скиллы в <code>skills/</code> при этом не пишутся — сначала черновик в
-      <code>staging/</code>, установка только по твоей команде.
+      Включено по умолчанию: черновик сразу виден здесь, а в <code>skills/</code> ничего не
+      пишется до отдельной команды — сначала <code>staging/</code>. Цену спрашиваем в момент
+      генерации: показ бесплатен, платится сама генерация, и каждая перегенерация после
+      правок оплачивается заново.
     </div>
   </div>
   <div id="draftBox" hidden>
@@ -162,7 +178,7 @@
     <div class="hint" id="draftFiles"></div>
     <div class="row">
       <button class="primary" onclick="send('install')">✅ Установить в skills/&lt;категория&gt;</button>
-      <button onclick="send('draft')">♻ Перегенерировать черновик</button>
+      <button onclick="askDraft()">♻ Перегенерировать черновик</button>
     </div>
   </div>
 
@@ -182,7 +198,7 @@
       <label>Режим движка</label>
       <select id="mode">
         <option value="text">text — быстрый</option>
-        <option value="technical">technical — таблицы и код</option>
+        <option value="technical" selected>technical — таблицы и код</option>
       </select>
     </div>
     <div>
@@ -201,12 +217,16 @@
       </select>
     </div>
     <div>
+      <label>Имя скилла</label>
+      <input type="text" id="skillname" placeholder="python-pathlib" autocomplete="off">
+    </div>
+    <div>
       <label>Категория скилла</label>
       <select id="category"></select>
     </div>
     <div>
-      <label>Slug</label>
-      <input type="text" id="slug" placeholder="protocols-4">
+      <label>Slug источника (авто)</label>
+      <input type="text" id="slug" readonly title="машинное имя источника: из него делается имя скачанного файла и каталог staging">
     </div>
     <div>
       <label>Замечания к текущему результату</label>
@@ -216,7 +236,12 @@
   <div class="hint">Про язык: имена API, фреймворков и точные названия сущностей остаются
     в оригинале даже в русском скилле — иначе их невозможно будет найти в документации.
     Переводится проза, определения и пояснения. <code>description</code> скилла всегда английский
-    (<code>Use when …</code>) — по нему Hermes выбирает, когда скилл подгружать.</div>
+    (<code>Use when …</code>) — по нему Hermes выбирает, когда скилл подгружать.<br>
+    <b>Имя скилла</b> — как скилл будет называться и лежать: <code>skills/&lt;категория&gt;/&lt;имя&gt;/</code>.
+    Подставляется по смыслу источника (сайт + тема: <code>python-pathlib</code>), правится свободно;
+    если оставить пустым — имя придумает агент. <b>Slug источника</b> — машинная метка сырья
+    (<code>docs-python-org-3-library-pathlib-html</code>): из неё получаются имена скачанных файлов
+    и каталог <code>staging/</code>, в имя скилла она не идёт.</div>
 
   <h2>Состояние движка</h2>
   <div class="chips" id="engine"></div>
@@ -224,7 +249,7 @@
 
   <div class="row">
     <button class="primary" onclick="send('rerun')">▶ Перепрогнать с этими настройками</button>
-    <button onclick="send('draft')">📝 Сгенерировать черновик скилла (staging)</button>
+    <button onclick="askDraft()">📝 Сгенерировать черновик скилла (staging)</button>
     <button onclick="send('review')">🔍 Разбери результат и скажи, что не так</button>
   </div>
   <div class="note" id="sendStatus" hidden></div>
@@ -240,15 +265,15 @@
 
   <div class="modal" id="modal" hidden>
     <div class="modalBox">
-      <h3>⚠ Показать предполагаемый скилл до записи?</h3>
+      <h3>⚠ Сгенерировать черновик сейчас?</h3>
       <p id="costText"></p>
-      <p>Сам показ бесплатен — платится <b>генерация</b>: прочитать очищенный текст и записать
-        скилл (SKILL.md, главы, глоссарий, паттерны, шпаргалка). После просмотра можно править
-        и перегенерировать — каждая итерация оплачивается заново, поэтому счёт растёт кратно
-        числу итераций, а не вдвое за один раз.</p>
+      <p>Показ черновика бесплатен — платится <b>сама генерация</b>: прочитать очищенный текст и
+        записать скилл (SKILL.md, главы, глоссарий, паттерны, шпаргалку). После просмотра можно
+        править и перегенерировать — каждая итерация оплачивается заново, поэтому счёт растёт
+        с числом итераций, а не «вдвое за один раз».</p>
       <p>Установка в постоянные скиллы произойдёт <b>только</b> по отдельной команде.</p>
       <div class="row">
-        <button class="primary" onclick="confirmDraft()">Да, показать</button>
+        <button class="primary" onclick="confirmDraft()">Да, сгенерировать</button>
         <button onclick="cancelDraft()">Отмена</button>
       </div>
     </div>
@@ -282,9 +307,39 @@ themeBtn.addEventListener('click', () => {
 });
 paintBtn();
 
-document.getElementById('url').textContent = R.url || '';
+/* Поле источника: показываем разобранный источник и даём подменить его
+   (URL из интернета или локальный путь к файлу/папке). */
+document.getElementById('src').value = R.url || '';
 document.getElementById('srcPath').textContent = R.source_file || '—';
 document.getElementById('slug').value = (R.source_file || '').split(/[\\/]/).pop().replace(/\.[a-z]+$/, '') || '';
+document.getElementById('skillname').value = DATA.suggested_name || '';
+
+/* --- источник: выбор файла и вставка из буфера --- */
+const srcHint = document.getElementById('srcHint');
+const SRC_HINT_BASE = 'Принимается ссылка (http/https) или локальный путь к файлу/папке — '
+  + 'агент скачает страницу или разберёт файл с диска.';
+function setSrcHint(extra) { srcHint.textContent = SRC_HINT_BASE + (extra ? ' ' + extra : ''); }
+setSrcHint();
+const filePick = document.getElementById('filePick');
+document.getElementById('pickBtn').addEventListener('click', () => filePick.click());
+filePick.addEventListener('change', () => {
+  const f = filePick.files && filePick.files[0];
+  if (!f) return;
+  document.getElementById('src').value = f.webkitRelativePath || f.name;
+  setSrcHint('Браузер отдаёт только имя файла, а не полный путь — если агент не найдёт файл, '
+    + 'вставь путь целиком кнопкой «📋 Из буфера».');
+});
+document.getElementById('pasteBtn').addEventListener('click', async () => {
+  try {
+    const text = ((await navigator.clipboard.readText()) || '').trim();
+    if (!text) { setSrcHint('В буфере обмена пусто.'); return; }
+    document.getElementById('src').value = text;
+    setSrcHint('Путь вставлен из буфера обмена.');
+  } catch (e) {
+    setSrcHint('Браузер не отдал буфер обмена — вставь путь в поле вручную (Ctrl+V).');
+    document.getElementById('src').focus();
+  }
+});
 
 /* --- мост в чат (проверяем отложенно: инжектится после нас) --- */
 function paintBridge() {
@@ -364,7 +419,9 @@ const sel = document.getElementById('category');
   sel.appendChild(o);
 });
 
-/* --- предполагаемый скилл: тумблер выключен по умолчанию --- */
+/* --- предполагаемый скилл: включён по умолчанию ---
+   Показ бесплатен, поэтому тумблер стоит в «показывать». Цену генерации спрашиваем
+   не при включении тумблера, а в момент самой генерации (кнопка → модалка). */
 const toggle = document.getElementById('showDraft');
 const modal = document.getElementById('modal');
 const draftBox = document.getElementById('draftBox');
@@ -392,33 +449,33 @@ function renderDraft() {
 }
 
 toggle.addEventListener('change', () => {
-  if (toggle.checked) {
-    const est = R.est_tokens || 0;
-    document.getElementById('costText').textContent =
-      'Очищенный источник — ~' + nf(est) + ' токенов. Генерация прочитает их и запишет SKILL.md + ' +
-      'главы + глоссарий + паттерны + шпаргалку. Сейчас работает модель: ' + (S.model || '—') +
-      (S.provider ? ' (' + S.provider + ')' : '') +
-      (S.est_cost_usd ? '; в этой сессии уже накручено ≈ $' + S.est_cost_usd : '') + '.';
-    modal.hidden = false;
-  } else {
-    draftBox.hidden = true;
-  }
+  draftBox.hidden = !toggle.checked;
+  if (toggle.checked) renderDraft();
 });
+
+/* Цену показываем в момент генерации, а не при переключении тумблера. */
+function askDraft() {
+  const est = R.est_tokens || 0;
+  document.getElementById('costText').textContent =
+    'Очищенный источник — ~' + nf(est) + ' токенов. Генерация прочитает их и запишет SKILL.md + ' +
+    'главы + глоссарий + паттерны + шпаргалку. Сейчас работает модель: ' + (S.model || '—') +
+    (S.provider ? ' (' + S.provider + ')' : '') +
+    (S.est_cost_usd ? '; в этой сессии уже накручено ≈ $' + S.est_cost_usd : '') + '.';
+  modal.hidden = false;
+}
 function confirmDraft() {
   modal.hidden = true;
-  draftBox.hidden = false;
-  renderDraft();
+  send('draft');
 }
 function cancelDraft() {
-  toggle.checked = false;
   modal.hidden = true;
-  draftBox.hidden = true;
 }
 
-/* Сброс восстановленного браузером состояния формы: галочка всегда
-   отражает реальность (есть ли уже черновик), а не то, что было в прошлый заход. */
-toggle.checked = !!D;
-if (D) { draftBox.hidden = false; renderDraft(); }
+/* Тумблер включён по умолчанию (разметка + атрибут checked), поэтому блок черновика
+   показываем сразу: есть черновик — рисуем его, нет — объясняем, чем его получить. */
+toggle.checked = true;
+draftBox.hidden = false;
+renderDraft();
 
 /* --- talk back to the agent ---
    Приложение (inline-preview-directive.tsx) пропускает запрос от виджета только
@@ -432,7 +489,8 @@ function compose(kind) {
   const v = (id) => document.getElementById(id).value;
   const parts = [
     KIND_PREFIX + ' ' + kind,
-    'url=' + (R.url || ''),
+    'src=' + (v('src') || R.url || ''),
+    'name=' + v('skillname'),
     'strat=' + v('strategy'),
     'mode=' + v('mode'),
     'depth=' + v('depth'),

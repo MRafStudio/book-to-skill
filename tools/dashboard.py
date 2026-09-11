@@ -189,6 +189,57 @@ def newest_draft_root() -> str:
     return str(max(dirs, key=lambda d: d.stat().st_mtime))
 
 
+def suggest_skill_name(url: str, title: str = "", source_file: str = "") -> str:
+    """Human-meaningful short skill name: ``<site>-<topic>``.
+
+    The source *slug* (``docs-python-org-3-library-pathlib-html``) is a machine
+    label: it names the fetched file and the staging dir, but as a skill name it
+    is useless -- three tokens of noise before the topic, and Hermes' trigger
+    line has to match on it. So build the default from the two things a human
+    recognises: the site and the topic.
+
+    ``https://docs.python.org/3/library/pathlib.html`` + title
+    ``pathlib - Object-oriented filesystem paths`` -> ``python-pathlib``.
+
+    The widget shows this pre-filled and editable; an empty value means the
+    agent picks the name itself.
+    """
+    def slugify(text: str) -> str:
+        return re.sub(r"[^a-zA-Z0-9]+", "-", text or "").strip("-").lower()
+
+    # Topic: the last meaningful URL segment wins -- it is the *topic* of the
+    # page ("/3/library/pathlib.html" -> "pathlib", "/reference/react/useEffect"
+    # -> "useeffect"), while the <title> is prose ("What's new in C# 13") and
+    # slugifies into noise. Title and source file are fallbacks.
+    generic = {"index", "readme", "home", "default", "overview", "introduction", "intro"}
+    topic = ""
+    m = re.match(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://([^/?#]+)([^?#]*)", url or "")
+    if m:
+        segments = [s for s in m.group(2).strip("/").split("/") if s]
+        while segments:
+            last = re.sub(r"\.(html?|php|aspx?|md|txt|rst)$", "", segments[-1], flags=re.I)
+            if slugify(last) not in generic and not last.isdigit():
+                topic = slugify(last)
+                break
+            segments.pop()
+    if not topic and title:
+        topic = slugify(re.split(r"[—\-–:|(]", title, maxsplit=1)[0])
+    if not topic and source_file:
+        topic = slugify(Path(source_file).stem)
+
+    # Site: registrable-ish label of the host ("docs.python.org" -> "python").
+    site = ""
+    host = re.match(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://([^/?#]+)", url or "")
+    if host:
+        labels = [p for p in host.group(1).split(":")[0].split(".") if p]
+        drop = {"www", "docs", "doc", "com", "org", "net", "io", "dev", "ru", "en", "3"}
+        keep = [p for p in labels if p.lower() not in drop]
+        site = slugify(keep[-1] if keep else (labels[0] if labels else ""))
+
+    name = "-".join(p for p in (site, topic) if p)
+    return name[:48].strip("-") or slugify(Path(source_file).stem)[:48]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="book-to-skill (Hermes fork) -- review dashboard")
     parser.add_argument("url")
@@ -212,6 +263,9 @@ def main() -> int:
         "categories": discover_categories(),
         "engine": engine_info(session),
         "default_category": DEFAULT_CATEGORY,
+        "suggested_name": suggest_skill_name(
+            report.get("url", ""), report.get("title", ""), report.get("source_file", "")
+        ),
         "draft": read_draft(args.draft_dir or newest_draft_root()),
     }
 
