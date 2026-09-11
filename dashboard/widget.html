@@ -252,7 +252,12 @@ const D = (DATA.draft && DATA.draft.skill_md) ? DATA.draft : null;
 const S = (DATA.engine && DATA.engine.session) || {};
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const nf = (n) => (n || 0).toLocaleString('ru-RU');
-const hasBridge = !!(window.hermes && typeof window.hermes.send === 'function');
+/* Мост в чат приложение инжектит в кадр В САМОМ КОНЦЕ документа (перед </body>),
+   то есть ПОСЛЕ нашего скрипта. Проверять его на загрузке нельзя — только лениво,
+   в момент клика; иначе виджет всегда решает «моста нет» и уходит в буфер обмена. */
+function bridgeNow() {
+  return (window.hermes && typeof window.hermes.send === 'function') ? window.hermes : null;
+}
 
 /* --- тема --- */
 const themeBtn = document.getElementById('themeBtn');
@@ -271,10 +276,15 @@ document.getElementById('url').textContent = R.url || '';
 document.getElementById('srcPath').textContent = R.source_file || '—';
 document.getElementById('slug').value = (R.source_file || '').split(/[\\/]/).pop().replace(/\.[a-z]+$/, '') || '';
 
-/* --- мост в чат --- */
-document.getElementById('bridge').innerHTML = hasBridge
-  ? '<span class="chip ok">мост в чат: есть</span>'
-  : '<span class="chip warn">мост в чат: нет — кнопки положат конфиг в текстовое поле ниже</span>';
+/* --- мост в чат (проверяем отложенно: инжектится после нас) --- */
+function paintBridge() {
+  document.getElementById('bridge').innerHTML = bridgeNow()
+    ? '<span class="chip ok">мост в чат: есть</span>'
+    : '<span class="chip warn">мост в чат: нет — кнопки положат конфиг в текстовое поле ниже</span>';
+}
+paintBridge();
+setTimeout(paintBridge, 60);
+window.addEventListener('load', paintBridge);
 
 /* --- verdict --- */
 const junkTotal = R.junk_total || 0;
@@ -442,9 +452,10 @@ function status(text, ok) {
 
 function send(kind) {
   const text = compose(kind);
-  if (hasBridge) {
+  const bridge = bridgeNow();
+  if (bridge) {
     try {
-      window.hermes.send(text);
+      bridge.send(text);
       status('✅ Отправлено агенту: ' + kind + ' — ' + text.length + '/' + INTENT_MAX + ' симв.', true);
       return;
     } catch (e) {
