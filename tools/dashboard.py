@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -32,57 +33,101 @@ from book_to_skill.fetcher import Fetcher  # noqa: E402
 DEFAULT_CATEGORY = "software-development"
 
 
+def hermes_home() -> Path:
+    home = os.environ.get("HERMES_HOME")
+    return Path(home) if home else Path.home() / ".hermes"
+
+
 def discover_categories() -> list:
     """Categories = subdirectories of the active Hermes profile's skills root."""
-    home = os.environ.get("HERMES_HOME")
-    roots = []
-    if home:
-        roots.append(Path(home) / "skills")
-    roots.append(Path.home() / ".hermes" / "skills")
-    for root in roots:
-        if root.is_dir():
-            names = sorted(p.name for p in root.iterdir() if p.is_dir() and not p.name.startswith("."))
-            if names:
-                return names
+    root = hermes_home() / "skills"
+    if root.is_dir():
+        names = sorted(p.name for p in root.iterdir() if p.is_dir() and not p.name.startswith("."))
+        if names:
+            return names
     return [DEFAULT_CATEGORY]
 
 
-def active_model() -> str:
-    """Which model the host is configured to run.
+def session_info(override: str = "") -> dict:
+    """The model the *current* session is actually running on.
 
-    Read from the host config without a YAML dependency (the two keys we want sit
-    at the top of a single top-level ``model:`` block). This is what the *host*
-    is configured for -- a running session can override it, so the value is
-    labelled as the configured default, not as a claim about the live session.
+    Read from the host's ``state.db`` (read-only): the most recently active
+    session's dominant model, plus its measured token usage. The configured
+    default in ``config.yaml`` is reported separately -- a running session can
+    (and here does) differ from it.
     """
-    home = os.environ.get("HERMES_HOME")
-    cfg = Path(home) / "config.yaml" if home else Path.home() / ".hermes" / "config.yaml"
-    if not cfg.is_file():
-        return ""
-    try:
-        text = cfg.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return ""
-    model = provider = ""
-    for line in text.splitlines():
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        if re.match(r"^\w", line):  # leave the top-level block
-            if model or provider:
-                break
-            continue
-        key, _, value = line.strip().partition(":")
-        value = value.strip().strip("'\"")
-        if key == "default" and not model:
-            model = value
-        elif key == "provider" and not provider:
-            provider = value
-    if model and provider:
-        return f"{model} · {provider}"
-    return model or provider
+    info = {"source": "", "model": "", "provider": "", "session_id": "",
+            "input_tokens": 0, "output_tokens": 0, "api_calls": 0, "est_cost_usd": 0.0,
+            "started_at": "", "messages": 0, "config_default": ""}
+    if override:
+        info["model"], info["source"] = override, "передан агентом"
+        return info
+
+    db = hermes_home() / "state.db"
+    if db.is_file():
+        try:
+            con = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True, timeout=15)
+            cur = con.cursor()
+            row = cur.execute(
+                "select session_id from session_model_usage order by last_seen desc limit 1"
+            ).fetchone()
+            if row:
+                sid = row[0]
+                info["session_id"] = sid
+                agg = cur.execute(
+                    "select model, billing_provider, sum(api_call_count), sum(input_tokens), "
+                    "sum(output_tokens), sum(coalesce(actual_cost_usd, estimated_cost_usd, 0)) "
+                    "from session_model_usage where session_id = ? "
+                    "group by model, billing_provider order by sum(api_call_count) desc limit 1",
+                    (sid,),
+                ).fetchone()
+                if agg:
+                    info["model"] = agg[0] or ""
+                    info["provider"] = agg[1] or ""
+                    info["api_calls"] = agg[2] or 0
+                    info["input_tokens"] = agg[3] or 0
+                    info["output_tokens"] = agg[4] or 0
+                    info["est_cost_usd"] = round(agg[5] or 0.0, 4)
+                srow = cur.execute(
+                    "select started_at, message_count, model from sessions where id = ?", (sid,)
+                ).fetchone()
+                if srow:
+                    info["started_at"] = str(srow[0] or "")
+                    info["messages"] = srow[1] or 0
+                    if not info["model"]:
+                        info["model"] = srow[2] or ""
+                info["source"] = "state.db (живая сессия)"
+            con.close()
+        except (sqlite3.Error, OSError) as exc:
+            info["source"] = f"state.db недоступен: {type(exc).__name__}"
+    else:
+        info["source"] = "state.db не найден"
+
+    cfg = hermes_home() / "config.yaml"
+    if cfg.is_file():
+        try:
+            text = cfg.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        default = provider = ""
+        for line in text.splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            if re.match(r"^\w", line):
+                if default or provider:
+                    break
+                continue
+            key, _, value = line.strip().partition(":")
+            value = value.strip().strip("'\"")
+            if key == "default" and not default:
+                default = value
+            elif key == "provider" and not provider:
+                provider = value
+        info["config_default"] = f"{default} · {provider}" if default else provider
+    return info
 
 
-def engine_info() -> dict:
+def engine_info(session: dict) -> dict:
     """What the deterministic half of the pipeline can actually do right now."""
     def has(module: str) -> bool:
         try:
@@ -98,7 +143,7 @@ def engine_info() -> dict:
         "docling": has("docling"),
         "pdftotext": bool(shutil.which("pdftotext")),
         "calibre": bool(shutil.which("ebook-convert")),
-        "model": active_model(),
+        "session": session,
         "hermes_home": os.environ.get("HERMES_HOME", ""),
     }
 
@@ -148,10 +193,12 @@ def main() -> int:
     parser.add_argument("--force", default=None, choices=[None, "raw-md", "trafilatura", "bs4", "stdlib"])
     parser.add_argument("--html", default=str(REPO / "dashboard" / "render.html"))
     parser.add_argument("--draft-dir", default="", help="staged skill to show (default: newest under staging/)")
+    parser.add_argument("--model", default="", help="override the session model label")
     args = parser.parse_args()
 
     fetcher = Fetcher(force=args.force)
     report = fetcher.fetch_to_dir(args.url, args.out)
+    session = session_info(args.model)
 
     data = {
         "report": report,
@@ -160,7 +207,7 @@ def main() -> int:
             for p in fetcher.plugins
         ],
         "categories": discover_categories(),
-        "engine": engine_info(),
+        "engine": engine_info(session),
         "default_category": DEFAULT_CATEGORY,
         "draft": read_draft(args.draft_dir or newest_draft_root()),
     }

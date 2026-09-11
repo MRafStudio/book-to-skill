@@ -38,7 +38,7 @@
        letter-spacing: .04em; color: var(--muted-foreground, var(--b2s-muted)); }
   h3 { font-size: 13px; margin: 0 0 8px; font-weight: 600; }
   .url { font-family: ui-monospace, Consolas, monospace; font-size: 11px;
-         color: var(--muted-foreground, var(--b2s-muted)); word-break: break-all; margin-bottom: 10px; }
+         color: var(--muted-foreground, var(--b2s-muted)); word-break: break-all; margin-bottom: 4px; }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
   .chip { border: 1px solid var(--border, var(--b2s-line)); border-radius: 6px; padding: 3px 8px; font-size: 11px; }
   .chip b { font-weight: 600; }
@@ -49,9 +49,10 @@
   th, td { text-align: left; padding: 4px 8px 4px 0; vertical-align: top;
            border-bottom: 1px solid var(--border, var(--b2s-line)); }
   th { color: var(--muted-foreground, var(--b2s-muted)); font-weight: 600; }
-  td.mono { font-family: ui-monospace, Consolas, monospace; }
+  td.mono, .mono { font-family: ui-monospace, Consolas, monospace; }
   .note { font-size: 11.5px; padding: 6px 8px; margin-top: 6px;
           border-left: 2px solid var(--b2s-warn); }
+  .note.ok-note { border-left-color: var(--accent, var(--b2s-accent)); }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
   label { display: block; font-size: 11px; margin-bottom: 3px;
           color: var(--muted-foreground, var(--b2s-muted)); }
@@ -99,6 +100,7 @@
     <div>
       <h1>book-to-skill · разбор источника</h1>
       <div class="url" id="url"></div>
+      <div class="chips" id="bridge"></div>
     </div>
     <button class="icon" id="themeBtn" title="переключить тему">🌙</button>
   </div>
@@ -130,12 +132,12 @@
   <div class="hint">Текст выше — очищенный <b>источник</b>: он всегда на языке оригинала.
     Перевод самого источника не делается — он бы стоил токенов и вносил искажения в цитаты,
     формулы и имена API. Язык выбирается ниже и применяется к тому, что создаётся
-    <i>из</i> этого текста, — к скиллу и его главам. Текст показана как есть, файл целиком:
+    <i>из</i> этого текста, — к скиллу и его главам. Файл целиком:
     <span id="srcPath" class="mono"></span></div>
 
   <h2>Предполагаемый скилл</h2>
   <div class="switchRow">
-    <input type="checkbox" id="showDraft">
+    <input type="checkbox" id="showDraft" autocomplete="off">
     <div class="txt">
       <b>Показывать предполагаемый скилл до записи</b>
       Выключено по умолчанию. При включении спросим подтверждение: показ черновика требует
@@ -201,18 +203,27 @@
       <textarea id="notes" rows="3" placeholder="напр. выкинуть лицензионный футер, главы по h2, сохранять английские термины в скобках"></textarea>
     </div>
   </div>
-  <div class="hint">Про язык: имена API, имён фреймворков и точные названия сущностей остаются
+  <div class="hint">Про язык: имена API, фреймворков и точные названия сущностей остаются
     в оригинале даже в русском скилле — иначе их невозможно будет найти в документации.
     Переводится проза, определения и пояснения. <code>description</code> скилла всегда английский
     (<code>Use when …</code>) — по нему Hermes выбирает, когда скилл подгружать.</div>
 
   <h2>Состояние движка</h2>
   <div class="chips" id="engine"></div>
+  <div class="hint" id="modelSrc"></div>
 
   <div class="row">
     <button class="primary" onclick="send('rerun')">▶ Перепрогнать с этими настройками</button>
     <button onclick="send('draft')">📝 Сгенерировать черновик скилла (staging)</button>
     <button onclick="send('review')">🔍 Разбери результат и скажи, что не так</button>
+  </div>
+  <div class="note" id="sendStatus" hidden></div>
+  <div id="fallbackBox" hidden>
+    <label id="fallbackLabel">Конфиг для отправки в чат (если моста нет)</label>
+    <textarea id="fallbackText" rows="9"></textarea>
+    <div class="row">
+      <button onclick="copyFallback()">📋 Скопировать в буфер</button>
+    </div>
   </div>
   <div class="hint">Кнопки отправляют настройки агенту. Ничего на диске в постоянные скиллы
     не пишется — сначала черновик, потом установка.</div>
@@ -237,9 +248,11 @@
 <script>
 const DATA = __B2S_DATA__;
 const R = DATA.report || {};
-const D = DATA.draft || null;
+const D = (DATA.draft && DATA.draft.skill_md) ? DATA.draft : null;
+const S = (DATA.engine && DATA.engine.session) || {};
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const nf = (n) => (n || 0).toLocaleString('ru-RU');
+const hasBridge = !!(window.hermes && typeof window.hermes.send === 'function');
 
 /* --- тема --- */
 const themeBtn = document.getElementById('themeBtn');
@@ -257,6 +270,11 @@ paintBtn();
 document.getElementById('url').textContent = R.url || '';
 document.getElementById('srcPath').textContent = R.source_file || '—';
 document.getElementById('slug').value = (R.source_file || '').split(/[\\/]/).pop().replace(/\.[a-z]+$/, '') || '';
+
+/* --- мост в чат --- */
+document.getElementById('bridge').innerHTML = hasBridge
+  ? '<span class="chip ok">мост в чат: есть</span>'
+  : '<span class="chip warn">мост в чат: нет — кнопки положат конфиг в текстовое поле ниже</span>';
 
 /* --- verdict --- */
 const junkTotal = R.junk_total || 0;
@@ -297,14 +315,22 @@ document.getElementById('plugins').innerHTML = (DATA.plugins || []).map(p =>
 const E = DATA.engine || {};
 const mark = (b) => b ? '✓' : '✗';
 document.getElementById('engine').innerHTML = [
+  '<span class="chip ok">модель сессии: <b>' + esc(S.model || '—') + '</b></span>',
+  '<span class="chip">провайдер: <b>' + esc(S.provider || '—') + '</b></span>',
+  '<span class="chip">сессия: <b>' + nf(S.input_tokens) + ' in / ' + nf(S.output_tokens) + ' out</b>' +
+    (S.est_cost_usd ? ' ≈ $' + S.est_cost_usd : '') + '</span>',
   '<span class="chip">python: <b>' + esc(E.python) + '</b></span>',
-  '<span class="chip">модель: <b>' + esc(E.model || '—') + '</b></span>',
   '<span class="chip' + (E.trafilatura ? ' ok' : ' warn') + '">' + mark(E.trafilatura) + ' trafilatura</span>',
   '<span class="chip' + (E.beautifulsoup4 ? ' ok' : ' warn') + '">' + mark(E.beautifulsoup4) + ' bs4</span>',
   '<span class="chip' + (E.docling ? ' ok' : ' warn') + '">' + mark(E.docling) + ' docling</span>',
   '<span class="chip' + (E.pdftotext ? ' ok' : ' warn') + '">' + mark(E.pdftotext) + ' pdftotext</span>',
   '<span class="chip' + (E.calibre ? ' ok' : ' warn') + '">' + mark(E.calibre) + ' calibre</span>'
 ].join('');
+
+document.getElementById('modelSrc').textContent =
+  'Источник модели: ' + (S.source || '—') +
+  (S.session_id ? ' · сессия ' + S.session_id + ' (' + nf(S.messages) + ' сообщ.)' : '') +
+  (S.config_default ? ' · в config.yaml по умолчанию: ' + S.config_default : '');
 
 /* --- preview --- */
 document.getElementById('preview').textContent = R.preview || '(нет)';
@@ -349,9 +375,10 @@ toggle.addEventListener('change', () => {
   if (toggle.checked) {
     const est = R.est_tokens || 0;
     document.getElementById('costText').textContent =
-      'Ориентир по объёму: очищенный источник — ~' + nf(est) + ' токенов. Генерация скилла ' +
-      'прочитает их и запишет SKILL.md + главы + глоссарий + паттерны + шпаргалку — это и есть ' +
-      'основной расход (порядка объёма источника на вход и единиц тысяч токенов на выход).';
+      'Очищенный источник — ~' + nf(est) + ' токенов. Генерация прочитает их и запишет SKILL.md + ' +
+      'главы + глоссарий + паттерны + шпаргалку. Сейчас работает модель: ' + (S.model || '—') +
+      (S.provider ? ' (' + S.provider + ')' : '') +
+      (S.est_cost_usd ? '; в этой сессии уже накручено ≈ $' + S.est_cost_usd : '') + '.';
     modal.hidden = false;
   } else {
     draftBox.hidden = true;
@@ -367,11 +394,15 @@ function cancelDraft() {
   modal.hidden = true;
   draftBox.hidden = true;
 }
-if (D) { toggle.checked = true; draftBox.hidden = false; renderDraft(); }
+
+/* Сброс восстановленного браузером состояния формы: галочка всегда
+   отражает реальность (есть ли уже черновик), а не то, что было в прошлый заход. */
+toggle.checked = !!D;
+if (D) { draftBox.hidden = false; renderDraft(); }
 
 /* --- talk back to the agent --- */
 const LANG_LABEL = { ru: 'русский', en: 'английский', src: 'без изменений (как в источнике)' };
-function send(kind) {
+function compose(kind) {
   const lang = document.getElementById('lang').value;
   const lines = [
     'book-to-skill · ' + kind,
@@ -385,11 +416,63 @@ function send(kind) {
     'slug: ' + document.getElementById('slug').value,
     'предпросмотр черновика включён: ' + (toggle.checked ? 'да' : 'нет'),
     'победившая стратегия сейчас: ' + (R.strategy || '—') + ' | мусор: ' + junkTotal,
-    'черновик: ' + (D ? D.dir : 'нет')
+    'черновик: ' + (D ? D.dir : 'нет'),
+    'модель сессии: ' + (S.model || '—') + ' / ' + (S.provider || '—')
   ];
   const notes = document.getElementById('notes').value.trim();
   if (notes) lines.push('замечания: ' + notes);
-  if (window.hermes && window.hermes.send) window.hermes.send(lines.join('\n'));
+  return lines.join('\n');
+}
+
+function status(text, ok) {
+  const el = document.getElementById('sendStatus');
+  el.hidden = false;
+  el.className = 'note' + (ok ? ' ok-note' : '');
+  el.textContent = text;
+}
+
+function send(kind) {
+  const text = compose(kind);
+  if (hasBridge) {
+    try {
+      window.hermes.send(text);
+      status('✅ Отправлено агенту: ' + kind, true);
+      return;
+    } catch (e) {
+      status('⚠ Мост есть, но отправка не удалась (' + e + '). Конфиг ниже — скопируй в чат.', false);
+    }
+  } else {
+    status('⚠ Из панели предпросмотра моста в чат нет — конфиг ниже. Скопируй и отправь его в чат.', false);
+  }
+  const box = document.getElementById('fallbackBox');
+  const ta = document.getElementById('fallbackText');
+  box.hidden = false;
+  ta.value = text;
+  ta.focus();
+  ta.select();
+  copyFallback(true);
+}
+
+function copyFallback(silent) {
+  const ta = document.getElementById('fallbackText');
+  ta.focus();
+  ta.select();
+  const done = () => status(silent
+    ? '📋 Конфиг скопирован в буфер — вставь его в чат (Ctrl+V) и отправь.'
+    : '📋 Скопировано в буфер.', true);
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(ta.value).then(done, () => {
+        try { document.execCommand('copy'); done(); }
+        catch (e) { status('Скопируй текст из поля вручную (Ctrl+C).', false); }
+      });
+      return;
+    }
+    document.execCommand('copy');
+    done();
+  } catch (e) {
+    status('Скопируй текст из поля вручную (Ctrl+C).', false);
+  }
 }
 </script>
 </body>
