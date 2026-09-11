@@ -42,7 +42,11 @@ def clean_html(raw_html: str, force: str | None = None):
                 extracted = trafilatura.extract(
                     raw_html,
                     include_tables=True,
-                    include_formatting=False,
+                    # include_formatting MUST stay True with output_format="markdown":
+                    # with False the extractor silently drops every heading (measured on
+                    # docs.python.org: 22 headings -> 0), which destroys the document
+                    # structure the chunking/chapter detection depends on.
+                    include_formatting=True,
                     output_format="markdown",
                 )
             except Exception as exc:  # malformed HTML raising inside trafilatura
