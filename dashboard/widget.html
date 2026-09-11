@@ -50,6 +50,16 @@
            border-bottom: 1px solid var(--border, var(--b2s-line)); }
   th { color: var(--muted-foreground, var(--b2s-muted)); font-weight: 600; }
   td.mono, .mono { font-family: ui-monospace, Consolas, monospace; }
+  /* Узкая панель предпросмотра: таблица переносит длинные URL/пути и скроллится
+     сама, а не растягивает страницу вбок (иначе вся панель уезжает за край). */
+  table { table-layout: fixed; }
+  th, td { word-break: break-word; overflow-wrap: anywhere; }
+  td.mono, .mono { word-break: break-all; }
+  @media (max-width: 430px) {
+    body { padding: 10px; }
+    .grid { grid-template-columns: 1fr; }
+  }
+
   .note { font-size: 11.5px; padding: 6px 8px; margin-top: 6px;
           border-left: 2px solid var(--b2s-warn); }
   .note.ok-note { border-left-color: var(--accent, var(--b2s-accent)); }
