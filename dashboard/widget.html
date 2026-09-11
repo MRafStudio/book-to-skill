@@ -182,6 +182,15 @@
     скилла не пишутся, в <code>skills/</code> ничего не уходит, платить не за что: повторные
     нажатия просто перечитывают источник заново, пока исходник не станет чистым.</div>
 
+  <div class="note" id="sendStatus" hidden></div>
+  <div id="fallbackBox" hidden>
+    <label id="fallbackLabel">Конфиг для отправки в чат (если моста нет)</label>
+    <textarea id="fallbackText" rows="9"></textarea>
+    <div class="row">
+      <button onclick="copyFallback()">📋 Скопировать в буфер</button>
+    </div>
+  </div>
+
   <h2>Итог каскада</h2>
   <div class="chips" id="verdict"></div>
   <div class="note" id="warning" hidden></div>
@@ -315,14 +324,6 @@
           <button id="installBtn" onclick="send('install')">✅ Установить в skills/&lt;категория&gt;</button>
         </div>
       </div>
-    </div>
-  </div>
-  <div class="note" id="sendStatus" hidden></div>
-  <div id="fallbackBox" hidden>
-    <label id="fallbackLabel">Конфиг для отправки в чат (если моста нет)</label>
-    <textarea id="fallbackText" rows="9"></textarea>
-    <div class="row">
-      <button onclick="copyFallback()">📋 Скопировать в буфер</button>
     </div>
   </div>
   <div class="hint">Три шага — три разные вещи. Шаг 1 «Анализ источника и очистка» живёт наверху,
@@ -595,6 +596,18 @@ function status(text, ok) {
   el.hidden = false;
   el.className = 'note' + (ok ? ' ok-note' : '');
   el.textContent = text;
+  /* Статус живёт наверху, у кнопки «Анализ источника». Если кликнули внизу (в спойлере),
+     подтягиваем его в поле зрения — иначе кажется, что кнопка не сработала. */
+  try { el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {}
+}
+
+/* Правая панель предпросмотра — только просмотр: мост в чат (window.hermes) инжектится
+   исключительно в инлайн-виджет внутри чата. Говорим об этом сразу при загрузке, иначе
+   первое нажатие кнопки выглядит как «ничего не произошло». */
+if (!bridgeNow()) {
+  status('Режим просмотра: кнопки этой панели не могут отправить запрос агенту — мост в чат ' +
+    'есть только у виджета внутри самого чата. Нажми любую кнопку — конфиг скопируется ' +
+    'в буфер; вставь его в чат (Ctrl+V) и отправь.', true);
 }
 
 function send(kind) {
