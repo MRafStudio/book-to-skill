@@ -86,6 +86,17 @@
   .hint { font-size: 11px; margin-top: 8px; color: var(--muted-foreground, var(--b2s-muted)); }
   code { font-family: ui-monospace, Consolas, monospace; }
 
+  /* Спойлер второй половины: пока исходник не вычищен, генерация не нужна.
+     <details>/<summary> — нативный механизм, без JS: одинаково работает и в панели, и в чате. */
+  .spoiler { margin-top: 16px; border: 1px solid var(--border, var(--b2s-line));
+             border-radius: 8px; padding: 8px 10px; }
+  .spoiler > summary { cursor: pointer; font-size: 12px; font-weight: 600; list-style: none;
+                       color: var(--accent, var(--b2s-accent)); }
+  .spoiler > summary::-webkit-details-marker { display: none; }
+  .spoiler[open] > summary { margin-bottom: 4px; border-bottom: 1px solid var(--border, var(--b2s-line));
+                             padding-bottom: 6px; }
+  .spoiler > summary:hover { text-decoration: underline; }
+
   /* Поле источника: текст + «выбрать файл» + «вставить из буфера».
      На узкой панели кнопки переносятся под поле, а не выдавливают его в ноль. */
   .srcRow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; margin: 2px 0 0; }
@@ -146,6 +157,29 @@
   <input type="file" id="filePick" hidden>
   <div class="hint" id="srcHint"></div>
 
+  <div class="pick">
+    <label>Стратегия загрузки</label>
+    <select id="strategy">
+      <option value="auto">auto — умный каскад: первая удачная</option>
+      <option value="raw-md">raw-md — только markdown-источник (.md, github)</option>
+      <option value="trafilatura">trafilatura — чистая выжимка</option>
+      <option value="bs4">bs4 — BeautifulSoup: больше текста, но лезет мусор</option>
+      <option value="stdlib">stdlib — как есть (мусор)</option>
+    </select>
+    <div class="hint">Внутри HTML каскад идёт <b>trafilatura → bs4 → stdlib</b> и побеждает первая
+      удачная — поэтому <code>auto</code> и <code>trafilatura</code> на обычной странице дают
+      одно и то же. Менять есть смысл, когда трафилатура обрезала хвост: <code>bs4</code> вернёт
+      больше текста ценой мусора сайта. <code>raw-md</code> годится только для источников,
+      которые уже markdown (.md, <code>github.com/…/blob/…</code>) — на HTML он не подойдёт.</div>
+  </div>
+
+  <div class="row">
+    <button class="primary" onclick="send('rerun')">▶ Прогнать источник заново</button>
+  </div>
+  <div class="hint">Шаг 1 — работа с исходником: заново достать и очистить текст под выбранной
+    стратегией, показания ниже обновятся. Файлы скилла не пишутся, в <code>skills/</code> ничего
+    не уходит. Бесплатно — гонять можно сколько нужно, пока исходник не станет чистым.</div>
+
   <h2>Итог каскада</h2>
   <div class="chips" id="verdict"></div>
   <div class="note" id="warning" hidden></div>
@@ -176,6 +210,9 @@
     <i>из</i> этого текста, — к скиллу и его главам. Файл целиком:
     <span id="srcPath" class="mono"></span></div>
 
+  <details class="spoiler" id="stage2">
+  <summary>▶ ДАЛЕЕ — предполагаемый скилл, настройки генерации, установка</summary>
+
   <h2>Предполагаемый скилл</h2>
   <div class="switchRow">
     <input type="checkbox" id="showDraft" autocomplete="off" checked>
@@ -198,16 +235,6 @@
 
   <h2>Настройки генерации черновика</h2>
   <div class="grid">
-    <div>
-      <label>Стратегия загрузки</label>
-      <select id="strategy">
-        <option value="auto">auto — умный каскад</option>
-        <option value="raw-md">raw-md — только markdown</option>
-        <option value="trafilatura">trafilatura — чистая выжимка</option>
-        <option value="bs4">bs4 — BeautifulSoup</option>
-        <option value="stdlib">stdlib — как есть (мусор)</option>
-      </select>
-    </div>
     <div>
       <label>Режим движка</label>
       <select id="mode">
@@ -264,19 +291,6 @@
   <h2>Действия</h2>
   <div class="steps">
     <div class="step">
-      <div class="stepNum">1</div>
-      <div class="stepBody">
-        <div class="stepTitle">Прогнать источник заново</div>
-        <div class="stepHint">Перекачать и переизвлечь текст под выбранной стратегией и режимом —
-          обновятся показания выше (заголовки, мусор, смета). Файлы скилла не пишутся,
-          в постоянные скиллы ничего не попадает. Бесплатно: гонять можно сколько нужно,
-          пока текст не устроит.</div>
-        <div class="stepRow">
-          <button onclick="send('rerun')">▶ Прогнать источник заново</button>
-        </div>
-      </div>
-    </div>
-    <div class="step">
       <div class="stepNum">2</div>
       <div class="stepBody">
         <div class="stepTitle">Сделать черновик скилла</div>
@@ -309,9 +323,12 @@
       <button onclick="copyFallback()">📋 Скопировать в буфер</button>
     </div>
   </div>
-  <div class="hint">Три шага — три разные вещи: шаг 1 добывает текст (дёшево, без записи),
-    шаг 2 пишет файлы скилла (платно, заново после каждой правки), шаг 3 ставит готовое
-    в постоянные скиллы. Кнопки сами на диск ничего не кладут — они отправляют настройки агенту.</div>
+  <div class="hint">Три шага — три разные вещи. Шаг 1 (прогон источника) живёт наверху, рядом с
+    полем источника: он только добывает и чистит текст, файлы скилла не пишет и бесплатен.
+    Здесь — шаг 2: черновик в <code>staging/</code> (платно, заново после каждой правки)
+    и шаг 3: установка готового в постоянные скиллы. Кнопки сами на диск ничего не кладут —
+    они отправляют настройки агенту.</div>
+  </details>
 
   <div class="modal" id="modal" hidden>
     <div class="modalBox">
@@ -482,7 +499,7 @@ function renderDraft() {
   const files = document.getElementById('draftFiles');
   if (!D) {
     stats.innerHTML = '<span class="chip warn">черновик ещё не создан</span>';
-    text.textContent = 'Нажми «Сгенерировать черновик скилла (staging)» внизу — я прогоню генерацию, ' +
+    text.textContent = 'Нажми «Сгенерировать черновик» в блоке «Действия» — я прогоню генерацию, ' +
       'положу файлы в staging/ и перерисую этот дашборд с черновиком внутри. В skills/ ничего не попадёт.';
     files.textContent = '';
     return;
