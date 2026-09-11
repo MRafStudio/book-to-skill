@@ -72,6 +72,7 @@
   button.icon { padding: 4px 9px; }
   button:hover { border-color: var(--accent, var(--b2s-accent)); }
   .hint { font-size: 11px; margin-top: 8px; color: var(--muted-foreground, var(--b2s-muted)); }
+  code { font-family: ui-monospace, Consolas, monospace; }
 </style>
 </head>
 <body>
@@ -108,6 +109,10 @@
 
   <h2>Очищенный текст (что уйдёт в пайплайн)</h2>
   <pre class="text" id="preview"></pre>
+  <div class="hint">Текст выше — очищенный <b>источник</b>: он всегда на языке оригинала.
+    Перевод самого источника не делается — он бы стоил токенов и вносил искажения в цитаты,
+    формулы и имена API. Язык выбирается ниже и применяется к тому, что создаётся
+    <i>из</i> этого текста, — к скиллу и его главам.</div>
 
   <h2>Настройки генерации черновика</h2>
   <div class="grid">
@@ -136,6 +141,14 @@
       </select>
     </div>
     <div>
+      <label>Язык скилла</label>
+      <select id="lang">
+        <option value="ru" selected>Русский</option>
+        <option value="en">Английский</option>
+        <option value="src">Без изменений — как в источнике</option>
+      </select>
+    </div>
+    <div>
       <label>Категория скилла</label>
       <select id="category"></select>
     </div>
@@ -145,9 +158,12 @@
     </div>
     <div>
       <label>Замечания к текущему результату</label>
-      <textarea id="notes" rows="3" placeholder="напр. выкинуть лицензионный футер, главы по h2, добавить URL источника во frontmatter"></textarea>
+      <textarea id="notes" rows="3" placeholder="напр. выкинуть лицензионный футер, главы по h2, сохранять английские термины в скобках"></textarea>
     </div>
   </div>
+  <div class="hint">Про язык: имена API, имена фреймворков и точные названия сущностей остаются
+    в оригинале даже в русском скилле — иначе их невозможно будет найти в документации.
+    Переводится проза, определения и пояснения.</div>
 
   <h2>Состояние движка</h2>
   <div class="chips" id="engine"></div>
@@ -242,13 +258,16 @@ const sel = document.getElementById('category');
 });
 
 /* --- talk back to the agent --- */
+const LANG_LABEL = { ru: 'русский', en: 'английский', src: 'без изменений (как в источнике)' };
 function send(kind) {
+  const lang = document.getElementById('lang').value;
   const lines = [
     'book-to-skill · ' + kind,
     'URL: ' + (R.url || ''),
     'стратегия: ' + document.getElementById('strategy').value,
     'режим: ' + document.getElementById('mode').value,
     'глубина: ' + document.getElementById('depth').value,
+    'язык скилла: ' + lang + ' (' + LANG_LABEL[lang] + ')',
     'категория: ' + document.getElementById('category').value,
     'slug: ' + document.getElementById('slug').value,
     'победившая стратегия сейчас: ' + (R.strategy || '—') + ' | мусор: ' + junkTotal
