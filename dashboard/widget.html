@@ -400,28 +400,37 @@ function cancelDraft() {
 toggle.checked = !!D;
 if (D) { draftBox.hidden = false; renderDraft(); }
 
-/* --- talk back to the agent --- */
-const LANG_LABEL = { ru: 'русский', en: 'английский', src: 'без изменений (как в источнике)' };
+/* --- talk back to the agent ---
+   Приложение (inline-preview-directive.tsx) пропускает запрос от виджета только
+   как короткую строку: MAX_INTENT_LENGTH = 500 символов, троттлинг 1 клик/сек,
+   и приходит это скрытым user-turn. Поэтому конфиг собираем компактно —
+   одна строка key=value, а не многострочный дамп. */
+const KIND_PREFIX = 'b2s';
+const INTENT_MAX = 500;
+
 function compose(kind) {
-  const lang = document.getElementById('lang').value;
-  const lines = [
-    'book-to-skill · ' + kind,
-    'URL: ' + (R.url || ''),
-    'стратегия: ' + document.getElementById('strategy').value,
-    'режим: ' + document.getElementById('mode').value,
-    'глубина: ' + document.getElementById('depth').value,
-    'язык скилла: ' + lang + ' (' + LANG_LABEL[lang] + ')',
-    'description: английский (Use when …)',
-    'категория: ' + document.getElementById('category').value,
-    'slug: ' + document.getElementById('slug').value,
-    'предпросмотр черновика включён: ' + (toggle.checked ? 'да' : 'нет'),
-    'победившая стратегия сейчас: ' + (R.strategy || '—') + ' | мусор: ' + junkTotal,
-    'черновик: ' + (D ? D.dir : 'нет'),
-    'модель сессии: ' + (S.model || '—') + ' / ' + (S.provider || '—')
+  const v = (id) => document.getElementById(id).value;
+  const parts = [
+    KIND_PREFIX + ' ' + kind,
+    'url=' + (R.url || ''),
+    'strat=' + v('strategy'),
+    'mode=' + v('mode'),
+    'depth=' + v('depth'),
+    'lang=' + v('lang'),
+    'cat=' + v('category'),
+    'slug=' + v('slug'),
+    'draft=' + (toggle.checked ? 1 : 0),
+    'won=' + (R.strategy || '-'),
+    'junk=' + junkTotal,
+    'model=' + (S.model || '-')
   ];
-  const notes = document.getElementById('notes').value.trim();
-  if (notes) lines.push('замечания: ' + notes);
-  return lines.join('\n');
+  let text = parts.join(' | ');
+  const notes = document.getElementById('notes').value.trim().replace(/\s+/g, ' ');
+  if (notes) {
+    const room = INTENT_MAX - text.length - ' | notes='.length;
+    if (room > 8) text += ' | notes=' + notes.slice(0, room);
+  }
+  return text.slice(0, INTENT_MAX);
 }
 
 function status(text, ok) {
@@ -436,7 +445,7 @@ function send(kind) {
   if (hasBridge) {
     try {
       window.hermes.send(text);
-      status('✅ Отправлено агенту: ' + kind, true);
+      status('✅ Отправлено агенту: ' + kind + ' — ' + text.length + '/' + INTENT_MAX + ' симв.', true);
       return;
     } catch (e) {
       status('⚠ Мост есть, но отправка не удалась (' + e + '). Конфиг ниже — скопируй в чат.', false);
