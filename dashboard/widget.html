@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>book-to-skill · разбор источника</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-size: 13px; color: var(--foreground); }
+  .wrap { display: block; text-align: left; }
+  h1 { font-size: 15px; margin: 0 0 2px; font-weight: 600; }
+  h2 { font-size: 12px; margin: 14px 0 6px; font-weight: 600; text-transform: uppercase;
+       letter-spacing: .04em; color: var(--muted-foreground); }
+  .url { font-family: ui-monospace, Consolas, monospace; font-size: 11px; color: var(--muted-foreground);
+         word-break: break-all; margin-bottom: 10px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+  .chip { border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; font-size: 11px; }
+  .chip b { font-weight: 600; }
+  .ok { border-color: var(--accent); }
+  .warn { border-color: #d08a2a; }
+  .bad { border-color: #c0392b; }
+  table { border-collapse: collapse; width: 100%; font-size: 11.5px; }
+  th, td { text-align: left; padding: 4px 8px 4px 0; vertical-align: top;
+           border-bottom: 1px solid var(--border); }
+  th { color: var(--muted-foreground); font-weight: 600; }
+  td.mono { font-family: ui-monospace, Consolas, monospace; }
+  .panel { border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-top: 6px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+  label { display: block; font-size: 11px; color: var(--muted-foreground); margin-bottom: 3px; }
+  select, input[type=text], textarea {
+    width: 100%; font: inherit; font-size: 12px; color: var(--foreground);
+    background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 5px 7px;
+  }
+  textarea { resize: vertical; }
+  pre.text { max-height: 280px; overflow: auto; border: 1px solid var(--border); border-radius: 8px;
+             padding: 8px; margin: 6px 0 0; font-size: 11px; white-space: pre-wrap; word-break: break-word; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  button { font: inherit; font-size: 12px; color: var(--foreground); background: transparent;
+           border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  button.primary { border-color: var(--accent); font-weight: 600; }
+  button:hover { border-color: var(--accent); }
+  .hint { font-size: 11px; color: var(--muted-foreground); margin-top: 8px; }
+  .note { font-size: 11.5px; padding: 6px 8px; border-left: 2px solid #d08a2a; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>book-to-skill · разбор источника</h1>
+  <div class="url" id="url"></div>
+
+  <h2>Итог каскада</h2>
+  <div class="chips" id="verdict"></div>
+  <div class="note" id="warning" hidden></div>
+
+  <h2>Перебор стратегий</h2>
+  <table>
+    <thead><tr><th style="width:24px"></th><th>Стратегия</th><th style="width:56px">Оценка</th><th>Что произошло</th></tr></thead>
+    <tbody id="attempts"></tbody>
+  </table>
+
+  <h2>Метрики</h2>
+  <div class="chips" id="stats"></div>
+
+  <h2>Реестр обработчиков (мини-плагины)</h2>
+  <table>
+    <thead><tr><th>Плагин</th><th style="width:70px">Приоритет</th><th style="width:70px">Оценка URL</th></tr></thead>
+    <tbody id="plugins"></tbody>
+  </table>
+  <div class="hint">Специфичные под конкретную страничку плагины кладутся новым файлом
+    <code>book_to_skill/plugins/plugin_*.py</code> — подхватываются автоматически, ядро править не нужно.
+    Метод <code>matches(url)</code> решает, кто победит.</div>
+
+  <h2>Очищенный текст (что уйдёт в пайплайн)</h2>
+  <pre class="text" id="preview"></pre>
+
+  <h2>Настройки генерации черновика</h2>
+  <div class="grid">
+    <div>
+      <label>Стратегия загрузки</label>
+      <select id="strategy">
+        <option value="auto">auto — умный каскад</option>
+        <option value="raw-md">raw-md — только markdown</option>
+        <option value="trafilatura">trafilatura — чистая выжимка</option>
+        <option value="bs4">bs4 — BeautifulSoup</option>
+        <option value="stdlib">stdlib — как есть (мусор)</option>
+      </select>
+    </div>
+    <div>
+      <label>Режим движка</label>
+      <select id="mode">
+        <option value="text">text — быстрый</option>
+        <option value="technical">technical — таблицы и код</option>
+      </select>
+    </div>
+    <div>
+      <label>Глубина</label>
+      <select id="depth">
+        <option value="reference">reference — справочник</option>
+        <option value="study">study — подробное изучение</option>
+      </select>
+    </div>
+    <div>
+      <label>Категория скилла</label>
+      <select id="category"></select>
+    </div>
+    <div>
+      <label>Slug</label>
+      <input type="text" id="slug" placeholder="protocols-4">
+    </div>
+    <div>
+      <label>Замечания к текущему результату</label>
+      <textarea id="notes" rows="3" placeholder="напр. выкинуть лицензионный футер, главы по h2, добавить URL источника во frontmatter"></textarea>
+    </div>
+  </div>
+
+  <h2>Состояние движка</h2>
+  <div class="chips" id="engine"></div>
+
+  <div class="row">
+    <button class="primary" onclick="send('rerun')">▶ Перепрогнать с этими настройками</button>
+    <button onclick="send('draft')">📝 Сгенерировать черновик скилла (staging)</button>
+    <button onclick="send('review')">🔍 Разбери результат и скажи, что не так</button>
+  </div>
+  <div class="hint">Кнопки отправляют настройки агенту. Ничего на диск в постоянные скиллы
+    не пишется — сначала черновик, потом установка.</div>
+</div>
+
+<script>
+const DATA = __B2S_DATA__;
+const R = DATA.report || {};
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+document.getElementById('url').textContent = R.url || '';
+document.getElementById('slug').value = (R.source_file || '').split(/[\\/]/).pop().replace(/\.[a-z]+$/, '') || '';
+
+/* --- verdict --- */
+const v = document.getElementById('verdict');
+const junkTotal = R.junk_total || 0;
+const chips = [
+  R.ok ? '<span class="chip ok">✓ текст получен</span>' : '<span class="chip bad">✗ провал</span>',
+  '<span class="chip' + (R.kind === 'markdown' ? ' ok' : '') + '">стратегия: <b>' + esc(R.strategy || '—') + '</b></span>',
+  '<span class="chip">вид: <b>' + esc(R.kind || '—') + '</b></span>',
+  '<span class="chip' + (junkTotal > 0 ? ' warn' : ' ok') + '">мусор сайта: <b>' + junkTotal + '</b></span>'
+];
+v.innerHTML = chips.join('');
+
+if (junkTotal > 0) {
+  const w = document.getElementById('warning');
+  w.hidden = false;
+  w.textContent = '⚠ В текст попал мусор сайта: ' + JSON.stringify(R.junk) +
+    '. Без trafilatura классы nav/footer/sidebar не вырезаются — качество скилла пострадает.';
+}
+
+/* --- attempts --- */
+document.getElementById('attempts').innerHTML = (R.attempts || []).map(a =>
+  '<tr><td>' + (a.ok ? '✓' : '✗') + '</td><td class="mono">' + esc(a.plugin) + '</td><td class="mono">' +
+  esc(a.score) + '</td><td>' + esc(a.note) + '</td></tr>').join('') || '<tr><td colspan="4">—</td></tr>';
+
+/* --- stats --- */
+document.getElementById('stats').innerHTML = R.ok ? [
+  '<span class="chip">символов: <b>' + (R.chars || 0).toLocaleString('ru-RU') + '</b></span>',
+  '<span class="chip">слов: <b>' + (R.words || 0).toLocaleString('ru-RU') + '</b></span>',
+  '<span class="chip">~токенов: <b>' + (R.est_tokens || 0).toLocaleString('ru-RU') + '</b></span>',
+  '<span class="chip">скачано: <b>' + Math.round((R.raw_bytes || 0) / 1024) + ' КБ</b></span>',
+  '<span class="chip">title: <b>' + esc(R.title || '—') + '</b></span>'
+].join('') : '—';
+
+/* --- plugins --- */
+document.getElementById('plugins').innerHTML = (DATA.plugins || []).map(p =>
+  '<tr><td class="mono">' + esc(p.name) + '</td><td class="mono">' + p.priority + '</td><td class="mono">' +
+  (p.score > 0 ? p.score.toFixed(2) : '—') + '</td></tr>').join('');
+
+/* --- engine --- */
+const E = DATA.engine || {};
+const mark = (b) => b ? '✓' : '✗';
+document.getElementById('engine').innerHTML = [
+  '<span class="chip">python: <b>' + esc(E.python) + '</b></span>',
+  '<span class="chip' + (E.trafilatura ? ' ok' : ' warn') + '">' + mark(E.trafilatura) + ' trafilatura</span>',
+  '<span class="chip' + (E.beautifulsoup4 ? ' ok' : ' warn') + '">' + mark(E.beautifulsoup4) + ' bs4</span>',
+  '<span class="chip' + (E.docling ? ' ok' : ' warn') + '">' + mark(E.docling) + ' docling</span>',
+  '<span class="chip' + (E.pdftotext ? ' ok' : ' warn') + '">' + mark(E.pdftotext) + ' pdftotext</span>',
+  '<span class="chip' + (E.calibre ? ' ok' : ' warn') + '">' + mark(E.calibre) + ' calibre</span>'
+].join('');
+
+/* --- preview --- */
+document.getElementById('preview').textContent = R.preview || '(нет)';
+
+/* --- categories --- */
+const sel = document.getElementById('category');
+(DATA.categories || []).forEach(c => {
+  const o = document.createElement('option');
+  o.value = c; o.textContent = c;
+  if (c === DATA.default_category) o.selected = true;
+  sel.appendChild(o);
+});
+
+/* --- talk back to the agent --- */
+function send(kind) {
+  const lines = [
+    'book-to-skill · ' + kind,
+    'URL: ' + (R.url || ''),
+    'стратегия: ' + document.getElementById('strategy').value,
+    'режим: ' + document.getElementById('mode').value,
+    'глубина: ' + document.getElementById('depth').value,
+    'категория: ' + document.getElementById('category').value,
+    'slug: ' + document.getElementById('slug').value,
+    'победившая стратегия сейчас: ' + (R.strategy || '—') + ' | мусор: ' + junkTotal
+  ];
+  const notes = document.getElementById('notes').value.trim();
+  if (notes) lines.push('замечания: ' + notes);
+  if (window.hermes && window.hermes.send) window.hermes.send(lines.join('\n'));
+}
+</script>
+</body>
+</html>

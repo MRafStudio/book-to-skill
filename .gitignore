@@ -28,3 +28,9 @@ docs/BACKERS.md
 
 # Local evaluation work products
 .eval-work/
+
+# Hermes fork: fetched source text and rendered dashboards are local work
+# products -- never committed (fetched pages can be copyrighted material,
+# same rule AGENTS.md applies to evaluation corpora).
+b2s_fetched/
+dashboard/render.html
