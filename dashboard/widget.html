@@ -384,6 +384,53 @@ document.getElementById('srcPath').textContent = R.source_file || '—';
 document.getElementById('slug').value = (R.source_file || '').split(/[\\/]/).pop().replace(/\.[a-z]+$/, '') || '';
 document.getElementById('skillname').value = DATA.suggested_name || '';
 
+/* --- план Б: страница живёт по HTTP (tools/serve.py) ---
+   По HTTP песочницы нет: fetch работает, сервер гоняет каскад и помнит поля.
+   В панели предпросмотра (file://) всё остаётся как было — через мост/буфер. */
+const LIVE = (location.protocol === 'http:' || location.protocol === 'https:'
+  || (location.hostname === '127.0.0.1' || location.hostname === 'localhost'));
+
+const ST = DATA.state || {};
+function setVal(id, v) {
+  const el = document.getElementById(id);
+  if (el && v !== undefined && v !== null && v !== '') el.value = v;
+}
+if (LIVE) {
+  setVal('src', ST.src);
+  setVal('skillname', ST.name);
+  setVal('strategy', ST.strat || 'auto');
+  setVal('mode', ST.mode);
+  setVal('depth', ST.depth);
+  setVal('lang', ST.lang);
+  setVal('category', ST.cat);
+}
+
+/* Поля запоминаются на сервере: перезагрузка страницы после прогона
+   не должна терять то, что набрано. */
+if (LIVE) {
+  let saveTimer = null;
+  const snapshot = () => ({
+    src: document.getElementById('src').value.trim(),
+    strat: document.getElementById('strategy').value,
+    name: document.getElementById('skillname').value.trim(),
+    mode: document.getElementById('mode').value,
+    depth: document.getElementById('depth').value,
+    lang: document.getElementById('lang').value,
+    cat: document.getElementById('category').value
+  });
+  const remember = () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      fetch('/api/state', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(snapshot()) }).catch(() => {});
+    }, 600);
+  };
+  ['src', 'skillname', 'strategy', 'mode', 'depth', 'lang', 'category'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) { el.addEventListener('input', remember); el.addEventListener('change', remember); }
+  });
+}
+
 /* --- источник: выбор файла и вставка из буфера --- */
 const srcHint = document.getElementById('srcHint');
 const SRC_HINT_BASE = 'Принимается ссылка (http/https) или локальный путь к файлу/папке — '
@@ -413,9 +460,11 @@ document.getElementById('pasteBtn').addEventListener('click', async () => {
 
 /* --- мост в чат (проверяем отложенно: инжектится после нас) --- */
 function paintBridge() {
-  document.getElementById('bridge').innerHTML = bridgeNow()
-    ? '<span class="chip ok">мост в чат: есть</span>'
-    : '<span class="chip warn">мост в чат: нет — кнопки положат конфиг в текстовое поле ниже</span>';
+  document.getElementById('bridge').innerHTML = LIVE
+    ? '<span class="chip ok">режим: локальный сервер — кнопки работают</span>'
+    : (bridgeNow()
+      ? '<span class="chip ok">мост в чат: есть</span>'
+      : '<span class="chip warn">мост в чат: нет — кнопки положат конфиг в текстовое поле ниже</span>');
 }
 paintBridge();
 setTimeout(paintBridge, 60);
@@ -604,14 +653,85 @@ function status(text, ok) {
 /* Правая панель предпросмотра — только просмотр: мост в чат (window.hermes) инжектится
    исключительно в инлайн-виджет внутри чата. Говорим об этом сразу при загрузке, иначе
    первое нажатие кнопки выглядит как «ничего не произошло». */
-if (!bridgeNow()) {
+if (LIVE) {
+  const bridgeEl = document.getElementById('bridge');
+  function ping() {
+    return fetch('/api/health').then(r => r.json()).then(j => {
+      if (j && j.ok) {
+        bridgeEl.innerHTML = '<span class="chip ok">сервер: на связи · '
+          + Math.round(j.alive_s) + ' с</span>';
+        return true;
+      }
+      bridgeEl.innerHTML = '<span class="chip warn">сервер: потерян — запусти tools/serve.py</span>';
+      return false;
+    }).catch(() => {
+      bridgeEl.innerHTML = '<span class="chip warn">сервер: потерян — запусти tools/serve.py</span>';
+      return false;
+    });
+  }
+  /* Чип обновляем «молча», а строку статуса держим для событий: раньше heartbeat
+     каждые 5 с затирал сообщение о провале прогона, и выглядело как «ничего не произошло». */
+  ping().then(ok => {
+    if (!ok) {
+      status('⚠ Страница открыта по HTTP, но сервер не отвечает. Запусти: python tools/serve.py',
+        false);
+      return;
+    }
+    if (DATA.last_error && DATA.last_error.message) {
+      status('⚠ Прошлый прогон не дал текста (' + DATA.last_error.at + ', стратегия '
+        + DATA.last_error.strat + '): ' + DATA.last_error.message
+        + (DATA.report_at ? ' Показан прежний удачный отчёт от ' + DATA.report_at + '.' : ''), false);
+    } else {
+      status('🟢 Локальный сервер подключён — кнопки работают по-настоящему: каскад, показ, заказ.',
+        true);
+    }
+  });
+  setInterval(ping, 5000);
+} else if (!bridgeNow()) {
   status('Режим просмотра: кнопки этой панели не могут отправить запрос агенту — мост в чат ' +
     'есть только у виджета внутри самого чата. Нажми любую кнопку — конфиг скопируется ' +
     'в буфер; вставь его в чат (Ctrl+V) и отправь.', true);
 }
 
+/* --- кнопки по HTTP: сервер делает работу сам, чат не нужен --- */
+async function sendLive(kind, text) {
+  const route = (kind === 'rerun') ? '/api/rerun' : '/api/order';
+  const payload = {
+    kind: kind,
+    intent: text,
+    src: document.getElementById('src').value.trim(),
+    strat: document.getElementById('strategy').value,
+    name: document.getElementById('skillname').value.trim(),
+    mode: document.getElementById('mode').value,
+    depth: document.getElementById('depth').value,
+    lang: document.getElementById('lang').value,
+    cat: document.getElementById('category').value,
+    notes: document.getElementById('notes').value.trim()
+  };
+  status(kind === 'rerun' ? '⏳ Гоняю каскад на сервере…' : '⏳ Передаю заказ серверу…', true);
+  try {
+    const r = await fetch(route, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload) });
+    const j = await r.json();
+    if (j.ok && !j.warning) {
+      status('✅ ' + (j.message || 'готово') + (kind === 'rerun' ? ' — обновляю страницу…' : ''), true);
+      if (kind === 'rerun') setTimeout(() => location.reload(), 800);
+    } else if (j.ok && j.warning) {
+      /* Отчёт остался прежним, но молчать об этом нельзя: подержим сообщение на экране
+         подольше и всё равно перезагрузим — там уже висит причина в статусе. */
+      status('⚠ ' + (j.message || 'прогон не дал текста'), false);
+      if (kind === 'rerun') setTimeout(() => location.reload(), 2200);
+    } else {
+      status('⚠ ' + (j.error || 'сервер вернул ошибку'), false);
+    }
+  } catch (e) {
+    status('⚠ Сервер не отвечает (' + e + '). Запусти: python tools/serve.py', false);
+  }
+}
+
 function send(kind) {
   const text = compose(kind);
+  if (LIVE) { sendLive(kind, text); return; }
   const bridge = bridgeNow();
   if (bridge) {
     try {
