@@ -34,3 +34,4 @@ docs/BACKERS.md
 # same rule AGENTS.md applies to evaluation corpora).
 b2s_fetched/
 dashboard/render.html
+staging/

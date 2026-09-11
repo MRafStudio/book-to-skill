@@ -16,6 +16,7 @@
 </script>
 <style>
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
 
   /* Запасная палитра: используется ТОЛЬКО если приложение не дало своих переменных */
   html.light { --b2s-bg: #ffffff; --b2s-fg: #14161a; --b2s-muted: #5b6470;
@@ -26,7 +27,6 @@
   html { color-scheme: light dark; }
   body {
     margin: 0; padding: 14px; font-size: 13px;
-    /* Переменные приложения, когда есть; иначе -- наша палитра */
     background: var(--card, var(--b2s-bg));
     color: var(--foreground, var(--b2s-fg));
     border-radius: 10px;
@@ -36,6 +36,7 @@
   h1 { font-size: 15px; margin: 0 0 2px; font-weight: 600; }
   h2 { font-size: 12px; margin: 14px 0 6px; font-weight: 600; text-transform: uppercase;
        letter-spacing: .04em; color: var(--muted-foreground, var(--b2s-muted)); }
+  h3 { font-size: 13px; margin: 0 0 8px; font-weight: 600; }
   .url { font-family: ui-monospace, Consolas, monospace; font-size: 11px;
          color: var(--muted-foreground, var(--b2s-muted)); word-break: break-all; margin-bottom: 10px; }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
@@ -73,6 +74,23 @@
   button:hover { border-color: var(--accent, var(--b2s-accent)); }
   .hint { font-size: 11px; margin-top: 8px; color: var(--muted-foreground, var(--b2s-muted)); }
   code { font-family: ui-monospace, Consolas, monospace; }
+
+  /* Тумблер предпросмотра черновика */
+  .switchRow { display: flex; align-items: flex-start; gap: 8px; margin-top: 6px;
+               border: 1px solid var(--border, var(--b2s-line)); border-radius: 8px; padding: 8px 10px; }
+  .switchRow input { margin: 2px 0 0; flex: 0 0 auto; }
+  .switchRow .txt { font-size: 11.5px; }
+  .switchRow .txt b { display: block; font-size: 12px; margin-bottom: 2px; }
+
+  /* Модалка предупреждения */
+  .modal { position: fixed; inset: 0; z-index: 10; display: flex;
+           align-items: center; justify-content: center; padding: 16px;
+           background: rgba(0, 0, 0, .45); }
+  .modalBox { max-width: 560px; border: 1px solid var(--border, var(--b2s-line));
+              border-radius: 10px; padding: 16px;
+              background: var(--card, var(--b2s-bg)); color: var(--foreground, var(--b2s-fg)); }
+  .modalBox p { margin: 0 0 8px; font-size: 12px; line-height: 1.45; }
+  .modalBox .row { margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -112,7 +130,29 @@
   <div class="hint">Текст выше — очищенный <b>источник</b>: он всегда на языке оригинала.
     Перевод самого источника не делается — он бы стоил токенов и вносил искажения в цитаты,
     формулы и имена API. Язык выбирается ниже и применяется к тому, что создаётся
-    <i>из</i> этого текста, — к скиллу и его главам.</div>
+    <i>из</i> этого текста, — к скиллу и его главам. Текст показана как есть, файл целиком:
+    <span id="srcPath" class="mono"></span></div>
+
+  <h2>Предполагаемый скилл</h2>
+  <div class="switchRow">
+    <input type="checkbox" id="showDraft">
+    <div class="txt">
+      <b>Показывать предполагаемый скилл до записи</b>
+      Выключено по умолчанию. При включении спросим подтверждение: показ черновика требует
+      прогона генерации, а каждая перегенерация после правок оплачивается заново.
+      Постоянные скиллы в <code>skills/</code> при этом не пишутся — сначала черновик в
+      <code>staging/</code>, установка только по твоей команде.
+    </div>
+  </div>
+  <div id="draftBox" hidden>
+    <div class="chips" id="draftStats"></div>
+    <pre class="text" id="draftText"></pre>
+    <div class="hint" id="draftFiles"></div>
+    <div class="row">
+      <button class="primary" onclick="send('install')">✅ Установить в skills/&lt;категория&gt;</button>
+      <button onclick="send('draft')">♻ Перегенерировать черновик</button>
+    </div>
+  </div>
 
   <h2>Настройки генерации черновика</h2>
   <div class="grid">
@@ -161,9 +201,10 @@
       <textarea id="notes" rows="3" placeholder="напр. выкинуть лицензионный футер, главы по h2, сохранять английские термины в скобках"></textarea>
     </div>
   </div>
-  <div class="hint">Про язык: имена API, имена фреймворков и точные названия сущностей остаются
+  <div class="hint">Про язык: имена API, имён фреймворков и точные названия сущностей остаются
     в оригинале даже в русском скилле — иначе их невозможно будет найти в документации.
-    Переводится проза, определения и пояснения.</div>
+    Переводится проза, определения и пояснения. <code>description</code> скилла всегда английский
+    (<code>Use when …</code>) — по нему Hermes выбирает, когда скилл подгружать.</div>
 
   <h2>Состояние движка</h2>
   <div class="chips" id="engine"></div>
@@ -173,14 +214,32 @@
     <button onclick="send('draft')">📝 Сгенерировать черновик скилла (staging)</button>
     <button onclick="send('review')">🔍 Разбери результат и скажи, что не так</button>
   </div>
-  <div class="hint">Кнопки отправляют настройки агенту. Ничего на диск в постоянные скиллы
+  <div class="hint">Кнопки отправляют настройки агенту. Ничего на диске в постоянные скиллы
     не пишется — сначала черновик, потом установка.</div>
+
+  <div class="modal" id="modal" hidden>
+    <div class="modalBox">
+      <h3>⚠ Показать предполагаемый скилл до записи?</h3>
+      <p id="costText"></p>
+      <p>Сам показ бесплатен — платится <b>генерация</b>: прочитать очищенный текст и записать
+        скилл (SKILL.md, главы, глоссарий, паттерны, шпаргалка). После просмотра можно править
+        и перегенерировать — каждая итерация оплачивается заново, поэтому счёт растёт кратно
+        числу итераций, а не вдвое за один раз.</p>
+      <p>Установка в постоянные скиллы произойдёт <b>только</b> по отдельной команде.</p>
+      <div class="row">
+        <button class="primary" onclick="confirmDraft()">Да, показать</button>
+        <button onclick="cancelDraft()">Отмена</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
 const DATA = __B2S_DATA__;
 const R = DATA.report || {};
+const D = DATA.draft || null;
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const nf = (n) => (n || 0).toLocaleString('ru-RU');
 
 /* --- тема --- */
 const themeBtn = document.getElementById('themeBtn');
@@ -196,6 +255,7 @@ themeBtn.addEventListener('click', () => {
 paintBtn();
 
 document.getElementById('url').textContent = R.url || '';
+document.getElementById('srcPath').textContent = R.source_file || '—';
 document.getElementById('slug').value = (R.source_file || '').split(/[\\/]/).pop().replace(/\.[a-z]+$/, '') || '';
 
 /* --- verdict --- */
@@ -221,9 +281,9 @@ document.getElementById('attempts').innerHTML = (R.attempts || []).map(a =>
 
 /* --- stats --- */
 document.getElementById('stats').innerHTML = R.ok ? [
-  '<span class="chip">символов: <b>' + (R.chars || 0).toLocaleString('ru-RU') + '</b></span>',
-  '<span class="chip">слов: <b>' + (R.words || 0).toLocaleString('ru-RU') + '</b></span>',
-  '<span class="chip">~токенов: <b>' + (R.est_tokens || 0).toLocaleString('ru-RU') + '</b></span>',
+  '<span class="chip">символов: <b>' + nf(R.chars) + '</b></span>',
+  '<span class="chip">слов: <b>' + nf(R.words) + '</b></span>',
+  '<span class="chip">~токенов: <b>' + nf(R.est_tokens) + '</b></span>',
   '<span class="chip">скачано: <b>' + Math.round((R.raw_bytes || 0) / 1024) + ' КБ</b></span>',
   '<span class="chip">title: <b>' + esc(R.title || '—') + '</b></span>'
 ].join('') : '—';
@@ -238,6 +298,7 @@ const E = DATA.engine || {};
 const mark = (b) => b ? '✓' : '✗';
 document.getElementById('engine').innerHTML = [
   '<span class="chip">python: <b>' + esc(E.python) + '</b></span>',
+  '<span class="chip">модель: <b>' + esc(E.model || '—') + '</b></span>',
   '<span class="chip' + (E.trafilatura ? ' ok' : ' warn') + '">' + mark(E.trafilatura) + ' trafilatura</span>',
   '<span class="chip' + (E.beautifulsoup4 ? ' ok' : ' warn') + '">' + mark(E.beautifulsoup4) + ' bs4</span>',
   '<span class="chip' + (E.docling ? ' ok' : ' warn') + '">' + mark(E.docling) + ' docling</span>',
@@ -257,6 +318,57 @@ const sel = document.getElementById('category');
   sel.appendChild(o);
 });
 
+/* --- предполагаемый скилл: тумблер выключен по умолчанию --- */
+const toggle = document.getElementById('showDraft');
+const modal = document.getElementById('modal');
+const draftBox = document.getElementById('draftBox');
+
+function renderDraft() {
+  const stats = document.getElementById('draftStats');
+  const text = document.getElementById('draftText');
+  const files = document.getElementById('draftFiles');
+  if (!D) {
+    stats.innerHTML = '<span class="chip warn">черновик ещё не создан</span>';
+    text.textContent = 'Нажми «Сгенерировать черновик скилла (staging)» внизу — я прогоню генерацию, ' +
+      'положу файлы в staging/ и перерисую этот дашборд с черновиком внутри. В skills/ ничего не попадёт.';
+    files.textContent = '';
+    return;
+  }
+  const parts = D.parts || {};
+  stats.innerHTML = [
+    '<span class="chip ok">файлов: <b>' + nf(D.file_count) + '</b></span>',
+    '<span class="chip">глав: <b>' + nf(D.chapters) + '</b></span>',
+    '<span class="chip">SKILL.md: <b>' + nf(parts['SKILL.md']) + ' симв</b></span>',
+    '<span class="chip">staging: <b>' + esc(D.dir) + '</b></span>'
+  ].join('');
+  text.textContent = D.skill_md || '';
+  files.textContent = (D.files || []).join(' · ');
+}
+
+toggle.addEventListener('change', () => {
+  if (toggle.checked) {
+    const est = R.est_tokens || 0;
+    document.getElementById('costText').textContent =
+      'Ориентир по объёму: очищенный источник — ~' + nf(est) + ' токенов. Генерация скилла ' +
+      'прочитает их и запишет SKILL.md + главы + глоссарий + паттерны + шпаргалку — это и есть ' +
+      'основной расход (порядка объёма источника на вход и единиц тысяч токенов на выход).';
+    modal.hidden = false;
+  } else {
+    draftBox.hidden = true;
+  }
+});
+function confirmDraft() {
+  modal.hidden = true;
+  draftBox.hidden = false;
+  renderDraft();
+}
+function cancelDraft() {
+  toggle.checked = false;
+  modal.hidden = true;
+  draftBox.hidden = true;
+}
+if (D) { toggle.checked = true; draftBox.hidden = false; renderDraft(); }
+
 /* --- talk back to the agent --- */
 const LANG_LABEL = { ru: 'русский', en: 'английский', src: 'без изменений (как в источнике)' };
 function send(kind) {
@@ -268,9 +380,12 @@ function send(kind) {
     'режим: ' + document.getElementById('mode').value,
     'глубина: ' + document.getElementById('depth').value,
     'язык скилла: ' + lang + ' (' + LANG_LABEL[lang] + ')',
+    'description: английский (Use when …)',
     'категория: ' + document.getElementById('category').value,
     'slug: ' + document.getElementById('slug').value,
-    'победившая стратегия сейчас: ' + (R.strategy || '—') + ' | мусор: ' + junkTotal
+    'предпросмотр черновика включён: ' + (toggle.checked ? 'да' : 'нет'),
+    'победившая стратегия сейчас: ' + (R.strategy || '—') + ' | мусор: ' + junkTotal,
+    'черновик: ' + (D ? D.dir : 'нет')
   ];
   const notes = document.getElementById('notes').value.trim();
   if (notes) lines.push('замечания: ' + notes);
