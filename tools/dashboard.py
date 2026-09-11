@@ -76,7 +76,8 @@ def session_info(override: str = "") -> dict:
                 info["session_id"] = sid
                 agg = cur.execute(
                     "select model, billing_provider, sum(api_call_count), sum(input_tokens), "
-                    "sum(output_tokens), sum(coalesce(actual_cost_usd, estimated_cost_usd, 0)) "
+                    "sum(output_tokens), sum(coalesce(actual_cost_usd, 0)), "
+                    "sum(coalesce(estimated_cost_usd, 0)) "
                     "from session_model_usage where session_id = ? "
                     "group by model, billing_provider order by sum(api_call_count) desc limit 1",
                     (sid,),
@@ -87,7 +88,9 @@ def session_info(override: str = "") -> dict:
                     info["api_calls"] = agg[2] or 0
                     info["input_tokens"] = agg[3] or 0
                     info["output_tokens"] = agg[4] or 0
-                    info["est_cost_usd"] = round(agg[5] or 0.0, 4)
+                    actual, estimated = agg[5] or 0.0, agg[6] or 0.0
+                    info["est_cost_usd"] = round(actual if actual > 0 else estimated, 4)
+                    info["cost_kind"] = "факт" if actual > 0 else "оценка"
                 srow = cur.execute(
                     "select started_at, message_count, model from sessions where id = ?", (sid,)
                 ).fetchone()

@@ -318,7 +318,7 @@ document.getElementById('engine').innerHTML = [
   '<span class="chip ok">модель сессии: <b>' + esc(S.model || '—') + '</b></span>',
   '<span class="chip">провайдер: <b>' + esc(S.provider || '—') + '</b></span>',
   '<span class="chip">сессия: <b>' + nf(S.input_tokens) + ' in / ' + nf(S.output_tokens) + ' out</b>' +
-    (S.est_cost_usd ? ' ≈ $' + S.est_cost_usd : '') + '</span>',
+    (S.est_cost_usd ? ' ≈ $' + S.est_cost_usd + (S.cost_kind === 'оценка' ? ' (оценка)' : ' (факт)') : '') + '</span>',
   '<span class="chip">python: <b>' + esc(E.python) + '</b></span>',
   '<span class="chip' + (E.trafilatura ? ' ok' : ' warn') + '">' + mark(E.trafilatura) + ' trafilatura</span>',
   '<span class="chip' + (E.beautifulsoup4 ? ' ok' : ' warn') + '">' + mark(E.beautifulsoup4) + ' bs4</span>',
