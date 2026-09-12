@@ -671,6 +671,8 @@ function B2SPane({ ctx }) {
      em привязан к кеглю группы (10px), а не к пикселям: высота держится при
      любом шрифте темы. Инлайном — классы панели доезжают не все. */
   const GROUP_CAP = { maxHeight: '7em', overflowY: 'auto', overscrollBehavior: 'contain' }
+  /* Раскладка зоны текста внутри группы: строки друг под другом. */
+  const GROUP_LEAD = 'flex min-w-0 flex-col gap-1'
   const FIELD_LINE = '1px solid color-mix(in oklab, ' + BASE + ' 22%, transparent)'
   /* Фон поля вычищенного текста — фон самой панели (тот же, на котором стоит
      подпись кнопки шага 1), а не наша вуаль: поле читается как «окно» в блоке,
@@ -821,8 +823,10 @@ function B2SPane({ ctx }) {
      Зелёный — темо-зависимый --ui-diff-add-border, жёлтый и красный — константы знаков
      (WARN_YELLOW / STOP_RED): смысл состояния не должен уезжать за темой, иначе
      warning и error станут неотличимы в чужой палитре. */
+  /* Потолок высоты стоит на ЗОНЕ ТЕКСТА внутри бокса (см. GROUP_CAP и GROUP_LEAD),
+     а не на самом боксе: кнопка управления живёт вне скролла — иначе при сужении
+     панели она уезжает под скроллбар и её не видно. */
   const catTone = {
-    ...GROUP_CAP,
     backgroundColor: PANEL_BG,
     border: catState === 'ok'
       ? '1px solid var(--ui-diff-add-border, ' + FIX_GREEN + ')'
@@ -842,47 +846,56 @@ function B2SPane({ ctx }) {
         'data-glass-raised': '',
         style: catTone,
         children: catState === 'ok'
-          ? [
+          ? jsx('div', { className: GROUP_LEAD, style: GROUP_CAP, children: [
               jsx('div', { className: CHIP_CHIEF, children: catInfo.desc }),
               catEmpty
                 ? jsx('div', { className: CHIP_MUTED, children: 'каталог пока пуст: в нём ни одного скилла' })
                 : null
-            ]
+            ] })
           : catState === 'no-frontmatter'
             ? [
-                jsx('div', {
-                  className: CHIP_CHIEF,
-                  children: '⚠ файл без frontmatter — Hermes его не читает, в промпт уйдёт голое имя категории.'
-                }),
-                jsx('div', {
-                  className: CHIP_MUTED,
-                  children: 'сейчас в файле: ' + ((catInfo.desc_raw || '').slice(0, 240) || '—')
-                }),
-                chipAction('🩹 Починить файл — обернуть текст в frontmatter',
-                  () => sendDesc('desc-fix'), busy === 'desc-fix', 'fix')
-              ]
-            : catIsNew
-              ? [
+                jsx('div', { className: GROUP_LEAD, style: GROUP_CAP, children: [
                   jsx('div', {
                     className: CHIP_CHIEF,
-                    children: 'описания категории нет — категория новая и пустая: агент увидит только имя группы.'
-                  }),
-                  jsx('div', { className: CHIP_MUTED, children: 'каталог пока пуст: в нём ни одного скилла' }),
-                  chipAction('✍ Написать описание категории',
-                    () => sendDesc('desc'), busy === 'desc', 'fix')
-                ]
-              : [
-                  jsx('div', {
-                    className: CHIP_CHIEF,
-                    children: 'описания категории нет — агент увидит только имя группы.'
+                    children: '⚠ файл без frontmatter — Hermes его не читает, в промпт уйдёт голое имя категории.'
                   }),
                   jsx('div', {
                     className: CHIP_MUTED,
-                    children: 'скиллов внутри: ' + catSkills + ' — они видны и грузятся как обычно; ' +
-                      'описание лишь подсказывает агенту, что это за группа и куда класть новое.'
-                  }),
-                  chipAction('✍ Написать описание категории',
-                    () => sendDesc('desc'), busy === 'desc', 'fix')
+                    children: 'сейчас в файле: ' + ((catInfo.desc_raw || '').slice(0, 240) || '—')
+                  })
+                ] }),
+                jsx('div', { className: 'pt-1', children:
+                  chipAction('🩹 Починить файл — обернуть текст в frontmatter',
+                    () => sendDesc('desc-fix'), busy === 'desc-fix', 'fix') })
+              ]
+            : catIsNew
+              ? [
+                  jsx('div', { className: GROUP_LEAD, style: GROUP_CAP, children: [
+                    jsx('div', {
+                      className: CHIP_CHIEF,
+                      children: 'описания категории нет — категория новая и пустая: агент увидит только имя группы.'
+                    }),
+                    jsx('div', { className: CHIP_MUTED, children: 'каталог пока пуст: в нём ни одного скилла' })
+                  ] }),
+                  jsx('div', { className: 'pt-1', children:
+                    chipAction('✍ Написать описание категории',
+                      () => sendDesc('desc'), busy === 'desc', 'fix') })
+                ]
+              : [
+                  jsx('div', { className: GROUP_LEAD, style: GROUP_CAP, children: [
+                    jsx('div', {
+                      className: CHIP_CHIEF,
+                      children: 'описания категории нет — агент увидит только имя группы.'
+                    }),
+                    jsx('div', {
+                      className: CHIP_MUTED,
+                      children: 'скиллов внутри: ' + catSkills + ' — они видны и грузятся как обычно; ' +
+                        'описание лишь подсказывает агенту, что это за группа и куда класть новое.'
+                    })
+                  ] }),
+                  jsx('div', { className: 'pt-1', children:
+                    chipAction('✍ Написать описание категории',
+                      () => sendDesc('desc'), busy === 'desc', 'fix') })
                 ]
       })
     ]
@@ -1049,7 +1062,6 @@ function B2SPane({ ctx }) {
     ? jsxs('div', {
         className: 'flex flex-col gap-0.5 rounded border px-2 py-1 text-[0.625rem] leading-snug',
         style: {
-          ...GROUP_CAP,
           backgroundColor: BLOCK_BG,
           borderColor: 'color-mix(in oklab, ' + BASE + ' 22%, transparent)'
         },
@@ -1061,8 +1073,10 @@ function B2SPane({ ctx }) {
               : 'новая папка — сливать не с чем'),
             'text-(--ui-text-secondary)'
           )),
-          ...chapterRowsList.map((line, i) =>
-            jsx('div', Ell(line), 'chap-' + i)),
+          /* Скроллится только список глав: кнопка «отправить агенту» обязана
+             оставаться на виду (та же раскладка, что у блока описания). */
+          jsx('div', { className: GROUP_LEAD, style: GROUP_CAP, children:
+            chapterRowsList.map((line, i) => jsx('div', Ell(line), 'chap-' + i)) }),
           jsx('div', {
             className: 'flex flex-wrap gap-1 pt-1',
             children: [
