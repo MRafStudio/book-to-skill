@@ -1,0 +1,179 @@
+"""BOOK → SKILL — REST-маршруты book-to-skill в живом Hermes dashboard.
+
+Зачем этот файл
+---------------
+Детерминированная часть панели (загрузка источника, очистка текста, отчёт,
+перенос готового черновика в ``skills/<категория>/<имя>/``) не требует LLM, а
+значит не должна уезжать «событием» в чат. Ядро Hermes монтирует этот файл под
+``/api/plugins/b2s/`` (``hermes_cli/web_server_dashboard.py``:
+``_mount_plugin_api_routes`` — нужен ``api`` в ``dashboard/manifest.json`` и имя
+плагина в ``plugins.enabled``), а панель дёргает маршруты через
+``ctx.rest('/api/plugins/b2s/rerun', …)``.
+
+LLM остаётся только там, где без него нельзя: написать главы черновика и
+разобрать их — это по-прежнему уходит в чат (``prompt.submit``).
+
+Маршруты (все — ``/api/plugins/b2s`` + путь ниже)
+-------------------------------------------------
+    GET  /health              живо ли ядро, где форк, какие черновики
+    GET  /state               состояние панели + история прогонов
+    GET  /categories          существующие категории скиллов (список для выпадашки)
+    GET  /skills              существующие скиллы профиля: имя = тема, главы внутри
+    POST /rerun   {src,…}     каскад: загрузка + очистка + отчёт
+    POST /text    {limit,…}   очищенный текст источника — то, что видно в панели
+    POST /install {name,…}    план (added/overwrite/keep); пишет ТОЛЬКО при confirm=true,
+                              режим: auto | create | append (долив) | replace (с бэкапом)
+
+Зависимостей нет: ядро — обычный Python форка (``tools/api.py``).
+"""
+from __future__ import annotations
+
+import importlib.util
+import json
+import os
+import sys
+import threading
+from pathlib import Path
+from typing import Any, Dict
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+PLUGIN_DIR = Path(__file__).resolve().parent
+CONFIG_FILE = PLUGIN_DIR / "config.json"
+DEFAULT_FORK = "D:/.VS/Projects/BOOK-TO-SKILL/_fork"
+DEFAULT_PYTHON = "D:/NEURO/Hermes/data/hermes/hermes-agent/venv/Scripts/python.exe"
+
+_lock = threading.Lock()
+_core: Any = None
+
+
+def config() -> Dict[str, str]:
+    """Настройки плагина: путь форка и интерпретатор для гейтов."""
+    data: Dict[str, Any] = {}
+    try:
+        loaded = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            data = loaded
+    except (OSError, ValueError):
+        data = {}
+    fork = os.environ.get("B2S_FORK") or data.get("fork") or DEFAULT_FORK
+    python = os.environ.get("B2S_PYTHON") or data.get("python") or DEFAULT_PYTHON
+    return {"fork": str(fork), "python": str(python)}
+
+
+def core() -> Any:
+    """Загрузить ``tools/api.py`` форка — один раз на процесс dashboard."""
+    global _core
+    with _lock:
+        if _core is not None:
+            return _core
+        cfg = config()
+        api_file = Path(cfg["fork"]) / "tools" / "api.py"
+        if not api_file.is_file():
+            raise HTTPException(status_code=503,
+                                detail=f"ядро book-to-skill не найдено: {api_file}")
+        os.environ.setdefault("B2S_PYTHON", cfg["python"])
+        tools_dir = str(api_file.parent)
+        for path in (str(api_file.parent.parent), tools_dir):
+            if path not in sys.path:
+                sys.path.insert(0, path)
+        spec = importlib.util.spec_from_file_location("b2s_tools_api", api_file)
+        if spec is None or spec.loader is None:
+            raise HTTPException(status_code=503, detail="не удалось загрузить ядро")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["b2s_tools_api"] = module   # аннотации pydantic резолвятся по имени
+        spec.loader.exec_module(module)
+        _core = module
+        return module
+
+
+router = APIRouter()
+
+
+class RerunBody(BaseModel):
+    src: str = ""
+    strat: str = ""
+    mode: str = ""
+    name: str = ""
+    cat: str = ""
+    depth: str = ""
+    lang: str = ""
+
+
+class InstallBody(BaseModel):
+    name: str = ""
+    cat: str = ""
+    confirm: bool = False
+    force: bool = False
+    mode: str = "auto"            # auto | create | append | replace
+    allow_overwrite: bool = True  # долив: можно ли трогать существующие файлы скилла
+
+
+class TextBody(BaseModel):
+    """Показ очищенного текста в панели: пустой path = последний прогон."""
+    path: str = ""
+    offset: int = 0
+    limit: int = 6000
+
+
+@router.get("/health")
+def health() -> Dict[str, Any]:
+    """Быстрая проба: панель показывает «ядро: на связи» без прогонов."""
+    module = core()
+    out = module.do_health()
+    out["fork"] = config()["fork"]
+    return out
+
+
+@router.get("/state")
+def state() -> Dict[str, Any]:
+    return core().do_state()
+
+
+@router.get("/categories")
+def categories() -> Dict[str, Any]:
+    """Категории, которые уже есть в профиле: панель даёт выбрать только из них.
+
+    Свободный ввод здесь вреден: категория — это механизм подбора скилла, и
+    выдуманное имя уводит скилл мимо агента.
+    """
+    return core().do_categories()
+
+
+@router.get("/skills")
+def skills() -> Dict[str, Any]:
+    """Скиллы, которые уже стоят в профиле: имя, категория, число глав, объём.
+
+    Нужен панели, чтобы имя выбирали из списка, а не придумывали. Занятое имя —
+    это не запрет, а сигнал «долив в существующий скилл»: панель сама
+    переключится в режим дополнения и покажет, что именно изменится.
+    """
+    return core().do_skills()
+
+
+@router.post("/rerun")
+def rerun(body: RerunBody) -> Dict[str, Any]:
+    """Шаг 1 панели: загрузить источник и очистить текст. Без LLM."""
+    return core().do_rerun(body.src, body.strat, body.mode, body.name,
+                           body.cat, body.depth, body.lang)
+
+
+@router.post("/text")
+def text(body: TextBody) -> Dict[str, Any]:
+    """Очищенный текст источника: панель показывает его тем же экраном, что и метрики."""
+    return core().do_text(body.path, body.offset, body.limit)
+
+
+@router.post("/install")
+def install(body: InstallBody) -> Dict[str, Any]:
+    """Шаг 3 панели: план переноса. Запись — только при confirm=true.
+
+    Без confirm возвращается план: что добавится, что перезапишется, что
+    останется от прежнего скилла. Панель показывает его перед подтверждением —
+    «замещение» вслепую здесь недопустимо.
+    """
+    if not body.name.strip():
+        raise HTTPException(status_code=400, detail="нужно имя скилла")
+    return core().do_install(body.name, body.cat, body.confirm, body.force,
+                             body.mode, body.allow_overwrite)

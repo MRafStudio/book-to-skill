@@ -1,0 +1,5 @@
+{
+  "fork": "D:/.VS/Projects/BOOK-TO-SKILL/_fork",
+  "python": "D:/NEURO/Hermes/data/hermes/hermes-agent/venv/Scripts/python.exe",
+  "note": "fork — рабочий клон форка MRafStudio/book-to-skill (оттуда берётся tools/api.py, детерминированное ядро); python — интерпретатор с trafilatura/bs4 для гейтов validate/scan. Оба поля переопределяются переменными B2S_FORK / B2S_PYTHON."
+}
