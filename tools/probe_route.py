@@ -13,7 +13,11 @@
 -------------
     python tools/probe_route.py categories
     python tools/probe_route.py text --post '{"limit":0}'
+    python tools/probe_route.py plan --post '{"name":"python-pathlib","cat":"software-development"}'
     python tools/probe_route.py categories --port 9119
+
+Профиль берётся из hermes_paths (HERMES_HOME или типовые места) — путь конкретной
+машины в файле не держим: инструмент живёт в репозитории форка.
 """
 from __future__ import annotations
 
@@ -25,13 +29,15 @@ import urllib.request
 from http.cookiejar import CookieJar
 from pathlib import Path
 
-HERMES_HOME = Path("D:/NEURO/Hermes/data/hermes")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from hermes_paths import hermes_home  # noqa: E402  — профиль ищем, а не помним
+
 PLUGIN_ID = "b2s"
 
 
 def dashboard_creds() -> tuple[str, str]:
     """Логин/пароль dashboard из config.yaml (dashboard.username/password)."""
-    cfg = HERMES_HOME / "config.yaml"
+    cfg = hermes_home() / "config.yaml"
     user = password = ""
     for line in cfg.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()

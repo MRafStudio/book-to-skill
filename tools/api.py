@@ -28,12 +28,14 @@ LLM остаётся там, где без него никак: написать
     python tools/api.py install --name python-pathlib --confirm   # реальный перенос
     python tools/api.py install --name python-pathlib --confirm --mode append   # долив
     python tools/api.py install --name python-pathlib --confirm --mode replace  # с бэкапом
+    python tools/api.py plan --name python-pathlib     # долив: что слить, что переписать
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -311,6 +313,204 @@ def _plan_of(staging: Path, target: Path) -> dict:
     return {"added": added, "overwrite": overwrite, "same": same, "keep": keep}
 
 
+# ── план по главам: что слить, что переписать, что добавить ───────────────────
+# Файловый план (_plan_of) отвечает, что произойдёт с файлами, но не на вопрос
+# владельца «что из нового источника слить со старыми главами, а что написать
+# заново». Прозу пишет LLM, поэтому ядро делает детерминированную часть: для
+# каждой главы черновика находит ближайшие по теме файлы скилла и показывает
+# раскладку с причиной. Решение — за агентом, счёт — за Python.
+
+_STOP = frozenset("""
+и в во не что он на я с со как а то все она так его но да ты к у же вы за бы по
+только ее мне было вот от меня еще нет о из ему теперь когда даже ну вдруг ли
+если уже или ни быть был него до вас нибудь опять уж вам ведь там потом себя
+ничего ей может они тут где есть надо ней для мы тебя их чем была сам чтоб без
+будто чего раз тоже себе под будет ж тогда кто этот того потому этого какой
+совсем ним здесь этом один почти мой тем чтобы нее сейчас были куда зачем
+сказать всех никогда сегодня можно при наконец два об другой хоть после над
+больше тот через эти нас про всего них какая много разве три эту моя впрочем
+хорошо свою этой перед иногда лучше чуть том нельзя такой им более всегда
+конечно всю между это the and for with that this from are was were will can
+has have not but you your our their its into out use used using when which
+what how all any may more most other than then them these they some such only
+also over under about after before between during each same""".split())
+
+_WORD = re.compile(r"[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё0-9_\-]{3,}")
+_HEAD = re.compile(r"^(#{1,3})\s+(.*)$", re.M)
+
+
+def _words(text: str) -> list[str]:
+    """Значимые слова: без стоп-слов, регистр не важен, короче четырёх букв — мимо."""
+    return [m.group(0).lower() for m in _WORD.finditer(text)
+            if m.group(0).lower() not in _STOP]
+
+
+def _topic(path: Path, top: int = 25) -> dict:
+    """Тема файла: заголовок, подзаголовки и словарь — по ним считается близость."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    heads = [h.strip() for _, h in _HEAD.findall(text)]
+    counts: dict[str, int] = {}
+    for word in _words(text):
+        counts[word] = counts.get(word, 0) + 1
+    terms = [w for w, _ in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:top]]
+    return {"title": heads[0] if heads else path.stem, "heads": heads[1:9],
+            "terms": set(terms), "term_list": terms, "words": sum(counts.values())}
+
+
+def _overlap(a: set[str], b: set[str]) -> float:
+    """Доля общего: совпадение считаем от меньшего набора.
+
+    Jaccard для «та же тема, другой текст» слишком строг — он топит похожие
+    главы в 0.1, и слияние не предлагается вовсе.
+    """
+    if not a or not b:
+        return 0.0
+    return len(a & b) / min(len(a), len(b))
+
+
+def _kind(rel: str) -> str:
+    """Глава, часть справочника (глоссарий/паттерны/шпаргалка) или прочее."""
+    name = rel.rsplit("/", 1)[-1].lower()
+    if rel.startswith("chapters/"):
+        return "chapter"
+    if name.startswith(("glossary", "patterns", "cheatsheet")):
+        return "part"
+    return "other"
+
+
+def _md_files(root: Path) -> list[Path]:
+    """Markdown-файлы, кроме SKILL.md: индекс пересобирается всегда, он не глава."""
+    return sorted(p for p in root.rglob("*.md")
+                  if p.is_file() and p.name.lower() != "skill.md")
+
+
+def _chapter_plan(staging: Path, target: Path, threshold: float = 0.35) -> dict:
+    """Раскладка «новое против существующего»: слить, переписать или добавить.
+
+    Совпадение пути — rewrite (файл тот же, содержимое другое). Иначе ищем файл
+    того же типа с наибольшей близостью: выше порога — merge с указанием, во что
+    сливать. Ниже — новая глава. Ничьё решение здесь не принимается: это карта.
+    """
+    old: dict[str, dict] = {}
+    if target.is_dir():
+        for path in _md_files(target):
+            old[path.relative_to(target).as_posix()] = _topic(path)
+    rows: list[dict] = []
+    for path in _md_files(staging):
+        rel = path.relative_to(staging).as_posix()
+        new = _topic(path)
+        row = {"file": rel, "kind": _kind(rel), "title": new["title"],
+               "words": new["words"], "terms": new["term_list"][:12],
+               "action": "add", "merge_into": "", "similarity": 0.0, "confidence": "",
+               "why": ""}
+        if rel in old:
+            row.update(action="rewrite", merge_into=rel, similarity=1.0,
+                       why="файл с таким именем уже есть в скилле")
+        else:
+            best, score = "", 0.0
+            for orel, otopic in old.items():
+                if _kind(orel) != row["kind"]:
+                    continue
+                value = round(0.7 * _overlap(new["terms"], otopic["terms"]) + 0.3 * _overlap(
+                    set(" ".join(new["heads"]).lower().split()),
+                    set(" ".join(otopic["heads"]).lower().split())), 3)
+                if value > score:
+                    best, score = orel, value
+            row["similarity"] = score
+            if best and score >= threshold:
+                # Сильное пересечение — слияние почти наверняка; слабое — повод
+                # посмотреть глазами, поэтому отделяем «надёжно» от «возможно».
+                row.update(action="merge", merge_into=best,
+                           confidence="high" if score >= 0.6 else "medium",
+                           why=f"тема пересекается с {best} (близость {score:.2f})")
+            elif best:
+                row["why"] = f"ближайшее — {best}, но близость низкая ({score:.2f})"
+            else:
+                row["why"] = "в скилле нет файлов того же типа"
+        rows.append(row)
+    # Файл, в который предлагают слить новую главу, «останется как есть» только
+    # на бумаге: при слиянии он меняется. Поэтому такие файлы идут в отдельный
+    # список «будет дополнен» — иначе план обещает то, чего не будет.
+    merged_into: dict[str, list[str]] = {}
+    for row in rows:
+        if row["action"] == "merge":
+            merged_into.setdefault(row["merge_into"], []).append(row["file"])
+    keep = [{"file": rel, "title": topic["title"], "words": topic["words"]}
+            for rel, topic in old.items()
+            if not (staging / rel).is_file() and rel not in merged_into]
+    touched = [{"file": rel, "by": merged_into[rel]} for rel in sorted(merged_into)]
+    counts = {a: sum(1 for r in rows if r["action"] == a) for a in ("add", "merge", "rewrite")}
+    return {"chapters": rows, "keep": keep, "touched": touched, "counts": counts}
+
+
+def _chapter_prompt(name: str, mode: str, plan: dict) -> str:
+    """Готовая постановка для LLM: раскладка + что от него требуется.
+
+    Текст намеренно без «служебных» формулировок — уходит в чат как обычный запрос.
+    """
+    lines = [f"Долив в скилл «{name}» (режим {mode}). Раскладка по файлам:"]
+    for row in plan["chapters"]:
+        if row["action"] == "merge":
+            tail = "" if row.get("confidence") == "high" else " — пересечение слабое, смотри глазами"
+            lines.append(f"- {row['file']} («{row['title']}») → слить в {row['merge_into']} "
+                         f"(близость {row['similarity']:.2f}){tail}")
+        elif row["action"] == "rewrite":
+            lines.append(f"- {row['file']} («{row['title']}») → переписать существующий файл")
+        else:
+            lines.append(f"- {row['file']} («{row['title']}») → новая глава")
+    if plan["touched"]:
+        lines.append("Будут дополнены (слияние в существующий файл): " +
+                     ", ".join(f"{row['file']} ← {', '.join(row['by'])}" for row in plan["touched"]))
+    if plan["keep"]:
+        lines.append("Остаются нетронутыми: " + ", ".join(k["file"] for k in plan["keep"]))
+    lines.append("")
+    lines.append("По каждой строке реши: слить в существующий файл (объединить, убрав дубли), "
+                 "переписать целиком или добавить новой главой. Спорные случаи — на решение "
+                 "владельца, с обоснованием.")
+    return "\n".join(lines)
+
+
+def do_chapter_plan(name: str, cat: str = "", mode: str = "auto",
+                    save: bool = False, threshold: float = 0.35) -> dict:
+    """План долива по главам: раскладка + причина + постановка для LLM.
+
+    Ничего не пишет в скилл. ``save`` кладёт план рядом с черновиком
+    (``staging/<имя>/merge-plan.json``), чтобы агент читал его файлом, а не из
+    вывода команды.
+    """
+    try:
+        skill = _safe_segment(name, "имя скилла")
+        category = _safe_segment(cat, "категория") if cat else dash.DEFAULT_CATEGORY
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    staging = STAGING / skill
+    if not staging.is_dir():
+        return {"ok": False, "error": f"нет черновика: {staging}",
+                "hint": "сначала шаг 2 — «Сделать черновик»"}
+    target = hermes_home() / "skills" / category / skill
+    target_exists = target.is_dir() and any(target.iterdir())
+    wanted = (mode or "auto").strip().lower()
+    if wanted == "auto":
+        wanted = "append" if target_exists else "create"
+    plan = _chapter_plan(staging, target, threshold)
+    info = {
+        "ok": True, "name": skill, "category": category, "mode": wanted,
+        "staging": str(staging), "target": str(target), "target_exists": target_exists,
+        "threshold": threshold, **plan,
+        "prompt": _chapter_prompt(skill, wanted, plan),
+        "saved": "",
+    }
+    if save:
+        dest = staging / "merge-plan.json"
+        dest.write_text(json.dumps({k: v for k, v in info.items() if k != "saved"},
+                                   ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        info["saved"] = str(dest)
+    return info
+
+
 def _backup_target(target: Path, name: str) -> str:
     """Копия скилла перед правкой на месте. Без неё «замещение» необратимо.
 
@@ -540,6 +740,13 @@ def do_install(name: str, cat: str = "", confirm: bool = False,
         # что уже внесено: долив «органичен» только когда это видно до клика
         "existing_sources": _existing_sources(target),
     }
+    if target_exists and not confirm:
+        # Долив: к файловому плану добавляем раскладку по главам — что слить со
+        # старыми, что написать заново. Решение принимает LLM, карту даёт ядро.
+        chapter_plan = _chapter_plan(staging, target)
+        info["chapters"] = chapter_plan["chapters"]
+        info["chapter_counts"] = chapter_plan["counts"]
+        info["chapter_keep"] = chapter_plan["keep"]
     if not skill_md.is_file():
         return {**info, "ok": False, "error": "в черновике нет SKILL.md"}
     if not confirm:
@@ -654,6 +861,15 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("skills", help="существующие скиллы профиля (имя + категория + главы)")
 
+    p_plan = sub.add_parser("plan", help="план долива по главам: слить / переписать / добавить")
+    p_plan.add_argument("--name", required=True)
+    p_plan.add_argument("--cat", default="")
+    p_plan.add_argument("--mode", default="auto", choices=["auto", "create", "append", "replace"])
+    p_plan.add_argument("--threshold", type=float, default=0.35,
+                        help="порог близости, с которого предлагается слияние")
+    p_plan.add_argument("--save", action="store_true",
+                        help="положить план в staging/<имя>/merge-plan.json")
+
 
     args = parser.parse_args(argv)
     if args.cmd == "health":
@@ -669,6 +885,8 @@ def main(argv: list[str] | None = None) -> int:
                        args.depth, args.lang)
     elif args.cmd == "text":
         out = do_text(args.path, args.offset, args.limit)
+    elif args.cmd == "plan":
+        out = do_chapter_plan(args.name, args.cat, args.mode, args.save, args.threshold)
     else:
         out = do_install(args.name, args.cat, args.confirm, args.force,
                          args.mode, args.allow_overwrite)

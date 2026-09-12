@@ -43,7 +43,20 @@ python tools/sync_hermes.py --pull     # профиль → форк (забра
 
 ```bash
 python tools/probe_route.py skills      # 200 + контрольный 404 = смонтирован
+python tools/probe_route.py plan --post '{"name":"python-pathlib","cat":"software-development"}'
+python tools/restart_dashboard.py       # перезапуск dashboard (после правки plugin_api.py)
+python tools/restart_dashboard.py --list  # какие службы нашлись и в каком состоянии
 ```
+
+Права админа `restart_dashboard.py` просит сам (UAC). Имя службы он **ищет по
+префиксу** `HermesGateway`, а не помнит: у каждой установки оно своё
+(«HermesGateway (D:_NEURO_Hermes)»), и зашитое имя на чужой машине молча не
+нашлось бы. Состояние читается через PowerShell: русский `sc` переводит свои
+маркеры («ИМЯ_СЛУЖБЫ», «СОСТОЯНИЕ»), и разбор по ним даёт «UNKNOWN».
+
+**Маршруты backend'а:** `/api/plugins/b2s/` + `skills` (каталог скиллов),
+`text` (очищенный текст), `plan` (раскладка долива по главам), `install`
+(запись с бэкапом), `review` (разбор черновика).
 
 ## `config.json` — локальный, в git не едет
 

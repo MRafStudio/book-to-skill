@@ -69,8 +69,9 @@ python tools/install_plugin.py                # поставить / обнов�
 - **Панель** (`plugin.js`) подхватывается хот-релоадом — перезапускать чат не
   нужно, достаточно переоткрыть правый rail.
 - **Backend** монтирует маршруты только на старте → нужен рестарт dashboard
-  (перезапуск службы Hermes). На этой машине это делает
-  `tools/restart_dashboard.bat`.
+  (перезапуск службы Hermes): `python tools/restart_dashboard.py` (права админа
+  скрипт просит сам, имя службы ищет по префиксу `HermesGateway` — на другой
+  машине оно другое). `tools/restart_dashboard.bat` рядом — только обёртка.
 - **Проверка:**
 
 ```bash
@@ -84,6 +85,7 @@ python tools/probe_route.py skills     # 200 + контрольный 404 = см
 | Панели нет в rail'е | плагин не включён в `plugins.enabled` → `python tools/install_plugin.py --enable` (или `hermes plugins enable b2s`) |
 | Панель есть, кнопки отвечают 503 «не задан путь к клону» | нет `config.json` → запусти установщик или задай `B2S_FORK` |
 | Маршрут `/api/plugins/b2s/skills` даёт 404 | backend не смонтирован: проверь, что на месте `plugins/b2s/__init__.py` и `plugin.yaml`, и что dashboard рестартован |
+| `restart_dashboard.py`: «служба dashboard не найдена» | служба называется иначе — задай явно: `python tools/restart_dashboard.py --name "<имя из services.msc>"` |
 | Очищенный текст пустой, «мусор» большой | нет `trafilatura`/`bs4` у интерпретатора из поля `python` в `config.json` |
 | Другой клон форка | переопредели: `B2S_FORK=D:/path/to/clone` (или поправь `config.json`) |
 

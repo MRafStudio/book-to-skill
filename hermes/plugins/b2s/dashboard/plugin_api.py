@@ -23,6 +23,8 @@ LLM остаётся только там, где без него нельзя: �
     POST /text    {limit,…}   очищенный текст источника — то, что видно в панели
     POST /install {name,…}    план (added/overwrite/keep); пишет ТОЛЬКО при confirm=true,
                               режим: auto | create | append (долив) | replace (с бэкапом)
+    POST /plan    {name,…}    долив по главам: что слить со старыми, что переписать,
+                              что добавить; плюс готовая постановка для LLM. Не пишет.
 
 Зависимостей нет: ядро — обычный Python форка (``tools/api.py``).
 """
@@ -144,6 +146,15 @@ class InstallBody(BaseModel):
     allow_overwrite: bool = True  # долив: можно ли трогать существующие файлы скилла
 
 
+class PlanBody(BaseModel):
+    """План долива по главам: раскладка сходства + постановка для LLM."""
+    name: str = ""
+    cat: str = ""
+    mode: str = "auto"           # auto | create | append | replace
+    threshold: float = 0.35      # с какой близости предлагать слияние
+    save: bool = False           # положить план в staging/<имя>/merge-plan.json
+
+
 class TextBody(BaseModel):
     """Показ очищенного текста в панели: пустой path = последний прогон."""
     path: str = ""
@@ -197,6 +208,19 @@ def rerun(body: RerunBody) -> Dict[str, Any]:
 def text(body: TextBody) -> Dict[str, Any]:
     """Очищенный текст источника: панель показывает его тем же экраном, что и метрики."""
     return core().do_text(body.path, body.offset, body.limit)
+
+
+@router.post("/plan")
+def plan(body: PlanBody) -> Dict[str, Any]:
+    """Раскладка по главам для долива: слить / переписать / добавить.
+
+    Решение принимает LLM (в панели — кнопкой «отправить агенту»), а ядро даёт
+    детерминированную часть: для каждой главы черновика — ближайшие по теме
+    файлы скилла и близость. Запись в скилл тут невозможна по построению.
+    """
+    if not body.name.strip():
+        raise HTTPException(status_code=400, detail="нужно имя скилла")
+    return core().do_chapter_plan(body.name, body.cat, body.mode, body.save, body.threshold)
 
 
 @router.post("/install")

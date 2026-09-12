@@ -93,6 +93,34 @@ function planRows(out) {
   return rows
 }
 
+/* Раскладка по главам (ответ /plan) человеческими строками. Владельцу нужен
+   ответ на вопрос «что из нового источника слить со старыми главами, а что
+   писать заново» — по файловому плану этого не видно: там только имена. */
+function chapterRows(out) {
+  const rows = []
+  const act = { merge: '⇄ слить', rewrite: '⟳ переписать', add: '＋ новая' }
+  const list = (out && out.chapters) || []
+  list.forEach((r) => {
+    const tag = act[r.action] || String(r.action || '?')
+    const where = r.action === 'add' ? '' : ' → ' + (r.merge_into || '')
+    const weak = r.action === 'merge' && r.confidence !== 'high' ? ' · пересечение слабое' : ''
+    rows.push(tag + ': ' + r.file + where + weak)
+  })
+  /* Файл-цель слияния меняется, хотя в черновике его нет: в «не трогаем» ему
+     нельзя — панель обязана сказать, что именно будет дополнено. */
+  const touched = (out && out.touched) || []
+  if (touched.length) {
+    rows.push('✎ будет дополнен (' + touched.length + '): ' +
+      touched.slice(0, 3).map((t) => t.file).join(', ') + (touched.length > 3 ? ' …' : ''))
+  }
+  const keep = (out && out.keep) || []
+  if (keep.length) {
+    rows.push('＝ не трогаем (' + keep.length + '): ' + keep.slice(0, 4)
+      .map((k) => k.file).join(', ') + (keep.length > 4 ? ' …' : ''))
+  }
+  return rows
+}
+
 function Field({ label, hint, children }) {
   return jsxs('label', {
     className: 'flex min-w-0 flex-col gap-1',
@@ -117,7 +145,7 @@ function intentOf(kind, f) {
     const s = String(v == null ? '' : v).trim()
     if (s) parts.push(k + '=' + s)
   }
-  if (kind !== 'install' && kind !== 'review') push('src', f.src)
+  if (kind !== 'install' && kind !== 'review' && kind !== 'plan') push('src', f.src)
   push('name', f.name)
   push('strat', f.strat)
   push('mode', f.mode)
@@ -126,7 +154,7 @@ function intentOf(kind, f) {
   /* Долив или замена. Это нужно и генерации: если скилл с таким именем уже есть,
      агент обязан не переписать его вслепую, а дописать новые главы и показать,
      что именно он собирается тронуть. */
-  if (kind === 'draft' || kind === 'install') push('act', f.act)
+  if (kind === 'draft' || kind === 'install' || kind === 'plan') push('act', f.act)
   return parts.join(' | ')
 }
 
@@ -162,6 +190,8 @@ function B2SPane({ ctx }) {
   const [core, setCore] = useState(null)         // null — неизвестно, true/false — ответ /health
   const [report, setReport] = useState(null)     // последний прогон из /state
   const [preview, setPreview] = useState(null)   // предпросмотр установки (без записи)
+  const [chapterPlan, setChapterPlan] = useState(null) // раскладка по главам (ответ /plan)
+  const [chapterBusy, setChapterBusy] = useState(false)
   const [text, setText] = useState('')           // очищенный текст источника — первый экран панели
   const [textInfo, setTextInfo] = useState(null) // путь/объём/обрезано — ответ /text
   const [textBusy, setTextBusy] = useState(false)
@@ -184,7 +214,7 @@ function B2SPane({ ctx }) {
 
   // План считался для конкретных имени, категории и режима. Поменяли что-то —
   // старый план уже не про этот случай, а «второй клик» подтвердил бы не то.
-  useEffect(() => { setPreview(null) }, [name, cat, act])
+  useEffect(() => { setPreview(null); setChapterPlan(null) }, [name, cat, act])
 
   useEffect(() => {
     ctx.storage.set('fields', { src, name, strat, mode, lang, cat, act })
@@ -406,6 +436,44 @@ function B2SPane({ ctx }) {
       setStatus('REST-ядро недоступно (' + note(err) + '): установка не выполнена')
     } finally {
       setBusy('')
+    }
+  }
+
+  /* План долива по главам. Файловый план (planBlock) говорит, ЧТО ляжет, но не
+     отвечает, что слить со старыми главами, а что писать заново — для этого
+     нужна близость тем, её считает Python. Запись в скилл тут невозможна:
+     план кладётся рядом с черновиком, агент читает его файлом. */
+  const runPlan = async () => {
+    setChapterBusy(true)
+    setTone('working')
+    setOutOpen(true)
+    setStatus('шаг 3 · раскладка по главам…')
+    try {
+      const out = await ctx.rest('/plan', {
+        method: 'POST',
+        body: { name, cat, mode: act, save: true },
+        timeoutMs: 60000
+      })
+      setChapterPlan(out)
+      const counts = (out && out.counts) || {}
+      const saved = out && out.saved ? ' · план: ' + out.saved : ''
+      if (!out || !out.ok) {
+        setTone('error')
+        setStatus('план по главам не построен: ' + ((out && out.error) || 'ядро не ответило'))
+      } else if (!out.target_exists) {
+        setTone('done')
+        setStatus('скилла «' + name + '» ещё нет — все ' + ((out.chapters || []).length) +
+          ' файлов лягут новыми, сливать не с чем' + saved)
+      } else {
+        setTone('done')
+        setStatus('раскладка: ＋' + (counts.add || 0) + ' новых, ⇄' + (counts.merge || 0) +
+          ' слить, ⟳' + (counts.rewrite || 0) + ' переписать' + saved)
+      }
+    } catch (err) {
+      setTone('error')
+      setStatus('REST-ядро недоступно (' + note(err) + '): план по главам не построен')
+    } finally {
+      setChapterBusy(false)
     }
   }
 
@@ -646,6 +714,78 @@ function B2SPane({ ctx }) {
       })
     : null
 
+  /* Раскладка по главам — подготовка шага 3: владелец видит, что изменится в
+     ТЕКСТЕ скилла, а не только какие файлы лягут. Кнопка отдельная и бесплатная:
+     считает Python, в чат ничего не уходит, пока не нажмут «отправить агенту». */
+  const chapterRowsList = chapterRows(chapterPlan)
+  const chapterBlock = chapterPlan
+    ? jsxs('div', {
+        className: 'flex flex-col gap-0.5 rounded border px-2 py-1 text-[0.625rem] leading-snug',
+        style: {
+          backgroundColor: BLOCK_BG,
+          borderColor: 'color-mix(in oklab, ' + BASE + ' 22%, transparent)'
+        },
+        children: [
+          jsx('div', {
+            className: 'text-(--ui-text-secondary)',
+            children: '🧩 План по главам · ' + (chapterPlan.target_exists
+              ? 'долив в ' + chapterPlan.category + '/' + chapterPlan.name +
+                ' · порог ' + chapterPlan.threshold
+              : 'новая папка — сливать не с чем')
+          }),
+          ...chapterRowsList.map((line, i) =>
+            jsx('div', { className: 'break-all', children: line }, 'chap-' + i)),
+          jsx('div', {
+            className: 'flex flex-wrap gap-1 pt-1',
+            children: [
+              jsx(Button, {
+                size: 'sm',
+                variant: 'ghost',
+                disabled: chapterBusy,
+                onClick: () => sendIntent('plan'),
+                className: 'h-6 text-[0.625rem]',
+                children: '↗ Отправить агенту: решить, что слить'
+              })
+            ]
+          }),
+          jsx('div', {
+            className: 'opacity-70',
+            children: chapterPlan.target_exists
+              ? 'Python дал раскладку и близость — приговор выносит LLM, спорное решает владелец'
+              : 'все файлы новые: выбирать не из чего, долив невозможен'
+          })
+        ]
+      })
+    : null
+
+  const chapterSlot = jsxs('div', {
+    className: 'flex flex-col gap-1',
+    children: [
+      jsx('div', {
+        className: 'flex rounded',
+        style: { backgroundColor: STEP_BG },
+        children: jsxs(Button, {
+          size: 'sm',
+          variant: 'ghost',
+          disabled: chapterBusy,
+          onClick: runPlan,
+          className: 'h-7 justify-start text-xs text-(--ui-text-primary)',
+          children: [
+            jsx('span', { 'aria-hidden': true, children: '🧩' }),
+            jsx('span', { children: '3′. План по главам: что слить, что переписать' })
+          ]
+        })
+      }),
+      jsx('span', {
+        className: 'pl-1 text-[0.625rem] leading-snug text-(--ui-text-tertiary)',
+        children: chapterBusy
+          ? 'считаю близость глав…'
+          : 'долив: показывает пересечение тем со старыми главами — без записи и без LLM'
+      }),
+      chapterBlock
+    ]
+  })
+
   return jsxs('div', {
     className: cn('flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-3'),
     children: [
@@ -849,7 +989,9 @@ function B2SPane({ ctx }) {
                 /* всё про шаг 1 (статус + сводка + очищенный текст) — сразу под кнопкой */
                 s.kind === 'rerun' ? resultBlock : null,
                 /* план записи — под кнопкой шага 3: второй клик пишет в профиль */
-                s.kind === 'install' ? planBlock : null
+                s.kind === 'install' ? planBlock : null,
+                /* подготовка долива: раскладка по главам (что слить / переписать) */
+                s.kind === 'install' ? chapterSlot : null
               ]
             },
             s.kind
@@ -881,7 +1023,7 @@ function B2SPane({ ctx }) {
       jsxs('div', {
         className: 'flex flex-col gap-0.5 pt-1 text-[0.625rem] text-(--ui-text-tertiary)',
         children: [
-          jsx('span', { className: 'break-all', children: 'REST: /rerun · /install · /skills · /categories · /text' }),
+          jsx('span', { className: 'break-all', children: 'REST: /rerun · /install · /plan · /skills · /categories · /text' }),
           jsx('span', { children: 'сессия (для чат-шагов): ' + (focusedId || '—') })
         ]
       })
