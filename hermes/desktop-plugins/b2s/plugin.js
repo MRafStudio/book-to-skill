@@ -562,6 +562,11 @@ function B2SPane({ ctx }) {
      кнопок владелец будет крутить, а шаги должны остаться узнаваемыми. */
   const STEP_GREEN = '#22c55e'
   const STEP_BG = 'color-mix(in srgb, ' + STEP_GREEN + ' 16%, color-mix(in srgb, ' + BASE + ' 4%, transparent))'
+  /* «Критика и список правок» — единственное действие без записи: ничего не
+     создаёт и не переписывает, только просит LLM разобрать черновик. Держим
+     бледно-жёлтой, чтобы её не путали с зелёными шагами, которые меняют файлы. */
+  const REVIEW_YELLOW = '#facc15'
+  const REVIEW_BG = 'color-mix(in srgb, ' + REVIEW_YELLOW + ' 22%, color-mix(in srgb, ' + BASE + ' 4%, transparent))'
 
   const resultBlock = jsxs('details', {
     className: 'rounded border border-(--ui-border) px-2 py-1 text-[0.625rem] leading-snug',
@@ -1011,6 +1016,7 @@ function B2SPane({ ctx }) {
               disabled: busy === 'review',
               onClick: () => sendIntent('review'),
               className: 'h-7 justify-start text-xs',
+              style: { backgroundColor: REVIEW_BG },
               children: 'Критика и список правок'
             })
           })
