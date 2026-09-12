@@ -613,51 +613,59 @@ function B2SPane({ ctx }) {
      в frontmatter, чтобы Hermes её наконец увидел. */
   const sendDesc = (kind) => sendIntent(kind)
 
-  const catChip = !catInfo
-    ? null
-    : jsxs('div', {
-        className: CHIP_BOX,
-        style: { backgroundColor: CHIP_BG },
-        children: catInfo.desc_state === 'ok'
-          ? [
-              jsx('div', { className: CHIP_CHIEF, children: catInfo.desc }),
-              jsx('div', {
-                className: CHIP_MUTED,
-                children: 'Это описание Hermes читает в промпте — по нему агент понимает, когда звать категорию.'
-              })
-            ]
-          : catInfo.desc_state === 'no-frontmatter'
-            ? [
-                jsx('div', {
-                  className: CHIP_CHIEF,
-                  children: '⚠ Hermes это описание НЕ читает: в файле нет frontmatter — в промпт уйдёт голое имя категории.'
-                }),
-                jsx('div', {
-                  className: CHIP_MUTED,
-                  children: 'сейчас в файле: ' + ((catInfo.desc_raw || '').slice(0, 240) || '—')
-                }),
-                jsx(Button, {
-                  variant: 'ghost',
-                  disabled: busy === 'desc-fix',
-                  onClick: () => sendDesc('desc-fix'),
-                  className: CHIP_LINK,
-                  children: jsx('span', { children: '🩹 Починить файл — обернуть текст в frontmatter' })
-                })
-              ]
-            : [
-                jsx('div', {
-                  className: CHIP_CHIEF,
-                  children: '⚠ у категории нет DESCRIPTION.md — в промпте агента она идёт без пояснения, просто именем.'
-                }),
-                jsx(Button, {
-                  variant: 'ghost',
-                  disabled: busy === 'desc',
-                  onClick: () => sendDesc('desc'),
-                  className: CHIP_LINK,
-                  children: jsx('span', { children: '✍ Дописать описание категории' })
-                })
-              ]
-      })
+  /* Чипса описания категории. Показываем её ВСЕГДА, когда категория выбрана:
+     «ядро про неё ничего не сказало» — это тоже состояние (описания нет), а не
+     повод оставить поле немым. Порядок один: суть → состояние файла → что делать. */
+  const catEmpty = !!(catInfo && catInfo.empty)
+  const catChip = jsxs('div', {
+    className: CHIP_BOX,
+    style: { backgroundColor: CHIP_BG },
+    children: !catInfo || catInfo.desc_state === 'no-file'
+      ? [
+          jsx('div', {
+            className: CHIP_CHIEF,
+            children: '⚠ у категории нет DESCRIPTION.md — в промпте агента она идёт без пояснения, просто именем.'
+          }),
+          catEmpty
+            ? jsx('div', { className: CHIP_MUTED, children: 'Каталог пока пуст: в нём ни одного скилла.' })
+            : null,
+          jsx(Button, {
+            variant: 'ghost',
+            disabled: busy === 'desc',
+            onClick: () => sendDesc('desc'),
+            className: CHIP_LINK,
+            children: jsx('span', { children: '✍ Дописать описание категории' })
+          })
+        ]
+      : catInfo.desc_state === 'no-frontmatter'
+        ? [
+            jsx('div', {
+              className: CHIP_CHIEF,
+              children: '⚠ Hermes это описание НЕ читает: в файле нет frontmatter — в промпт уйдёт голое имя категории.'
+            }),
+            jsx('div', {
+              className: CHIP_MUTED,
+              children: 'сейчас в файле: ' + ((catInfo.desc_raw || '').slice(0, 240) || '—')
+            }),
+            jsx(Button, {
+              variant: 'ghost',
+              disabled: busy === 'desc-fix',
+              onClick: () => sendDesc('desc-fix'),
+              className: CHIP_LINK,
+              children: jsx('span', { children: '🩹 Починить файл — обернуть текст в frontmatter' })
+            })
+          ]
+        : [
+            jsx('div', { className: CHIP_CHIEF, children: catInfo.desc }),
+            catEmpty
+              ? jsx('div', { className: CHIP_MUTED, children: 'Каталог пока пуст: в нём ни одного скилла.' })
+              : null,
+            jsx('div', {
+              className: CHIP_MUTED,
+              children: 'Это описание Hermes читает в промпте — по нему агент понимает, когда звать категорию.'
+            })
+          ]
+  })
 
   const resultBlock = jsxs('details', {
     className: 'rounded border border-(--ui-border) px-2 py-1 text-[0.625rem] leading-snug',
@@ -934,7 +942,10 @@ function B2SPane({ ctx }) {
                       jsx(SelectTrigger, { className: 'h-7 text-xs', children: jsx(SelectValue, {}) }),
                       jsx(SelectContent, {
                         children: [
-                          ...cats.map((c) => jsx(SelectItem, { value: c, children: c }, c)),
+                          ...cats.map((c) => jsx(SelectItem, {
+                            value: c,
+                            children: (catMeta && catMeta[c] && catMeta[c].empty) ? c + ' (пусто)' : c
+                          }, c)),
                           /* Выход из списка: своя категория. Без него выбор был
                              клеткой — подходящей категории в профиле нет, и скилл
                              уезжал в чужую, лишь бы из списка. */
@@ -963,8 +974,18 @@ function B2SPane({ ctx }) {
                         ] })
                       ] })
                     : catChip,
+                  /* Скиллы вне категорий: это скиллы, а не категории — в списке их нет и
+                     не будет. Раньше строка висела прямо под выпадашкой и читалась как
+                     «описание категории»; теперь она свёрнута и говорит, что мешает
+                     выбрать эти пять. */
                   catLoose.length
-                    ? jsx('div', { className: CHIP_MUTED, children: 'вне категорий (лежат прямо в skills/): ' + catLoose.join(', ') })
+                    ? jsxs('details', { className: CHIP_MUTED, children: [
+                        jsx('summary', {
+                          className: 'cursor-pointer select-none',
+                          children: '⚠ ' + catLoose.length + ' скиллов лежат прямо в skills/ — в этом списке их нет'
+                        }),
+                        jsx('div', { className: 'mt-0.5', children: catLoose.join(', ') })
+                      ] })
                     : null
                 ] })
               : jsx(Input, {

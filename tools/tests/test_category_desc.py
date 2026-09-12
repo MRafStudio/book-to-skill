@@ -88,6 +88,17 @@ def setup() -> None:
     # Служебный каталог — категорией не считается
     (SKILLS / ".hidden" / "x").mkdir(parents=True)
     (SKILLS / ".hidden" / "x" / "SKILL.md").write_text(skill_md("x"), encoding="utf-8")
+    # Пустая категория-заготовка: папка есть — значит её должно быть видно в списке
+    # (иначе скилл в неё можно завести только набрав имя руками)
+    (SKILLS / "networking").mkdir(parents=True)
+    # Вложенная заготовка с описанием — тоже категория
+    (SKILLS / "mlops" / "models").mkdir(parents=True)
+    (SKILLS / "mlops" / "models" / "DESCRIPTION.md").write_text(FRONT_OK, encoding="utf-8")
+    # Служебная подпапка скилла — категорией НЕ считается (иначе в списке
+    # вылезут references/assets/scripts каждого скилла)
+    (SKILLS / "software-development" / "python-pathlib" / "references").mkdir(parents=True)
+    (SKILLS / "software-development" / "python-pathlib" / "references" / "api.md").write_text(
+        "x", encoding="utf-8")
     # Черновик для установки
     if STAGING.exists():
         shutil.rmtree(STAGING)
@@ -98,7 +109,7 @@ def setup() -> None:
 print("== 1. categories: состояние описания каждой категории")
 setup()
 cats = api("categories")
-check("категорий найдено", cats.get("count"), 4)
+check("категорий найдено", cats.get("count"), 7)
 check("служебный .hidden не категория", ".hidden/x" in cats.get("categories", []), False)
 check("плоский скилл — в loose", cats.get("loose"), ["loose-skill"])
 check("вложенная категория видна", "mlops/evaluation" in cats.get("categories", []), True)
@@ -107,6 +118,16 @@ check("файла нет", cats["details"]["blank"]["desc_state"], "no-file")
 check("проза без шапки", cats["details"]["apple"]["desc_state"], "no-frontmatter")
 ok("проза apple видна человеку", "Apple" in cats["details"]["apple"]["desc_raw"])
 check("счёт скиллов в категории", cats["details"]["software-development"]["skills"], 1)
+# Пустой каталог: папка есть — её видно, и видно, что она пустая
+check("пустая категория в списке", "networking" in cats.get("categories", []), True)
+check("пустая категория помечена", cats["details"]["networking"]["empty"], True)
+check("пустая категория без описания", cats["details"]["networking"]["desc_state"], "no-file")
+check("категория со скиллами не пустая", cats["details"]["software-development"]["empty"], False)
+check("вложенная заготовка с описанием видна", "mlops/models" in cats.get("categories", []), True)
+check("служебная подпапка скилла не категория",
+      "software-development/python-pathlib/references" in cats.get("categories", []), False)
+check("references не попал в details",
+      "software-development/python-pathlib/references" in cats.get("details", {}), False)
 
 print("== 2. desc: запись описания")
 made = api("desc", "--cat", "blank", "--text", "Пустая категория — сюда кладём пробы.")

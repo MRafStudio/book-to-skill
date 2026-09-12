@@ -162,8 +162,12 @@ def do_categories() -> dict:
     подгружать. Придуманная в поле ввода («csharp stuff») уводит скилл в
     сторону — агент не сопоставит его с текущей задачей и скилл не подхватится.
     Поэтому список берём с диска: категория = каталог, в котором уже лежит хотя
-    бы один скилл (``SKILL.md``). Плоские (``research``) и вложенные
-    (``mlops/evaluation``) — одним списком, в том виде, в каком их ждёт установщик.
+    бы один скилл (``SKILL.md``), либо пустой каталог-заготовка верхнего уровня
+    (``networking``): папка есть — значит её должно быть видно и можно выбрать,
+    иначе единственный способ завести в ней скилл — набрать имя руками.
+
+    Плоские (``research``) и вложенные (``mlops/evaluation``) — одним списком,
+    в том виде, в каком их ждёт установщик.
 
     К каждой категории отдаём её описание (``details``) — ровно в том состоянии,
     в каком его увидит агент:
@@ -178,6 +182,7 @@ def do_categories() -> dict:
     cats: set[str] = set()
     loose: list[str] = []
     if root.is_dir():
+        # 1) категории по скиллам: скилл на глубине ≥2 задаёт свою категорию
         for skill_md in sorted(root.rglob("SKILL.md")):
             rel = skill_md.parent.relative_to(root)
             parts = rel.parts
@@ -188,10 +193,29 @@ def do_categories() -> dict:
             if any(part.startswith((".", "_")) for part in parent):
                 continue
             cats.add("/".join(parent))
+        # 2) пустые каталоги: папка есть — её должно быть видно. Иначе networking
+        #    в списке отсутствует, и завести в нём скилл можно только руками.
+        for top in sorted(root.iterdir()):
+            if not top.is_dir() or top.name.startswith((".", "_")):
+                continue
+            if (top / "SKILL.md").is_file():    # это скилл без категории, а не категория
+                continue
+            cats.add(top.name)
+            # Вложенный уровень берём только по DESCRIPTION.md (заготовка) или по
+            # скиллам внутри. Иначе служебные подпапки скилла (references, assets,
+            # scripts) вылезли бы в списке категорий.
+            for sub in sorted(top.iterdir()):
+                if not sub.is_dir() or sub.name.startswith((".", "_")):
+                    continue
+                if (sub / "SKILL.md").is_file():   # skills/<категория>/<имя> — это сам скилл
+                    continue
+                if (sub / "DESCRIPTION.md").is_file() or any(sub.rglob("SKILL.md")):
+                    cats.add(f"{top.name}/{sub.name}")
     details = {cat: read_category_desc(root, cat) | {
         "dir": str(root / cat),
         "exists": (root / cat).is_dir(),
         "skills": sum(1 for _ in (root / cat).rglob("SKILL.md")) if (root / cat).is_dir() else 0,
+        "empty": not any((root / cat).rglob("SKILL.md")) if (root / cat).is_dir() else True,
     } for cat in sorted(cats)}
     return {"ok": True, "root": str(root), "count": len(cats),
             "categories": sorted(cats), "details": details, "loose": sorted(loose)}
