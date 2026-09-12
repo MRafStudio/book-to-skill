@@ -561,9 +561,12 @@ function B2SPane({ ctx }) {
      (variant secondary = --ui-bg-quaternary: акцент 5% + база 4%). Своим цветом,
      а не через токен кнопок: тему кнопок владелец будет менять, а блок не должен
      уезжать за ней. Без акцентной примеси — она в блоке теряется (5% акцента на
-     тёмной панели даёт сдвиг в 2-3 единицы канала). 12% базы, как было раньше,
-     давали блок заметно светлее кнопки — «слишком светлый». */
-  const BLOCK_BG = 'color-mix(in oklab, ' + BASE + ' 5%, transparent)'
+     тёмной панели даёт сдвиг в 2-3 единицы канала). На 5% блок сливался с фоном
+     панели и читался как обычный текст (владелец: «все под одним фоном — диссонанс»),
+     поэтому плотность 12% + своя граница: блок должно быть ВИДНО, а не угадывать,
+     где он начинается. */
+  const BLOCK_BG = 'color-mix(in oklab, ' + BASE + ' 12%, transparent)'
+  const BLOCK_LINE = '1px solid color-mix(in oklab, ' + BASE + ' 30%, transparent)'
   const FIELD_LINE = '1px solid color-mix(in oklab, ' + BASE + ' 22%, transparent)'
   /* Фон поля вычищенного текста — фон самой панели (тот же, на котором стоит
      подпись кнопки шага 1), а не наша вуаль: поле читается как «окно» в блоке,
@@ -596,8 +599,16 @@ function B2SPane({ ctx }) {
   /* Заливку чипсе даём inline (как блокам результата): классы панели на произвольных
      токенах могут не доехать до её CSS, а тема должна работать в обеих темах и без
      переменных приложения — color-mix от BASE даёт ровный тон поверх любого фона. */
-  const CHIP_BOX = 'rounded-md border border-(--ui-border) px-2 py-1 space-y-1'
-  const CHIP_BG = 'color-mix(in oklab, ' + BASE + ' 6%, transparent)'
+  const CHIP_BOX = 'rounded-md border px-2 py-1 space-y-1'
+  const CHIP_BG = 'color-mix(in oklab, ' + BASE + ' 12%, transparent)'
+  const CHIP_LINE = '1px solid color-mix(in oklab, ' + BASE + ' 30%, transparent)'
+  /* Подпись над блоком отвечает «что это», вместо служебной прозы внутри блока:
+     владелец попросил убрать пояснения про промпт и оставить «Содержимое DESCRIPTION.md». */
+  const CHIP_LABEL = 'text-[10px] font-medium tracking-wide text-(--ui-text-tertiary, #8a8a8a)'
+  /* Знаки состояния — как дорожные: файла нет → красный STOP, оформлен неверно →
+     жёлтый треугольник. Своими константами: смысл знака не должен уезжать за темой. */
+  const STOP_RED = '#dc2626'
+  const WARN_YELLOW = '#f59e0b'
   const CHIP_MUTED = 'text-[10px] leading-snug text-(--ui-text-tertiary, #8a8a8a)'
   const CHIP_CHIEF = 'text-[10px] leading-snug text-(--ui-text-primary)'
   const CHIP_LINK = 'h-6 justify-start px-1 text-[10px] text-(--ui-text-primary)'
@@ -617,59 +628,75 @@ function B2SPane({ ctx }) {
      «ядро про неё ничего не сказало» — это тоже состояние (описания нет), а не
      повод оставить поле немым. Порядок один: суть → состояние файла → что делать. */
   const catEmpty = !!(catInfo && catInfo.empty)
+  /* Состояние описания = цвет блока и знак перед ним. Служебной прозы больше нет:
+     что это за блок, говорит подпись; читает ли его Hermes — показывает знак. */
+  const catState = !catInfo ? 'no-file' : (catInfo.desc_state || 'ok')
+  const catTone = catState === 'ok'
+    ? { backgroundColor: CHIP_BG, border: CHIP_LINE }
+    : catState === 'no-frontmatter'
+      ? {
+          backgroundColor: 'color-mix(in srgb, ' + WARN_YELLOW + ' 16%, ' + CHIP_BG + ')',
+          border: '1px solid color-mix(in srgb, ' + WARN_YELLOW + ' 55%, transparent)'
+        }
+      : {
+          backgroundColor: 'color-mix(in srgb, ' + STOP_RED + ' 14%, ' + CHIP_BG + ')',
+          border: '1px solid color-mix(in srgb, ' + STOP_RED + ' 60%, transparent)'
+        }
   const catChip = jsxs('div', {
-    className: CHIP_BOX,
-    style: { backgroundColor: CHIP_BG },
-    children: !catInfo || catInfo.desc_state === 'no-file'
-      ? [
-          jsx('div', {
-            className: CHIP_CHIEF,
-            children: '⚠ у категории нет DESCRIPTION.md — в промпте агента она идёт без пояснения, просто именем.'
-          }),
-          catEmpty
-            ? jsx('div', { className: CHIP_MUTED, children: 'Каталог пока пуст: в нём ни одного скилла.' })
-            : null,
-          jsx(Button, {
-            variant: 'ghost',
-            disabled: busy === 'desc',
-            onClick: () => sendDesc('desc'),
-            className: CHIP_LINK,
-            children: jsx('span', { children: '✍ Дописать описание категории' })
-          })
-        ]
-      : catInfo.desc_state === 'no-frontmatter'
-        ? [
-            jsx('div', {
-              className: CHIP_CHIEF,
-              children: '⚠ Hermes это описание НЕ читает: в файле нет frontmatter — в промпт уйдёт голое имя категории.'
-            }),
-            jsx('div', {
-              className: CHIP_MUTED,
-              children: 'сейчас в файле: ' + ((catInfo.desc_raw || '').slice(0, 240) || '—')
-            }),
-            jsx(Button, {
-              variant: 'ghost',
-              disabled: busy === 'desc-fix',
-              onClick: () => sendDesc('desc-fix'),
-              className: CHIP_LINK,
-              children: jsx('span', { children: '🩹 Починить файл — обернуть текст в frontmatter' })
-            })
-          ]
-        : [
-            jsx('div', { className: CHIP_CHIEF, children: catInfo.desc }),
-            catEmpty
-              ? jsx('div', { className: CHIP_MUTED, children: 'Каталог пока пуст: в нём ни одного скилла.' })
-              : null,
-            jsx('div', {
-              className: CHIP_MUTED,
-              children: 'Это описание Hermes читает в промпте — по нему агент понимает, когда звать категорию.'
-            })
-          ]
+    className: 'space-y-1',
+    children: [
+      jsx('div', { className: CHIP_LABEL, children: 'Содержимое DESCRIPTION.md' }),
+      jsxs('div', {
+        className: CHIP_BOX,
+        style: catTone,
+        children: catState === 'ok'
+          ? [
+              jsx('div', { className: CHIP_CHIEF, children: catInfo.desc }),
+              catEmpty
+                ? jsx('div', { className: CHIP_MUTED, children: 'каталог пока пуст: в нём ни одного скилла' })
+                : null
+            ]
+          : catState === 'no-frontmatter'
+            ? [
+                jsx('div', {
+                  className: CHIP_CHIEF,
+                  children: '⚠ файл без frontmatter — Hermes его не читает, в промпт уйдёт голое имя категории.'
+                }),
+                jsx('div', {
+                  className: CHIP_MUTED,
+                  children: 'сейчас в файле: ' + ((catInfo.desc_raw || '').slice(0, 240) || '—')
+                }),
+                jsx(Button, {
+                  variant: 'ghost',
+                  disabled: busy === 'desc-fix',
+                  onClick: () => sendDesc('desc-fix'),
+                  className: CHIP_LINK,
+                  children: jsx('span', { children: '🩹 Починить файл — обернуть текст в frontmatter' })
+                })
+              ]
+            : [
+                jsx('div', {
+                  className: CHIP_CHIEF,
+                  children: '🛑 STOP — DESCRIPTION.md нет. Hermes покажет категорию агенту голым именем.'
+                }),
+                catEmpty
+                  ? jsx('div', { className: CHIP_MUTED, children: 'каталог пока пуст: в нём ни одного скилла' })
+                  : null,
+                jsx(Button, {
+                  variant: 'ghost',
+                  disabled: busy === 'desc',
+                  onClick: () => sendDesc('desc'),
+                  className: CHIP_LINK,
+                  children: jsx('span', { children: '✍ Дописать описание категории' })
+                })
+              ]
+      })
+    ]
   })
 
   const resultBlock = jsxs('details', {
-    className: 'rounded border border-(--ui-border) px-2 py-1 text-[0.625rem] leading-snug',
-    style: { backgroundColor: BLOCK_BG },
+    className: 'rounded border px-2 py-1 text-[0.625rem] leading-snug',
+    style: { backgroundColor: BLOCK_BG, border: BLOCK_LINE },
     open: outOpen,
     onToggle: (e) => setOutOpen(!!(e && e.target && e.target.open)),
     children: [
@@ -974,19 +1001,11 @@ function B2SPane({ ctx }) {
                         ] })
                       ] })
                     : catChip,
-                  /* Скиллы вне категорий: это скиллы, а не категории — в списке их нет и
-                     не будет. Раньше строка висела прямо под выпадашкой и читалась как
-                     «описание категории»; теперь она свёрнута и говорит, что мешает
-                     выбрать эти пять. */
-                  catLoose.length
-                    ? jsxs('details', { className: CHIP_MUTED, children: [
-                        jsx('summary', {
-                          className: 'cursor-pointer select-none',
-                          children: '⚠ ' + catLoose.length + ' скиллов лежат прямо в skills/ — в этом списке их нет'
-                        }),
-                        jsx('div', { className: 'mt-0.5', children: catLoose.join(', ') })
-                      ] })
-                    : null
+                  /* Строку про «скиллы вне категорий» больше не показываем: она пугала
+                     зря — пять таких каталогов Hermes сам считает категориями (и они
+                     вернулись в выпадашку), а настоящий сирота — SKILL.md прямо в
+                     skills/ — случай служебный и внимания владельца не стоит.
+                     Данные остаются в ответе ядра как catLoose. */
                 ] })
               : jsx(Input, {
                   value: cat,

@@ -82,9 +82,14 @@ def setup() -> None:
     (SKILLS / "mlops" / "evaluation" / "weights").mkdir(parents=True)
     (SKILLS / "mlops" / "evaluation" / "weights" / "SKILL.md").write_text(
         skill_md("weights"), encoding="utf-8")
-    # Плоский скилл — категории у него нет
+    # Одиночный каталог со SKILL.md внутри: для Hermes это КАТЕГОРИЯ, а скилл носит
+    # её же имя (`_build_snapshot_entry`: category = parts[0]) — значит каталог обязан
+    # быть в списке, иначе часть профиля для UI просто не существует.
     (SKILLS / "loose-skill").mkdir(parents=True)
     (SKILLS / "loose-skill" / "SKILL.md").write_text(skill_md("loose-skill"), encoding="utf-8")
+    # Настоящий сирота: SKILL.md прямо в skills/ — Hermes кладёт его в «general»,
+    # категории у него нет и выбирать в панели нечего.
+    (SKILLS / "SKILL.md").write_text(skill_md("orphan"), encoding="utf-8")
     # Служебный каталог — категорией не считается
     (SKILLS / ".hidden" / "x").mkdir(parents=True)
     (SKILLS / ".hidden" / "x" / "SKILL.md").write_text(skill_md("x"), encoding="utf-8")
@@ -109,9 +114,11 @@ def setup() -> None:
 print("== 1. categories: состояние описания каждой категории")
 setup()
 cats = api("categories")
-check("категорий найдено", cats.get("count"), 7)
+check("категорий найдено", cats.get("count"), 8)
 check("служебный .hidden не категория", ".hidden/x" in cats.get("categories", []), False)
-check("плоский скилл — в loose", cats.get("loose"), ["loose-skill"])
+check("каталог со SKILL.md внутри — категория, как считает Hermes",
+      "loose-skill" in cats.get("categories", []), True)
+check("только SKILL.md прямо в skills/ — сирота", cats.get("loose"), ["SKILL.md"])
 check("вложенная категория видна", "mlops/evaluation" in cats.get("categories", []), True)
 check("описание читается", cats["details"]["software-development"]["desc_state"], "ok")
 check("файла нет", cats["details"]["blank"]["desc_state"], "no-file")

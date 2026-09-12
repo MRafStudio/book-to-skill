@@ -186,13 +186,17 @@ def do_categories() -> dict:
         for skill_md in sorted(root.rglob("SKILL.md")):
             rel = skill_md.parent.relative_to(root)
             parts = rel.parts
-            if len(parts) < 2:          # скилл лежит прямо в skills/ — категории у него нет
-                loose.append(rel.as_posix())
+            if not parts:               # SKILL.md прямо в skills/ — Hermes зовёт это «general»
+                loose.append(skill_md.name)
                 continue
-            parent = parts[:-1]
-            if any(part.startswith((".", "_")) for part in parent):
+            if any(part.startswith((".", "_")) for part in parts):
                 continue
-            cats.add("/".join(parent))
+            # Категория — ровно та, что видит Hermes (`prompt_builder._build_snapshot_entry`):
+            # `skills/<cat>/<имя>/SKILL.md` → `<cat>`; `skills/<cat>/SKILL.md` → тоже `<cat>`
+            # (скилл носит имя каталога); глубже (`mlops/evaluation/<имя>`) → по сегментам.
+            # Раньше такие каталоги считались «скиллами вне категорий»: они пропадали из
+            # выпадашки, хотя Hermes показывает их категориями в промпте.
+            cats.add(parts[0] if len(parts) <= 2 else "/".join(parts[:-1]))
         # 2) пустые каталоги: папка есть — её должно быть видно. Иначе networking
         #    в списке отсутствует, и завести в нём скилл можно только руками.
         for top in sorted(root.iterdir()):
