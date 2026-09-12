@@ -837,7 +837,7 @@ function B2SPane({ ctx }) {
   const catChip = jsxs('div', {
     className: 'space-y-1',
     children: [
-      jsx('div', { className: CHIP_LABEL, children: 'Содержимое DESCRIPTION.md' }),
+      jsx('div', Ell('Содержимое DESCRIPTION.md', CHIP_LABEL)),
       jsxs('div', {
         className: CHIP_BOX,
         /* Фон под стеклом (translucency, mode=glass) тема обнуляет в transparent —
@@ -1119,12 +1119,12 @@ function B2SPane({ ctx }) {
           ]
         })
       }),
-      jsx('span', {
-        className: 'pl-1 text-[0.625rem] leading-snug text-(--ui-text-tertiary)',
-        children: chapterBusy
+      jsx('span', Ell(
+        chapterBusy
           ? 'считаю близость глав…'
-          : 'долив: показывает пересечение тем со старыми главами — без записи и без LLM'
-      }),
+          : 'долив: показывает пересечение тем со старыми главами — без записи и без LLM',
+        'pl-1 text-[0.625rem] leading-snug text-(--ui-text-tertiary)'
+      )),
       chapterBlock
     ]
   })
@@ -1206,14 +1206,16 @@ function B2SPane({ ctx }) {
                           className: 'h-7 text-xs'
                         }),
                         jsxs('div', { className: CHIP_BOX, style: { backgroundColor: CHIP_BG }, children: [
-                          jsx('div', { className: CHIP_CHIEF, children: '⚠ категории «' + (cat || '…') + '» в профиле нет — папка создастся при установке.' }),
-                          jsx('div', { className: CHIP_MUTED, children: 'Опиши её здесь: без описания Hermes покажет категорию агенту голым именем, и скилл в ней будет труднее найти.' }),
-                          jsx(Input, {
+                          jsx('div', { className: GROUP_LEAD, style: GROUP_CAP, children: [
+                            jsx('div', { className: CHIP_CHIEF, children: '⚠ категории «' + (cat || '…') + '» в профиле нет — папка создастся при установке.' }),
+                            jsx('div', { className: CHIP_MUTED, children: 'Опиши её здесь: без описания Hermes покажет категорию агенту голым именем, и скилл в ней будет труднее найти.' })
+                          ] }),
+                          jsx('div', { className: 'pt-1', children: jsx(Input, {
                             value: catDesc,
                             onChange: (e) => setCatDesc(e.target.value),
                             placeholder: 'описание категории для Hermes — одной строкой',
                             className: 'h-7 text-xs'
-                          })
+                          }) })
                         ] })
                       ] })
                     : catChip,
@@ -1250,9 +1252,8 @@ function B2SPane({ ctx }) {
                 children: (skills || []).slice(0, 300).map((s) =>
                   jsx('option', { value: s.name, children: s.category || '' }, s.name))
               }),
-              jsx('div', {
-                className: 'text-[10px] leading-tight text-(--ui-text-tertiary, #8a8a8a)',
-                children: existing
+              jsx('div', Ell(
+                existing
                   ? 'уже стоит: ' + (existing.category || 'без категории') + ' · глав ' +
                     existing.chapters + ' · файлов ' + existing.files +
                     ' — новые главы допишутся к нему'
@@ -1260,8 +1261,9 @@ function B2SPane({ ctx }) {
                     ? 'список скиллов грузится…'
                     : skillsErr
                       ? 'списка нет — имя соберётся как новый скилл'
-                      : 'такого скилла нет — будет новый'
-              }),
+                      : 'такого скилла нет — будет новый',
+                'text-[10px] leading-tight text-(--ui-text-tertiary, #8a8a8a)'
+              )),
               existing
                 ? jsxs(Select, {
                     value: act,
@@ -1275,10 +1277,10 @@ function B2SPane({ ctx }) {
                   })
                 : null,
               existing && act === 'replace'
-                ? jsx('div', {
-                    className: 'text-[10px] leading-tight text-(--ui-text-primary)',
-                    children: '⚠ каталог скилла будет снесён и залит заново. Перед записью ядро снимет копию в backups/, но подтверждение спрошу ещё раз.'
-                  })
+                ? jsx('div', Ell(
+                    '⚠ каталог скилла будет снесён и залит заново. Перед записью ядро снимет копию в backups/, но подтверждение спрошу ещё раз.',
+                    'text-[10px] leading-tight text-(--ui-text-primary)'
+                  ))
                 : null
             ]
           })
@@ -1363,10 +1365,7 @@ function B2SPane({ ctx }) {
                     ]
                   })
                 }),
-                jsx('span', {
-                  className: 'pl-1 text-[0.625rem] leading-snug text-(--ui-text-tertiary)',
-                  children: s.note
-                }),
+                jsx('span', Ell(s.note, 'pl-1 text-[0.625rem] leading-snug text-(--ui-text-tertiary)')),
                 /* всё про шаг 1 (статус + сводка + очищенный текст) — сразу под кнопкой */
                 s.kind === 'rerun' ? resultBlock : null,
                 /* план записи — под кнопкой шага 3: второй клик пишет в профиль */
