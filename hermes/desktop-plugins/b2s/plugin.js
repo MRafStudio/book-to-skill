@@ -33,7 +33,7 @@ import {
   useValue
 } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 const STRATEGIES = [
   { value: 'auto', label: 'auto — каскад стратегий' },
@@ -194,6 +194,44 @@ const labelOf = (list, value) => {
   const hit = (list || []).find((x) => x.value === value)
   return hit ? hit.label : String(value == null ? '' : value)
 }
+
+/* Пиктограммы кнопок поля «Источник». Инлайновый SVG, а не эмодзи: место под
+   кнопку — 24×24 (`Button size='icon-xs'`), эмодзи в нём плывёт по базовой
+   линии и различается шрифтом системы, а `stroke: currentColor` держит цвет
+   темы. Полные подписи («Выбрать файл», «Вставить из буфера обмена») в узкую
+   панель не влезают — они уходят в title (наведение) и aria-label (озвучка). */
+const svgBox = (children) =>
+  jsxs('svg', {
+    width: 13,
+    height: 13,
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 2,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+    'aria-hidden': 'true',
+    children
+  })
+const iconFolder = () =>
+  svgBox([
+    jsx('path', {
+      key: 'f',
+      d: 'M3 7.5A1.5 1.5 0 0 1 4.5 6h3.7a1.5 1.5 0 0 1 1.06.44L10.5 7.5h9A1.5 1.5 0 0 1 21 9v8.5A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5z'
+    })
+  ])
+const iconClipboard = () =>
+  svgBox([
+    jsx('rect', { key: 'r', x: 8, y: 2.5, width: 8, height: 4, rx: 1 }),
+    jsx('path', {
+      key: 'b',
+      d: 'M16 4.5h2A1.5 1.5 0 0 1 19.5 6v13A1.5 1.5 0 0 1 18 20.5H6A1.5 1.5 0 0 1 4.5 19V6A1.5 1.5 0 0 1 6 4.5h2'
+    })
+  ])
+/* Полный путь от «Выбрать файл» — только если это правда путь, а не имя файла.
+   Мост Electron отдаёт путь, но если его нет (старая сборка), браузер вернёт
+   имя — и подставлять его молча нельзя: ядро уйдёт искать файл в cwd. */
+const looksLikePath = (s) => typeof s === 'string' && /[\\/]/.test(s.trim()) && s.trim().length > 1
 
 /* Заголовок блока «Результат разбора» — то, что видно в СВЁРНУТОМ виде.
    Правило владельца: «если будет выведено "XXX симв. 0 ошибок 0 мусора", то и
@@ -381,6 +419,10 @@ function B2SPane({ ctx }) {
   const [draftOpen, setDraftOpen] = useState(false)
   const [draftFile, setDraftFile] = useState('')  // какой файл черновика открыт
   const [draftText, setDraftText] = useState(null) // его текст (null — не читали)
+  /* Строка поля «Источник»: кнопки выбора файла и вставки из буфера стоят
+     справа от инпута. Ref нужен, чтобы вернуть фокус в поле, когда Hermes не
+     дал прочитать буфер (тогда единственный путь — Ctrl+V руками). */
+  const srcRow = useRef(null)
   const [draftTextBusy, setDraftTextBusy] = useState(false)
 
   const focusedId = useValue(host.state.focusedSessionId)
@@ -405,6 +447,85 @@ function B2SPane({ ctx }) {
   useEffect(() => {
     ctx.storage.set('fields', { src, name, strat, mode, lang, cat, act, catDesc })
   }, [src, name, strat, mode, lang, cat, act, catDesc])
+
+  /** «Выбрать файл» — системный диалог. У плагина нет своего окна выбора
+      (в SDK такого действия нет), поэтому берём штатный `<input type=file>`:
+      Chromium открывает нативный диалог, а полный путь даёт мост Electron
+      `window.hermesDesktop.getPathForFile(file)`. Без моста браузер отдаёт
+      только ИМЯ файла — такое подставлять молча нельзя (ядро искало бы файл
+      в cwd), поэтому имя уходит в подсказку, а поле просит путь руками. */
+  const pickFile = () => {
+    const el = document.createElement('input')
+    el.type = 'file'
+    el.accept = '.md,.markdown,.txt,.rst,.pdf,.html,.htm,.epub,.docx,.json,.csv,.mobi,.azw,.azw3'
+    el.style.display = 'none'
+    document.body.appendChild(el)
+    /* Отмена диалога не шлёт change — узел убираем по возврату фокуса. */
+    const drop = () => {
+      if (el.parentNode) el.parentNode.removeChild(el)
+    }
+    window.addEventListener('focus', () => setTimeout(drop, 800), { once: true })
+    el.addEventListener('change', () => {
+      const f = el.files && el.files[0]
+      if (!f) {
+        drop()
+        return
+      }
+      const bridge = typeof window === 'undefined' ? null : window.hermesDesktop
+      let full = ''
+      try {
+        if (bridge && typeof bridge.getPathForFile === 'function') full = bridge.getPathForFile(f) || ''
+      } catch (err) {
+        full = '' // мост есть, но путь не отдал — значит работаем как без моста
+      }
+      if (looksLikePath(full)) {
+        setSrc(full)
+        host.notify({ kind: 'success', message: 'Источник — файл: ' + (f.name || full), detail: full })
+      } else {
+        setSrc(f.name || '')
+        host.notify({
+          kind: 'info',
+          message: 'Выбран файл: ' + (f.name || ''),
+          detail: 'Полный путь диалог не отдал — возьми его кнопкой «Вставить из буфера обмена» или вставь в поле (Ctrl+V).'
+        })
+      }
+      drop()
+    })
+    el.click()
+  }
+
+  /** «Вставить из буфера обмена» — URL страницы или путь к файлу. Чтение буфера
+      может быть запрещено (NotAllowedError) — тогда честно зовём вставку руками:
+      фокус в поле + подсказка, а не молчаливое «ничего не произошло». */
+  const pasteSrc = async () => {
+    let raw = ''
+    try {
+      raw = await navigator.clipboard.readText()
+    } catch (err) {
+      const box = srcRow.current ? srcRow.current.querySelector('input') : null
+      if (box && typeof box.focus === 'function') {
+        box.focus()
+        if (typeof box.select === 'function') box.select()
+      }
+      host.notify({
+        kind: 'warning',
+        message: 'Hermes не дал прочитать буфер обмена',
+        detail: 'Поле «Источник» уже в фокусе — нажми Ctrl+V.'
+      })
+      return
+    }
+    const val = (raw || '').trim()
+    if (!val) {
+      host.notify({ kind: 'info', message: 'Буфер обмена пуст — скопируй URL или путь к файлу.' })
+      return
+    }
+    setSrc(val)
+    host.notify({
+      kind: 'success',
+      message: typeof navigator !== 'undefined' && navigator.clipboard ? 'Источник подставлен из буфера' : 'Источник подставлен',
+      detail: val.length > 200 ? val.slice(0, 200) + '…' : val
+    })
+  }
 
   /** Текст источника — тот же шаг 1, но без LLM: ядро отдаёт файл из b2s_fetched.
       limit=0 — файл целиком («показать весь текст»), иначе только первый экран. */
@@ -1536,11 +1657,39 @@ function B2SPane({ ctx }) {
       jsx(Field, {
         label: 'Источник',
         hint: 'URL или путь',
-        children: jsx(Input, {
-          value: src,
-          onChange: (e) => setSrc(e.target.value),
-          placeholder: 'https://… или D:/путь/файл.md',
-          className: 'h-7 text-xs'
+        children: jsxs('div', {
+          ref: srcRow,
+          className: 'flex items-center gap-1',
+          children: [
+            jsx(Input, {
+              value: src,
+              onChange: (e) => setSrc(e.target.value),
+              placeholder: 'https://… или D:/путь/файл.md',
+              className: 'h-7 text-xs',
+              style: { minWidth: 0, flex: '1 1 auto' }
+            }),
+            /* Пиктограммы вместо подписей: «Выбрать файл» и «Вставить из буфера
+               обмена» в узкую панель не влезают, а сжатые превращаются в кашу.
+               Полный текст — в нативном тултипе (title) и для озвучки (aria-label). */
+            jsx(Button, {
+              variant: 'secondary',
+              size: 'icon-xs',
+              className: 'shrink-0',
+              title: 'Выбрать файл на диске — полный путь встанет в поле «Источник»',
+              'aria-label': 'Выбрать файл',
+              onClick: pickFile,
+              children: iconFolder()
+            }),
+            jsx(Button, {
+              variant: 'secondary',
+              size: 'icon-xs',
+              className: 'shrink-0',
+              title: 'Вставить из буфера обмена — URL страницы или путь к файлу',
+              'aria-label': 'Вставить из буфера обмена',
+              onClick: pasteSrc,
+              children: iconClipboard()
+            })
+          ]
         })
       }),
 
