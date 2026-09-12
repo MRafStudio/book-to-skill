@@ -147,6 +147,14 @@ const Ell = (text, cls) => ({
 /* Готовая обрезаемая подпись — для мест, где нужен элемент (внутри кнопок). */
 const cutSpan = (text, cls) => jsx('span', Ell(text, cls))
 
+/* Кнопка SDK изнутри — `inline-flex shrink-0 whitespace-nowrap`, и `shrink-0`
+   из её базового класса не перебить классовым `min-w-0`: оба класса живут в
+   одном слое CSS, и побеждает тот, что ниже в таблице (проверено стендом на
+   реальном CSS приложения: кнопка шага при панели 200 px держала 215 px и
+   уезжала за контейнер на 23 px, подпись — вместе с ней, `clip0`). Режет
+   только ИНЛАЙН: `flex-shrink: 1` + `min-width: 0` на кнопке. */
+const BTN_FIT = { minWidth: 0, flexShrink: 1, maxWidth: '100%' }
+
 /* Значение комбобокса. Radix `SelectValue` рендерит голый span и НАМЕРЕННО выбрасывает
    из props `className` и `style` (проверено на живом DOM плагина: `title` и `data-*`
    доезжают, классы и стили — нет, см. references/desktop-plugin-pane.md). Поэтому
@@ -766,7 +774,7 @@ function B2SPane({ ctx }) {
      `min-width: 0` (у flex-контейнера, каким является кнопка, `text-overflow`
      сам не работает). Обёртке — `max-w-full min-w-0`: без этого она не даст
      кнопке сжаться. Короткие подписи выглядят как раньше. */
-  const CHIP_FIT = { maxWidth: '100%', minWidth: 0, flexShrink: 1 }
+  const CHIP_FIT = BTN_FIT
   /* Подпись в кнопке живёт в своём span.truncate: многоточие умеет только блочный
      бокс, а у flex-контейнера (какова кнопка) `text-overflow` не срабатывает.
      Общее правило подписей — у `Ell` выше. */
@@ -981,7 +989,7 @@ function B2SPane({ ctx }) {
            и inline-стиль кнопки перебил бы его — кнопка стала бы «мёртвой» на наведение. */
         ? jsx('div', {
             'data-glass-raised': '',
-            className: 'mt-1 inline-flex rounded',
+            className: 'mt-1 inline-flex max-w-full min-w-0 rounded',
             style: { backgroundColor: PANEL_BG },
             children: jsx(Button, {
               size: 'sm',
@@ -1105,7 +1113,7 @@ function B2SPane({ ctx }) {
     className: 'flex flex-col gap-1',
     children: [
       jsx('div', {
-        className: 'flex rounded',
+        className: 'flex min-w-0 rounded',
         style: { backgroundColor: STEP_BG },
         children: jsxs(Button, {
           size: 'sm',
@@ -1113,9 +1121,10 @@ function B2SPane({ ctx }) {
           disabled: chapterBusy,
           onClick: runPlan,
           className: 'h-7 justify-start text-xs text-(--ui-text-primary)',
+          style: BTN_FIT,
           children: [
-            jsx('span', { 'aria-hidden': true, children: '🧩' }),
-            jsx('span', { children: '3′. План по главам: что слить, что переписать' })
+            jsx('span', { 'aria-hidden': true, style: { flexShrink: 0 }, children: '🧩' }),
+            cutSpan('3′. План по главам: что слить, что переписать')
           ]
         })
       }),
@@ -1347,14 +1356,15 @@ function B2SPane({ ctx }) {
                    тему кнопок владелец будет крутить, а шаги не должны уезжать за ней.
                    Плотность как у прежней кнопки: база 4% + зелёная примесь сверху. */
                 jsx('div', {
-                  className: 'flex rounded',
+                  className: 'flex min-w-0 rounded',
                   style: { backgroundColor: STEP_BG },
                   children: jsxs(Button, {
                     size: 'sm',
                     variant: 'ghost',
                     disabled: busy === s.kind,
                     onClick: s.run,
-                    className: 'h-7 min-w-0 justify-start text-xs text-(--ui-text-primary)',
+                    className: 'h-7 justify-start text-xs text-(--ui-text-primary)',
+                    style: BTN_FIT,
                     children: [
                       jsx('span', { 'aria-hidden': true, style: { flexShrink: 0 }, children: s.icon }),
                       /* Подпись шага — сжимаемым span'ом с обрезкой по границе кнопки.
@@ -1391,7 +1401,7 @@ function B2SPane({ ctx }) {
               disabled: busy === 'review',
               onClick: () => sendIntent('review'),
               className: 'h-7 justify-start text-xs',
-              style: Object.assign({ backgroundColor: REVIEW_BG }, CHIP_FIT),
+              style: Object.assign({ backgroundColor: REVIEW_BG }, BTN_FIT),
               children: fitLabel('Критика и список правок')
             })
           })
