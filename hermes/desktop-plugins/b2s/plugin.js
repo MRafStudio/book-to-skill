@@ -5,7 +5,7 @@
  * react/jsx-runtime, jsx()/jsxs() вместо JSX (файл не компилируется).
  *
  * Два канала, по природе работы:
- *   • ctx.rest('/rerun' | '/install') — REST в свой backend-namespace
+ *   • ctx.rest('/rerun' | '/install' | '/desc') — REST в свой backend-namespace
  *     (/api/plugins/b2s/…), который монтирует `dashboard/plugin_api.py`.
  *     Это ДЕТЕРМИНИРОВАННЫЕ шаги: загрузка источника, очистка, отчёт,
  *     предпросмотр переноса. LLM тут не нужен, чат не участвует, токены не
@@ -145,6 +145,15 @@ function intentOf(kind, f) {
     const s = String(v == null ? '' : v).trim()
     if (s) parts.push(k + '=' + s)
   }
+  /* Описание категории — отдельное действие: ни имя скилла, ни стратегия, ни
+     режим тут не нужны, они улетели бы агенту шумом. Текст описания едет, только
+     если человек вписал его сам: иначе агент сочинит по категории. */
+  if (kind === 'desc' || kind === 'desc-fix') {
+    push('cat', f.cat)
+    push('dmode', kind === 'desc-fix' ? 'fix' : 'write')
+    push('desc', f.desc)
+    return parts.join(' | ')
+  }
   if (kind !== 'install' && kind !== 'review' && kind !== 'plan') push('src', f.src)
   push('name', f.name)
   push('strat', f.strat)
@@ -180,6 +189,9 @@ function B2SPane({ ctx }) {
   const [lang, setLang] = useState(stored.lang || 'ru')
   const [cat, setCat] = useState(stored.cat || 'software-development')
   const [cats, setCats] = useState(null)         // существующие категории из /categories
+  const [catMeta, setCatMeta] = useState({})     // их описания: desc_state / desc / desc_raw
+  const [catLoose, setCatLoose] = useState([])   // скиллы вне категорий — в списке их нет
+  const [catDesc, setCatDesc] = useState(stored.catDesc || '') // описание своей категории
   const [catErr, setCatErr] = useState('')
   const [skills, setSkills] = useState(null)     // существующие скиллы из /skills
   const [skillsErr, setSkillsErr] = useState('')
@@ -217,8 +229,8 @@ function B2SPane({ ctx }) {
   useEffect(() => { setPreview(null); setChapterPlan(null) }, [name, cat, act])
 
   useEffect(() => {
-    ctx.storage.set('fields', { src, name, strat, mode, lang, cat, act })
-  }, [src, name, strat, mode, lang, cat, act])
+    ctx.storage.set('fields', { src, name, strat, mode, lang, cat, act, catDesc })
+  }, [src, name, strat, mode, lang, cat, act, catDesc])
 
   /** Текст источника — тот же шаг 1, но без LLM: ядро отдаёт файл из b2s_fetched.
       limit=0 — файл целиком («показать весь текст»), иначе только первый экран. */
@@ -271,9 +283,11 @@ function B2SPane({ ctx }) {
     return () => { alive = false }
   }, [])
 
-  // Категории — только существующие. По категории Hermes решает, когда подгружать
-  // скилл: выдуманное имя («csharp stuff») уводит скилл мимо агента, и он его не
-  // найдёт. Поэтому список не пишем руками, а спрашиваем у ядра — что уже есть.
+  // Категории. По категории Hermes решает, когда подгружать скилл, поэтому выбор
+  // идёт из существующих — но список не клетка: «своя категория…» заводит новую,
+  // и это осознанный шаг (каталог создастся при установке, описание пишем сразу).
+  // К каждой категории ядро отдаёт её описание — чипса показывает суть, а не
+  // служебный текст, и предупреждает, когда Hermes описания не увидит.
   useEffect(() => {
     let alive = true
     const load = async () => {
@@ -282,12 +296,16 @@ function B2SPane({ ctx }) {
         if (!alive) return
         const list = ((out && out.categories) || []).slice()
         setCats(list)
+        setCatMeta((out && out.details) || {})
+        setCatLoose((out && out.loose) || [])
         setCatErr('')
-        // Сохранённая категория могла исчезнуть из профиля — тогда возвращаемся
-        // к дефолту панели, а не остаёмся с несуществующей строкой.
-        setCat((cur) => (list.length && !list.includes(cur)
-          ? (list.includes('software-development') ? 'software-development' : list[0])
-          : cur))
+        // Категорию больше НЕ перетираем дефолтом: в поле может стоять своя, и
+        // сброс стирал бы ввод на каждой загрузке. Дефолт ставим только в пустое
+        // поле — прежнее поведение «исчезла из профиля» теперь даёт предупреждение
+        // в чипсе, а не молчаливую подмену категории.
+        setCat((cur) => (cur && cur.trim()
+          ? cur
+          : (list.includes('software-development') ? 'software-development' : (list[0] || cur))))
       } catch (err) {
         if (!alive) return
         setCats([])
@@ -327,7 +345,7 @@ function B2SPane({ ctx }) {
       setStatus('нет активной сессии — открой чат и повтори')
       return false
     }
-    const intentText = intentOf(kind, { src, name, strat, mode, lang, cat, act })
+    const intentText = intentOf(kind, { src, name, strat, mode, lang, cat, act, desc: catDesc })
     setBusy(kind)
     setOutOpen(true)
     try {
@@ -403,7 +421,7 @@ function B2SPane({ ctx }) {
     try {
       const out = await ctx.rest('/install', {
         method: 'POST',
-        body: { name, cat, confirm, mode: act, allow_overwrite: true },
+        body: { name, cat, confirm, mode: act, allow_overwrite: true, cat_desc: catDesc },
         timeoutMs: 180000
       })
       setPreview(out)
@@ -425,7 +443,8 @@ function B2SPane({ ctx }) {
       } else if (out.ok) {
         setTone('done')
         setStatus(
-          'установлено: ' + out.target + (out.backup ? ' · бэкап: ' + out.backup : ' · бэкап не нужен (новая цель)')
+          'установлено: ' + out.target + (out.backup ? ' · бэкап: ' + out.backup : ' · бэкап не нужен (новая цель)') +
+          (out.category_desc_written ? ' · описание категории записано' : '')
         )
       } else {
         setTone('error')
@@ -567,6 +586,78 @@ function B2SPane({ ctx }) {
      бледно-жёлтой, чтобы её не путали с зелёными шагами, которые меняют файлы. */
   const REVIEW_YELLOW = '#facc15'
   const REVIEW_BG = 'color-mix(in srgb, ' + REVIEW_YELLOW + ' 22%, color-mix(in srgb, ' + BASE + ' 4%, transparent))'
+  /* Чипса категории — «суть категории», а не служебная подпись. Описание берём
+     ровно то, что читает Hermes: `description` из DESCRIPTION.md уезжает в промпт
+     рядом с именем категории (agent/prompt_builder.py:_read_category_descriptions).
+     Поэтому состояний три, а не «файл есть/нет»: ok — агент описание видит;
+     no-frontmatter — текст есть, но в промпт он НЕ попадает; no-file — у категории
+     описания нет вообще. Границы чипсы обязательны: без них проза категории
+     сливалась бы с остальными полями. */
+  /* Заливку чипсе даём inline (как блокам результата): классы панели на произвольных
+     токенах могут не доехать до её CSS, а тема должна работать в обеих темах и без
+     переменных приложения — color-mix от BASE даёт ровный тон поверх любого фона. */
+  const CHIP_BOX = 'rounded-md border border-(--ui-border) px-2 py-1 space-y-1'
+  const CHIP_BG = 'color-mix(in oklab, ' + BASE + ' 6%, transparent)'
+  const CHIP_MUTED = 'text-[10px] leading-snug text-(--ui-text-tertiary, #8a8a8a)'
+  const CHIP_CHIEF = 'text-[10px] leading-snug text-(--ui-text-primary)'
+  const CHIP_LINK = 'h-6 justify-start px-1 text-[10px] text-(--ui-text-primary)'
+
+  /* Своя категория: её в списке нет по определению — значит её надо завести.
+     Каталог создастся при установке, но описание пишем сразу: категория без
+     DESCRIPTION.md рождается немой, и агент видит только её имя. */
+  const isCustomCat = !!(cats && cats.length) && !cats.includes(cat)
+  const catInfo = (catMeta && catMeta[cat]) || null
+
+  /* Кнопки чипсы правят файл описания. Текст сочиняет агент (это LLM-работа),
+     панель шлёт интент: kind=desc — написать, kind=desc-fix — обернуть прозу
+     в frontmatter, чтобы Hermes её наконец увидел. */
+  const sendDesc = (kind) => sendIntent(kind)
+
+  const catChip = !catInfo
+    ? null
+    : jsxs('div', {
+        className: CHIP_BOX,
+        style: { backgroundColor: CHIP_BG },
+        children: catInfo.desc_state === 'ok'
+          ? [
+              jsx('div', { className: CHIP_CHIEF, children: catInfo.desc }),
+              jsx('div', {
+                className: CHIP_MUTED,
+                children: 'Это описание Hermes читает в промпте — по нему агент понимает, когда звать категорию.'
+              })
+            ]
+          : catInfo.desc_state === 'no-frontmatter'
+            ? [
+                jsx('div', {
+                  className: CHIP_CHIEF,
+                  children: '⚠ Hermes это описание НЕ читает: в файле нет frontmatter — в промпт уйдёт голое имя категории.'
+                }),
+                jsx('div', {
+                  className: CHIP_MUTED,
+                  children: 'сейчас в файле: ' + ((catInfo.desc_raw || '').slice(0, 240) || '—')
+                }),
+                jsx(Button, {
+                  variant: 'ghost',
+                  disabled: busy === 'desc-fix',
+                  onClick: () => sendDesc('desc-fix'),
+                  className: CHIP_LINK,
+                  children: jsx('span', { children: '🩹 Починить файл — обернуть текст в frontmatter' })
+                })
+              ]
+            : [
+                jsx('div', {
+                  className: CHIP_CHIEF,
+                  children: '⚠ у категории нет DESCRIPTION.md — в промпте агента она идёт без пояснения, просто именем.'
+                }),
+                jsx(Button, {
+                  variant: 'ghost',
+                  disabled: busy === 'desc',
+                  onClick: () => sendDesc('desc'),
+                  className: CHIP_LINK,
+                  children: jsx('span', { children: '✍ Дописать описание категории' })
+                })
+              ]
+      })
 
   const resultBlock = jsxs('details', {
     className: 'rounded border border-(--ui-border) px-2 py-1 text-[0.625rem] leading-snug',
@@ -837,19 +928,44 @@ function B2SPane({ ctx }) {
             children: cats && cats.length
               ? jsxs('div', { className: 'space-y-1', children: [
                   jsxs(Select, {
-                    value: cat,
-                    onValueChange: setCat,
+                    value: isCustomCat ? '__custom__' : cat,
+                    onValueChange: (v) => setCat(v === '__custom__' ? '' : v),
                     children: [
                       jsx(SelectTrigger, { className: 'h-7 text-xs', children: jsx(SelectValue, {}) }),
                       jsx(SelectContent, {
-                        children: cats.map((c) => jsx(SelectItem, { value: c, children: c }, c))
+                        children: [
+                          ...cats.map((c) => jsx(SelectItem, { value: c, children: c }, c)),
+                          /* Выход из списка: своя категория. Без него выбор был
+                             клеткой — подходящей категории в профиле нет, и скилл
+                             уезжал в чужую, лишь бы из списка. */
+                          jsx(SelectItem, { value: '__custom__', children: '✎ своя категория…' })
+                        ]
                       })
                     ]
                   }),
-                  jsx('div', {
-                    className: 'text-[10px] leading-tight text-(--ui-text-tertiary, #8a8a8a)',
-                    children: 'только существующие — ' + cats.length + ': по категории Hermes решает, когда грузить скилл'
-                  })
+                  isCustomCat
+                    ? jsxs('div', { className: 'space-y-1', children: [
+                        jsx(Input, {
+                          value: cat,
+                          onChange: (e) => setCat(e.target.value),
+                          placeholder: 'имя новой категории: латиница и дефис, например mlops/tuning',
+                          className: 'h-7 text-xs'
+                        }),
+                        jsxs('div', { className: CHIP_BOX, style: { backgroundColor: CHIP_BG }, children: [
+                          jsx('div', { className: CHIP_CHIEF, children: '⚠ категории «' + (cat || '…') + '» в профиле нет — папка создастся при установке.' }),
+                          jsx('div', { className: CHIP_MUTED, children: 'Опиши её здесь: без описания Hermes покажет категорию агенту голым именем, и скилл в ней будет труднее найти.' }),
+                          jsx(Input, {
+                            value: catDesc,
+                            onChange: (e) => setCatDesc(e.target.value),
+                            placeholder: 'описание категории для Hermes — одной строкой',
+                            className: 'h-7 text-xs'
+                          })
+                        ] })
+                      ] })
+                    : catChip,
+                  catLoose.length
+                    ? jsx('div', { className: CHIP_MUTED, children: 'вне категорий (лежат прямо в skills/): ' + catLoose.join(', ') })
+                    : null
                 ] })
               : jsx(Input, {
                   value: cat,

@@ -144,6 +144,7 @@ class InstallBody(BaseModel):
     force: bool = False
     mode: str = "auto"            # auto | create | append | replace
     allow_overwrite: bool = True  # долив: можно ли трогать существующие файлы скилла
+    cat_desc: str = ""            # описание новой категории → DESCRIPTION.md
 
 
 class PlanBody(BaseModel):
@@ -153,6 +154,14 @@ class PlanBody(BaseModel):
     mode: str = "auto"           # auto | create | append | replace
     threshold: float = 0.35      # с какой близости предлагать слияние
     save: bool = False           # положить план в staging/<имя>/merge-plan.json
+
+
+class DescBody(BaseModel):
+    """Описание категории: текст, который Hermes показывает агенту про категорию."""
+    cat: str = ""
+    text: str = ""
+    mode: str = "write"   # write | fix (обернуть в frontmatter прозу без шапки)
+    force: bool = False   # перезаписать существующее описание
 
 
 class TextBody(BaseModel):
@@ -178,10 +187,12 @@ def state() -> Dict[str, Any]:
 
 @router.get("/categories")
 def categories() -> Dict[str, Any]:
-    """Категории, которые уже есть в профиле: панель даёт выбрать только из них.
+    """Категории профиля + состояние их DESCRIPTION.md.
 
-    Свободный ввод здесь вреден: категория — это механизм подбора скилла, и
-    выдуманное имя уводит скилл мимо агента.
+    Список — рекомендация, а не забор: в панели есть «своя категория», но панель
+    предупреждает, что выдуманное имя уводит скилл мимо агента (категория — это
+    механизм подбора), а у новой категории нет описания. Состояние описания
+    (``ok`` / ``no-frontmatter`` / ``no-file``) панель показывает чипсой.
     """
     return core().do_categories()
 
@@ -223,6 +234,20 @@ def plan(body: PlanBody) -> Dict[str, Any]:
     return core().do_chapter_plan(body.name, body.cat, body.mode, body.save, body.threshold)
 
 
+@router.post("/desc")
+def desc(body: DescBody) -> Dict[str, Any]:
+    """Записать DESCRIPTION.md категории — пояснение, которое читает Hermes.
+
+    Файл идёт в промпт (``agent/prompt_builder.py:_read_category_descriptions``),
+    поэтому проза без frontmatter для агента невидима: режим ``fix`` оборачивает
+    её в шапку, сохраняя текст телом. Уже существующее описание без ``force`` не
+    трогаем — чужой текст не затираем молча.
+    """
+    if not body.cat.strip():
+        raise HTTPException(status_code=400, detail="нужна категория")
+    return core().do_write_category_desc(body.cat, body.text, body.mode, body.force)
+
+
 @router.post("/install")
 def install(body: InstallBody) -> Dict[str, Any]:
     """Шаг 3 панели: план переноса. Запись — только при confirm=true.
@@ -234,4 +259,4 @@ def install(body: InstallBody) -> Dict[str, Any]:
     if not body.name.strip():
         raise HTTPException(status_code=400, detail="нужно имя скилла")
     return core().do_install(body.name, body.cat, body.confirm, body.force,
-                             body.mode, body.allow_overwrite)
+                             body.mode, body.allow_overwrite, body.cat_desc)

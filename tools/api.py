@@ -29,6 +29,7 @@ LLM остаётся там, где без него никак: написать
     python tools/api.py install --name python-pathlib --confirm --mode append   # долив
     python tools/api.py install --name python-pathlib --confirm --mode replace  # с бэкапом
     python tools/api.py plan --name python-pathlib     # долив: что слить, что переписать
+    python tools/api.py desc --cat software-development --text "…"   # описание категории
 """
 from __future__ import annotations
 
@@ -90,6 +91,28 @@ def _safe_segment(value: str, what: str) -> str:
     return text
 
 
+def _safe_category(value: str) -> str:
+    """Категория скилла — с проверкой каждого сегмента пути.
+
+    Категория бывает вложенной (``mlops/evaluation``), поэтому слэш здесь
+    разрешён — но только как разделитель уровней: ``..``, абсолютные пути и
+    прочие выходы из ``skills/`` отсекаются по сегментам. Имена с точки или
+    подчёркивания не берём: такие каталоги Hermes считает служебными и
+    категориями не признаёт (``do_categories``).
+    """
+    text = (value or "").strip().strip("/")
+    if not text:
+        raise ValueError("не задано поле «категория»")
+    parts = [part for part in text.split("/") if part]
+    if not parts:
+        raise ValueError("не задано поле «категория»")
+    for part in parts:
+        if part in (".", "..") or part.startswith((".", "_")):
+            raise ValueError(f"недопустимый сегмент категории: {part!r}")
+        _safe_segment(part, "категория")
+    return "/".join(parts)
+
+
 def _run(cmd: list[str], timeout: int = 180) -> dict:
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
@@ -141,6 +164,15 @@ def do_categories() -> dict:
     Поэтому список берём с диска: категория = каталог, в котором уже лежит хотя
     бы один скилл (``SKILL.md``). Плоские (``research``) и вложенные
     (``mlops/evaluation``) — одним списком, в том виде, в каком их ждёт установщик.
+
+    К каждой категории отдаём её описание (``details``) — ровно в том состоянии,
+    в каком его увидит агент:
+
+    ``ok``             Hermes прочитает пояснение;
+    ``no-frontmatter`` текст в файле есть, но без YAML-шапки Hermes его не берёт;
+    ``no-file``        файла нет — в индексе скиллов категория идёт голым именем.
+
+    Панель показывает это чипсой, чтобы «немая» категория не оставалась тайной.
     """
     root = skills_root()
     cats: set[str] = set()
@@ -156,8 +188,117 @@ def do_categories() -> dict:
             if any(part.startswith((".", "_")) for part in parent):
                 continue
             cats.add("/".join(parent))
+    details = {cat: read_category_desc(root, cat) | {
+        "dir": str(root / cat),
+        "exists": (root / cat).is_dir(),
+        "skills": sum(1 for _ in (root / cat).rglob("SKILL.md")) if (root / cat).is_dir() else 0,
+    } for cat in sorted(cats)}
     return {"ok": True, "root": str(root), "count": len(cats),
-            "categories": sorted(cats), "loose": sorted(loose)}
+            "categories": sorted(cats), "details": details, "loose": sorted(loose)}
+
+
+def _frontmatter(text: str) -> dict:
+    """Поля YAML-шапки файла — ровно те, что нужны DESCRIPTION.md.
+
+    Полный YAML не тянем: Hermes читает из описания категории одно поле
+    ``description``, а лишняя зависимость мешала бы переносить панель на другую
+    машину.
+    """
+    body = (text or "").lstrip("\ufeff").lstrip()
+    if not body.startswith("---"):
+        return {}
+    rest = body[3:]
+    end = rest.find("\n---")
+    if end < 0:
+        return {}
+    fields: dict[str, str] = {}
+    for line in rest[:end].splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        key, sep, value = line.partition(":")
+        if sep:
+            fields[key.strip()] = value.strip()
+    return fields
+
+
+def _plain_text(text: str, limit: int = 400) -> str:
+    """Текст файла без YAML-шапки — панель показывает его человеку как есть."""
+    body = (text or "").lstrip("\ufeff").lstrip()
+    if body.startswith("---"):
+        rest = body[3:]
+        end = rest.find("\n---")
+        if end >= 0:
+            body = rest[end + 4:].strip()
+    body = " ".join(body.split())
+    return body[:limit] + ("…" if len(body) > limit else "")
+
+
+def read_category_desc(root: Path, cat: str) -> dict:
+    """Описание категории — так, как его УВИДИТ агент (и как его править).
+
+    Hermes берёт поле ``description`` из frontmatter ``DESCRIPTION.md``
+    (``agent/prompt_builder.py:_read_category_descriptions``) и вставляет рядом с
+    именем категории в индекс скиллов. Проза без шапки для промпта невидима,
+    поэтому состояние отдаём не «файл есть/нет», а «прочитается или нет»: панель
+    показывает человеку написанный текст, но честно помечает случай, когда агент
+    этого текста не увидит.
+    """
+    path = root / cat / "DESCRIPTION.md"
+    if not path.is_file():
+        return {"desc_state": "no-file", "desc": "", "desc_raw": "", "desc_path": str(path)}
+    text = path.read_text(encoding="utf-8", errors="replace")
+    desc = str(_frontmatter(text).get("description", "")).strip().strip("'\"")
+    return {"desc_state": "ok" if desc else "no-frontmatter",
+            "desc": desc, "desc_raw": _plain_text(text), "desc_path": str(path)}
+
+
+def do_write_category_desc(cat: str, text: str = "", mode: str = "write",
+                           force: bool = False) -> dict:
+    """Записать ``DESCRIPTION.md`` категории — пояснение для агента.
+
+    Текст сочиняет LLM (или человек в панели), ядро только приводит его к формату
+    и пишет. Перенос строки внутри ``description`` сломал бы YAML, поэтому
+    описание сжимаем в одну строку. Режим ``fix`` — для файла, где текст уже есть,
+    но без шапки: прежнюю прозу сохраняем телом ниже шапки, ничего не теряем молча.
+    """
+    try:
+        category = _safe_category(cat)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    wanted = (mode or "write").strip().lower()
+    if wanted not in ("write", "fix"):
+        return {"ok": False, "error": f"неизвестный режим: {mode!r}"}
+
+    root = skills_root()
+    cat_dir = root / category
+    path = cat_dir / "DESCRIPTION.md"
+    here = read_category_desc(root, category)
+    one_line = " ".join((text or "").split())
+    body = ""
+
+    if path.is_file():
+        if wanted == "fix":
+            # Проза без шапки: то, что человек написал, остаётся телом, а в шапку
+            # уходит то же самое одной строкой — Hermes её наконец видит.
+            body = here["desc_raw"]
+            one_line = one_line or body
+        elif not force:
+            return {"ok": False, "exists": True, "desc_state": here["desc_state"],
+                    "desc": here["desc"] or here["desc_raw"], "path": str(path),
+                    "error": "DESCRIPTION.md уже есть — нужен --force или режим fix"}
+    if not one_line:
+        return {"ok": False, "error": "пустое описание: нечего записывать"}
+
+    cat_dir.mkdir(parents=True, exist_ok=True)
+    created = not path.exists()
+    parts = ["---", f"description: {one_line}", "---"]
+    if body:
+        parts += ["", body]
+    path.write_text("\n".join(parts) + "\n", encoding="utf-8", newline="\n")
+    saved = read_category_desc(root, category)
+    return {"ok": saved["desc_state"] == "ok", "path": str(path), "created": created,
+            "category": category, "mode": wanted, "desc": saved["desc"],
+            "desc_state": saved["desc_state"], "kept_body": bool(body)}
 
 
 def do_rerun(src: str = "", strat: str = "", mode: str = "",
@@ -483,7 +624,7 @@ def do_chapter_plan(name: str, cat: str = "", mode: str = "auto",
     """
     try:
         skill = _safe_segment(name, "имя скилла")
-        category = _safe_segment(cat, "категория") if cat else dash.DEFAULT_CATEGORY
+        category = _safe_category(cat) if cat else dash.DEFAULT_CATEGORY
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
     staging = STAGING / skill
@@ -669,7 +810,7 @@ def _record_sources(target: Path, skill: str, mode: str, plan: dict,
 
 def do_install(name: str, cat: str = "", confirm: bool = False,
                force: bool = False, mode: str = "auto",
-               allow_overwrite: bool = True) -> dict:
+               allow_overwrite: bool = True, cat_desc: str = "") -> dict:
     """Перенос черновика в ``skills/<категория>/<имя>/`` — с планом и бэкапом.
 
     Режим — не удобство, а предохранитель, поэтому он выбирается по состоянию цели:
@@ -682,12 +823,17 @@ def do_install(name: str, cat: str = "", confirm: bool = False,
                  копирование черновика целиком (прежний ``copytree`` лишь
                  НАКЛАДЫВАЛ файлы, поэтому старые главы выживали при новом индексе).
 
+    ``cat_desc`` — описание НОВОЙ категории: ядро кладёт его в
+    ``DESCRIPTION.md`` (тот самый файл, по которому Hermes понимает, зачем
+    категория нужна). Существующее описание не затирается — для правки есть
+    отдельная команда ``desc``.
+
     Без ``confirm`` — только план: что добавится, что перезапишется, что
     останется. Ничего не пишется.
     """
     try:
         skill = _safe_segment(name, "имя скилла")
-        category = _safe_segment(cat, "категория") if cat else dash.DEFAULT_CATEGORY
+        category = _safe_category(cat) if cat else dash.DEFAULT_CATEGORY
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -736,9 +882,15 @@ def do_install(name: str, cat: str = "", confirm: bool = False,
         "allow_overwrite": bool(allow_overwrite),
         # «Опасная зона»: есть что перезаписывать или что терять при замене
         "risk": bool(plan["overwrite"] or plan["keep"]),
-        "warning": _install_warning(wanted, counts, target),
+        "warning": _install_warning(wanted, counts, target,
+                                    cat_is_new=not (skills_root() / category).is_dir()),
         # что уже внесено: долив «органичен» только когда это видно до клика
         "existing_sources": _existing_sources(target),
+        # Состояние категории: панель предупреждает о новой (её ещё нет) и о немой
+        # (нет DESCRIPTION.md) ДО подтверждения — иначе скилл уедет в категорию,
+        # которую агент не сопоставит с задачей.
+        "category_exists": (skills_root() / category).is_dir(),
+        "category_desc": read_category_desc(skills_root(), category),
     }
     if target_exists and not confirm:
         # Долив: к файловому плану добавляем раскладку по главам — что слить со
@@ -781,16 +933,31 @@ def do_install(name: str, cat: str = "", confirm: bool = False,
         shutil.copytree(staging, target, dirs_exist_ok=True)
         wrote = sorted(p.relative_to(staging).as_posix() for p in files)
 
+    # Описание категории пишем только там, где его ещё нет: чужой текст не
+    # затираем (для правки существующего есть отдельная кнопка «Починить файл»).
+    desc_written = ""
+    if (cat_desc or "").strip():
+        before = read_category_desc(skills_root(), category)
+        if before["desc_state"] != "ok":
+            res = do_write_category_desc(
+                category, cat_desc,
+                mode="fix" if before["desc_state"] == "no-frontmatter" else "write")
+            if res.get("ok"):
+                desc_written = res["path"]
+
     validation = _validate(target, skill_md)
     journal = _record_sources(target, skill, wanted, plan, backup, staging, prior=prior)
     return {**info, "dry_run": False, "installed": str(target), "backup": backup,
             "wrote": sorted(wrote), "kept": plan["keep"],
             "journal": journal,
             "validation": validation,
+            "category_desc_written": desc_written,
+            "category_desc": read_category_desc(skills_root(), category),
             "ok": bool(validation.get("validate", {}).get("ok"))}
 
 
-def _install_warning(mode: str, counts: dict, target: Path) -> str:
+def _install_warning(mode: str, counts: dict, target: Path,
+                     cat_is_new: bool = False) -> str:
     """Человеческая формулировка риска — её панель показывает перед подтверждением."""
     parts = []
     if counts.get("added"):
@@ -809,6 +976,13 @@ def _install_warning(mode: str, counts: dict, target: Path) -> str:
     known = _existing_sources(target)
     if known:
         parts.append(f"источников внесено ранее: {len(known)}")
+    if cat_is_new:
+        # Новая категория — не запрет, но агент подбирает скилл по категории, а
+        # пояснение к ней (DESCRIPTION.md) читает из файла. Без файла категория
+        # молчит — поэтому про это говорим ДО подтверждения, а не после.
+        parts.append("категория новая: папка создастся, а вот DESCRIPTION.md у неё "
+                     "не будет — Hermes покажет её без пояснения "
+                     "(заполни поле «описание категории»)")
     if not parts:
         return ""
     return "Долив в существующий скилл: " + "; ".join(parts) + "." if mode == "append" \
@@ -831,7 +1005,7 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("health", help="живо ли ядро и где что лежит")
     sub.add_parser("state", help="состояние панели + история прогонов")
-    sub.add_parser("categories", help="существующие категории скиллов (список для панели)")
+    sub.add_parser("categories", help="категории скиллов + состояние их DESCRIPTION.md")
 
     p_rerun = sub.add_parser("rerun", help="загрузить источник и очистить текст")
     p_rerun.add_argument("--src", required=True)
@@ -855,6 +1029,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="алиас --mode replace: снести каталог и заменить целиком")
     p_inst.add_argument("--mode", default="auto", choices=["auto", "create", "append", "replace"],
                         help="auto: нет цели → create, есть → append (долив)")
+    p_inst.add_argument("--cat-desc", dest="cat_desc", default="",
+                        help="описание НОВОЙ категории: ляжет в DESCRIPTION.md "
+                             "(без него Hermes покажет категорию без пояснения)")
     p_inst.add_argument("--no-overwrite", dest="allow_overwrite", action="store_false",
                         help="долив строго «только новое»: существующие файлы не трогать")
     p_inst.set_defaults(allow_overwrite=True)
@@ -869,6 +1046,13 @@ def main(argv: list[str] | None = None) -> int:
                         help="порог близости, с которого предлагается слияние")
     p_plan.add_argument("--save", action="store_true",
                         help="положить план в staging/<имя>/merge-plan.json")
+
+    p_desc = sub.add_parser("desc", help="описание категории: что Hermes скажет агенту (DESCRIPTION.md)")
+    p_desc.add_argument("--cat", required=True)
+    p_desc.add_argument("--text", default="", help="текст описания (одной строкой)")
+    p_desc.add_argument("--mode", default="write", choices=["write", "fix"],
+                        help="fix — обернуть в frontmatter прозу, которую Hermes сейчас не видит")
+    p_desc.add_argument("--force", action="store_true", help="перезаписать существующее описание")
 
 
     args = parser.parse_args(argv)
@@ -887,9 +1071,11 @@ def main(argv: list[str] | None = None) -> int:
         out = do_text(args.path, args.offset, args.limit)
     elif args.cmd == "plan":
         out = do_chapter_plan(args.name, args.cat, args.mode, args.save, args.threshold)
+    elif args.cmd == "desc":
+        out = do_write_category_desc(args.cat, args.text, args.mode, args.force)
     else:
         out = do_install(args.name, args.cat, args.confirm, args.force,
-                         args.mode, args.allow_overwrite)
+                         args.mode, args.allow_overwrite, args.cat_desc)
     print(json.dumps(out, ensure_ascii=False, indent=1))
     return 0 if out.get("ok") else 1
 
