@@ -664,6 +664,13 @@ function B2SPane({ ctx }) {
      где он начинается. */
   const BLOCK_BG = 'color-mix(in oklab, ' + BASE + ' 12%, transparent)'
   const BLOCK_LINE = '1px solid color-mix(in oklab, ' + BASE + ' 30%, transparent)'
+  /* Группа-бокс (описание категории, план, раскладка) НЕ растёт под перенос
+     текста. При сужении панели проза ложится в 5-6 строк, и бокс вытягивается
+     в «сосиску» сверху вниз (владелец: «пусть остаются размером такими как
+     есть в высоту, а не пытаются уместить в себе написанный текст»). Потолок в
+     em привязан к кеглю группы (10px), а не к пикселям: высота держится при
+     любом шрифте темы. Инлайном — классы панели доезжают не все. */
+  const GROUP_CAP = { maxHeight: '7em', overflowY: 'auto', overscrollBehavior: 'contain' }
   const FIELD_LINE = '1px solid color-mix(in oklab, ' + BASE + ' 22%, transparent)'
   /* Фон поля вычищенного текста — фон самой панели (тот же, на котором стоит
      подпись кнопки шага 1), а не наша вуаль: поле читается как «окно» в блоке,
@@ -815,6 +822,7 @@ function B2SPane({ ctx }) {
      (WARN_YELLOW / STOP_RED): смысл состояния не должен уезжать за темой, иначе
      warning и error станут неотличимы в чужой палитре. */
   const catTone = {
+    ...GROUP_CAP,
     backgroundColor: PANEL_BG,
     border: catState === 'ok'
       ? '1px solid var(--ui-diff-add-border, ' + FIX_GREEN + ')'
@@ -991,6 +999,7 @@ function B2SPane({ ctx }) {
     ? jsxs('div', {
         className: 'flex flex-col gap-0.5 rounded border px-2 py-1 text-[0.625rem] leading-snug',
         style: {
+          ...GROUP_CAP,
           backgroundColor: BLOCK_BG,
           borderColor: 'color-mix(in oklab, ' + BASE + ' 22%, transparent)'
         },
@@ -1040,6 +1049,7 @@ function B2SPane({ ctx }) {
     ? jsxs('div', {
         className: 'flex flex-col gap-0.5 rounded border px-2 py-1 text-[0.625rem] leading-snug',
         style: {
+          ...GROUP_CAP,
           backgroundColor: BLOCK_BG,
           borderColor: 'color-mix(in oklab, ' + BASE + ' 22%, transparent)'
         },
