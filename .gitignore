@@ -35,6 +35,8 @@ docs/BACKERS.md
 b2s_fetched/
 dashboard/render.html
 staging/
+# Hermes fork: копии скиллов перед правкой на месте (долив/замена) — локальная страховка
+backups/
 
 # Hermes fork: состояние и лог локального сервера дашборда (tools/serve.py)
 dashboard/.state.json

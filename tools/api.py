@@ -20,10 +20,14 @@ LLM остаётся там, где без него никак: написать
 Использование
 -------------
     python tools/api.py health
+    python tools/api.py categories          # из чего панель разрешает выбрать категорию
+    python tools/api.py skills              # что уже стоит: имя = тема, страницы = главы
     python tools/api.py rerun  --src https://… --strat auto
     python tools/api.py state
     python tools/api.py install --name python-pathlib --cat software-development
     python tools/api.py install --name python-pathlib --confirm   # реальный перенос
+    python tools/api.py install --name python-pathlib --confirm --mode append   # долив
+    python tools/api.py install --name python-pathlib --confirm --mode replace  # с бэкапом
 """
 from __future__ import annotations
 
@@ -58,6 +62,8 @@ from serve import (  # noqa: E402  — логику прогона переис�
 DEFAULT_HOME = "D:/NEURO/Hermes/data/hermes"
 STAGING = REPO / "staging"
 FETCH_DIR = REPO / "b2s_fetched"   # сюда каскад кладёт очищенный текст и report.json
+BACKUP_DIR = REPO / "backups"      # копия скилла перед правкой на месте (долив/замена)
+BACKUP_KEEP = 5                    # сколько копий на один скилл держим
 # Интерпретатор для гейтов (validate/scan). Плагин задаёт его через B2S_PYTHON:
 # сам dashboard запущен как hermes.exe, и sys.executable в службе — не python.
 SKILL_PY = Path(os.environ.get("B2S_PYTHON") or sys.executable)
@@ -114,6 +120,39 @@ def do_state() -> dict:
         "last_error": st.get("last_error"),
         "has_report": bool(st.get("report")),
     }
+
+
+def skills_root() -> Path:
+    """Каталог скиллов профиля: ``skills/<категория>/<имя>/SKILL.md``."""
+    return hermes_home() / "skills"
+
+
+def do_categories() -> dict:
+    """Существующие категории скиллов — панель выбирает ТОЛЬКО из них.
+
+    Категория — не подпись, а механизм: по ней Hermes решает, когда скилл
+    подгружать. Придуманная в поле ввода («csharp stuff») уводит скилл в
+    сторону — агент не сопоставит его с текущей задачей и скилл не подхватится.
+    Поэтому список берём с диска: категория = каталог, в котором уже лежит хотя
+    бы один скилл (``SKILL.md``). Плоские (``research``) и вложенные
+    (``mlops/evaluation``) — одним списком, в том виде, в каком их ждёт установщик.
+    """
+    root = skills_root()
+    cats: set[str] = set()
+    loose: list[str] = []
+    if root.is_dir():
+        for skill_md in sorted(root.rglob("SKILL.md")):
+            rel = skill_md.parent.relative_to(root)
+            parts = rel.parts
+            if len(parts) < 2:          # скилл лежит прямо в skills/ — категории у него нет
+                loose.append(rel.as_posix())
+                continue
+            parent = parts[:-1]
+            if any(part.startswith((".", "_")) for part in parent):
+                continue
+            cats.add("/".join(parent))
+    return {"ok": True, "root": str(root), "count": len(cats),
+            "categories": sorted(cats), "loose": sorted(loose)}
 
 
 def do_rerun(src: str = "", strat: str = "", mode: str = "",
@@ -199,13 +238,118 @@ def do_text(path: str = "", offset: int = 0, limit: int = 0) -> dict:
     }
 
 
-def do_install(name: str, cat: str = "", confirm: bool = False,
-               force: bool = False) -> dict:
-    """Перенос готового черновика в ``skills/<категория>/<имя>/``.
+def do_skills() -> dict:
+    """Существующие скиллы профиля — панель выбирает имя, а не придумывает его.
 
-    Без ``confirm`` — только предпросмотр: что именно поедет, сколько файлов и
-    байт, существует ли цель. Ничего не пишется. Это защита от «кнопка сама
-    поставила скилл, которого я не просил».
+    Имя занято — это не повод отказать, это сигнал: источник доливается в
+    существующий скилл (fold-in). Поэтому панели нужен список того, что уже
+    стоит, — категория, число глав, объём. Выбор имени из списка сам включает
+    режим дополнения, и повторяющихся имён не возникает.
+    """
+    root = skills_root()
+    items: list[dict] = []
+    if root.is_dir():
+        for skill_md in sorted(root.rglob("SKILL.md")):
+            folder = skill_md.parent
+            rel = folder.relative_to(root)
+            if any(part.startswith((".", "_")) for part in rel.parts):
+                continue
+            parts = rel.parts
+            files = [p for p in folder.rglob("*") if p.is_file()]
+            ch_dir = folder / "chapters"
+            chapters = ([p.name for p in sorted(ch_dir.rglob("*")) if p.is_file()]
+                        if ch_dir.is_dir() else [])
+            items.append({
+                "name": parts[-1],
+                "category": "/".join(parts[:-1]),     # "" — скилл лежит в корне skills/
+                "path": str(folder),
+                "files": len(files),
+                "chapters": len(chapters),
+                "chapter_names": chapters[:60],
+                "bytes": sum(p.stat().st_size for p in files),
+            })
+    items.sort(key=lambda it: it["name"].lower())
+    return {"ok": True, "root": str(root), "count": len(items), "skills": items}
+
+
+def _digest(path: Path) -> str:
+    """Хеш содержимого — чтобы «тот же файл» отличать от «файл с тем же именем»."""
+    import hashlib
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _plan_of(staging: Path, target: Path) -> dict:
+    """Что случится с каждым файлом при доливе: добавлен / перезаписан / тот же / сохранён.
+
+    ``keep`` — файлы, которые есть в скилле, но которых нет в черновике. Именно
+    они делают слепое «замещение» опасным: старая глава останется рядом с новым
+    индексом, и скилл начнёт противоречить сам себе.
+    """
+    added, overwrite, same = [], [], []
+    for src in sorted(p for p in staging.rglob("*") if p.is_file()):
+        rel = src.relative_to(staging).as_posix()
+        dst = target / rel
+        if not dst.is_file():
+            added.append(rel)
+        elif _digest(src) == _digest(dst):
+            same.append(rel)
+        else:
+            overwrite.append(rel)
+    keep: list[str] = []
+    if target.is_dir():
+        for dst in sorted(p for p in target.rglob("*") if p.is_file()):
+            rel = dst.relative_to(target).as_posix()
+            if not (staging / rel).is_file():
+                keep.append(rel)
+    return {"added": added, "overwrite": overwrite, "same": same, "keep": keep}
+
+
+def _backup_target(target: Path, name: str) -> str:
+    """Копия скилла перед правкой на месте. Без неё «замещение» необратимо.
+
+    Метка — секундная, поэтому две правки подряд попали бы в один каталог и
+    бэкапы слились бы в кашу; добавляем суффикс, пока имя не станет свободным.
+    """
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    dest = BACKUP_DIR / f"{name}-{stamp}"
+    serial = 2
+    while dest.exists():
+        dest = BACKUP_DIR / f"{name}-{stamp}-{serial}"
+        serial += 1
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(target, dest)
+    _prune_backups(name)
+    return str(dest)
+
+
+def _prune_backups(name: str, keep: int = BACKUP_KEEP) -> None:
+    """Держим последние ``keep`` копий на скилл — история, а не свалка."""
+    older = sorted(BACKUP_DIR.glob(f"{name}-*"), key=lambda p: p.name)
+    for dead in older[:-keep] if len(older) > keep else []:
+        shutil.rmtree(dead, ignore_errors=True)
+
+
+def do_install(name: str, cat: str = "", confirm: bool = False,
+               force: bool = False, mode: str = "auto",
+               allow_overwrite: bool = True) -> dict:
+    """Перенос черновика в ``skills/<категория>/<имя>/`` — с планом и бэкапом.
+
+    Режим — не удобство, а предохранитель, поэтому он выбирается по состоянию цели:
+
+    ``create``   цели нет — обычная установка;
+    ``append``   цель есть — ДОЛИВ: новые файлы кладутся рядом, существующие
+                 перезаписываются только с согласия (``allow_overwrite``), а то,
+                 чего нет в черновике, остаётся как было;
+    ``replace``  цель есть — полная замена: сначала бэкап, потом снос каталога и
+                 копирование черновика целиком (прежний ``copytree`` лишь
+                 НАКЛАДЫВАЛ файлы, поэтому старые главы выживали при новом индексе).
+
+    Без ``confirm`` — только план: что добавится, что перезапишется, что
+    останется. Ничего не пишется.
     """
     try:
         skill = _safe_segment(name, "имя скилла")
@@ -213,44 +357,107 @@ def do_install(name: str, cat: str = "", confirm: bool = False,
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
 
+    wanted = (mode or "auto").strip().lower()
+    if wanted not in ("auto", "create", "append", "replace"):
+        return {"ok": False, "error": f"неизвестный режим установки: {mode!r}"}
+    if force and wanted == "auto":
+        wanted = "replace"
+
     staging = STAGING / skill
     if not staging.is_dir():
         return {"ok": False, "error": f"нет черновика: {staging}",
                 "hint": "сначала шаг 2 — «Сделать черновик» (это уже LLM, идёт в чате)"}
 
     target = hermes_home() / "skills" / category / skill
+    target_exists = target.is_dir() and any(target.iterdir())
+    if wanted in ("auto", "create") and target_exists:
+        wanted = "append"
+
     files = sorted(p for p in staging.rglob("*") if p.is_file())
     total = sum(p.stat().st_size for p in files)
     skill_md = staging / "SKILL.md"
+    plan = _plan_of(staging, target)
+    counts = {k: len(v) for k, v in plan.items()}
     info = {
         "ok": True,
         "dry_run": not confirm,
         "name": skill,
         "category": category,
+        "mode": wanted,
         "staging": str(staging),
         "target": str(target),
         "files": len(files),
         "bytes": total,
         "kb": round(total / 1024, 1),
-        "target_exists": target.exists(),
+        "target_exists": target_exists,
         "has_skill_md": skill_md.is_file(),
         "top_level": sorted(p.name for p in staging.iterdir())[:20],
+        "plan": plan,
+        "plan_counts": counts,
+        "allow_overwrite": bool(allow_overwrite),
+        # «Опасная зона»: есть что перезаписывать или что терять при замене
+        "risk": bool(plan["overwrite"] or plan["keep"]),
+        "warning": _install_warning(wanted, counts, target),
     }
     if not skill_md.is_file():
         return {**info, "ok": False, "error": "в черновике нет SKILL.md"}
     if not confirm:
         return info
-    if target.exists() and not force:
-        return {**info, "ok": False,
-                "error": f"скилл уже стоит: {target} (нужен force для перезаписи)"}
 
+    backup = ""
+    if target_exists:
+        backup = _backup_target(target, skill)
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(staging, target, dirs_exist_ok=force)
+
+    wrote: list[str] = []
+    if wanted == "replace":
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(staging, target, dirs_exist_ok=True)
+        wrote = sorted(p.relative_to(staging).as_posix() for p in files)
+    elif wanted == "append":
+        for rel in plan["added"]:
+            dst = target / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(staging / rel, dst)
+            wrote.append(rel)
+        if allow_overwrite:
+            for rel in plan["overwrite"]:
+                dst = target / rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(staging / rel, dst)
+                wrote.append(rel)
+    else:                                             # create
+        shutil.copytree(staging, target, dirs_exist_ok=True)
+        wrote = sorted(p.relative_to(staging).as_posix() for p in files)
 
     validation = _validate(target, skill_md)
-    return {**info, "dry_run": False, "installed": str(target),
+    return {**info, "dry_run": False, "installed": str(target), "backup": backup,
+            "wrote": sorted(wrote), "kept": plan["keep"],
             "validation": validation,
             "ok": bool(validation.get("validate", {}).get("ok"))}
+
+
+def _install_warning(mode: str, counts: dict, target: Path) -> str:
+    """Человеческая формулировка риска — её панель показывает перед подтверждением."""
+    parts = []
+    if counts.get("added"):
+        parts.append(f"добавится файлов: {counts['added']}")
+    if mode == "append" and counts.get("overwrite"):
+        parts.append(f"перезапишется: {counts['overwrite']} (существующие файлы скилла)")
+    if mode == "append" and counts.get("keep"):
+        parts.append(f"останется как есть: {counts['keep']} (их нет в черновике)")
+    if mode == "replace":
+        if target.is_dir() and any(target.iterdir()):
+            parts.append(f"каталог {target.name} будет снесён и заменён черновиком целиком")
+        else:
+            # Сносить нечего: режим выбран заранее, но цели ещё нет — говорим прямо,
+            # иначе предупреждение пугает сносом того, что не существует.
+            parts.append("каталога ещё нет — заменять нечего, будет обычная установка")
+    if not parts:
+        return ""
+    return "Долив в существующий скилл: " + "; ".join(parts) + "." if mode == "append" \
+        else "; ".join(parts).capitalize() + "."
 
 
 def _validate(target: Path, skill_md: Path) -> dict:
@@ -269,6 +476,7 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("health", help="живо ли ядро и где что лежит")
     sub.add_parser("state", help="состояние панели + история прогонов")
+    sub.add_parser("categories", help="существующие категории скиллов (список для панели)")
 
     p_rerun = sub.add_parser("rerun", help="загрузить источник и очистить текст")
     p_rerun.add_argument("--src", required=True)
@@ -288,20 +496,34 @@ def main(argv: list[str] | None = None) -> int:
     p_inst.add_argument("--name", required=True)
     p_inst.add_argument("--cat", default="")
     p_inst.add_argument("--confirm", action="store_true", help="реально писать на диск")
-    p_inst.add_argument("--force", action="store_true", help="перезаписать существующий скилл")
+    p_inst.add_argument("--force", action="store_true",
+                        help="алиас --mode replace: снести каталог и заменить целиком")
+    p_inst.add_argument("--mode", default="auto", choices=["auto", "create", "append", "replace"],
+                        help="auto: нет цели → create, есть → append (долив)")
+    p_inst.add_argument("--no-overwrite", dest="allow_overwrite", action="store_false",
+                        help="долив строго «только новое»: существующие файлы не трогать")
+    p_inst.set_defaults(allow_overwrite=True)
+
+    sub.add_parser("skills", help="существующие скиллы профиля (имя + категория + главы)")
+
 
     args = parser.parse_args(argv)
     if args.cmd == "health":
         out = do_health()
     elif args.cmd == "state":
         out = do_state()
+    elif args.cmd == "categories":
+        out = do_categories()
+    elif args.cmd == "skills":
+        out = do_skills()
     elif args.cmd == "rerun":
         out = do_rerun(args.src, args.strat, args.mode, args.name, args.cat,
                        args.depth, args.lang)
     elif args.cmd == "text":
         out = do_text(args.path, args.offset, args.limit)
     else:
-        out = do_install(args.name, args.cat, args.confirm, args.force)
+        out = do_install(args.name, args.cat, args.confirm, args.force,
+                         args.mode, args.allow_overwrite)
     print(json.dumps(out, ensure_ascii=False, indent=1))
     return 0 if out.get("ok") else 1
 
