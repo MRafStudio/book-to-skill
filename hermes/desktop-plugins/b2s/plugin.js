@@ -121,6 +121,26 @@ function chapterRows(out) {
   return rows
 }
 
+/* Состав черновика человеческими строками (ответ /draft). Владельцу нужно видеть,
+   ИЗ ЧЕГО состоит скилл до установки: шапка, главы, справочные части. Порядок
+   не алфавитный, а смысловой — SKILL.md, части, главы: так состав читается с
+   первого взгляда. Функция чистая (без React) — формат строк проверяют тесты. */
+function draftRows(draft) {
+  const files = (draft && draft.files) || []
+  const order = { index: 0, part: 1, chapter: 2, other: 3 }
+  const sorted = files.slice().sort((a, b) => {
+    const oa = order[a.kind] != null ? order[a.kind] : 9
+    const ob = order[b.kind] != null ? order[b.kind] : 9
+    if (oa !== ob) return oa - ob
+    return String(a.rel).localeCompare(String(b.rel))
+  })
+  return sorted.map((f) => ({
+    rel: f.rel,
+    kind: f.kind,
+    label: f.rel + ' · ' + f.lines + ' стр · ' + f.chars + ' симв'
+  }))
+}
+
 /* Правило панели: ЛЮБАЯ подпись объекта (путь, URL, имя файла, строка плана,
    подпись поля, шапка блока с данными) — всегда одна строка, лишнее режется
    многоточием. Перенос такой подписи распирает бокс и ломает раскладку соседей,
@@ -213,6 +233,57 @@ const headBitsOf = ({ report, src, tone, busy }) => {
   return bits
 }
 
+/** Склонение по-русски: 1 файл / 2 файла / 5 файлов. */
+const plural = (n, one, few, many) => {
+  const m10 = n % 10
+  const m100 = n % 100
+  if (m10 === 1 && m100 !== 11) return one
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few
+  return many
+}
+
+/** Заголовок блока «Черновик скилла» — тот же принцип, что у «Результата разбора»:
+ *  блок СВЁРНУТ, поэтому все цифры живут в summary, и внутрь не надо заходить
+ *  («видно, что черновик есть, сколько в нём глав и объёма — и ладно»).
+ *
+ *  Черновик пишет LLM в ЧАТЕ, а не ядро: панель узнаёт о нём только с диска,
+ *  поэтому состояния разведены явно — «черновика нет, сделай шаг 2», «черновик
+ *  другого имени» (в поле одно имя, в staging другое), «⏳ пишется» (идёт
+ *  генерация: цифры прошлого черновика к ней не примешиваем). */
+function draftBitsOf({ draft, want, busy }) {
+  const bits = []
+  if (busy === 'draft') {
+    bits.push('⏳ пишется — прозу пишет LLM в чате')
+    return bits
+  }
+  if (!draft) {
+    bits.push('состояние черновика не прочитано')
+    return bits
+  }
+  if (!draft.has_draft) {
+    bits.push(want ? 'черновика «' + want + '» в staging нет' : 'черновика нет')
+    bits.push('сделай шаг 2')
+    return bits
+  }
+  bits.push('черновик готов')
+  /* Шапка SKILL.md — не «мелкий недочёт»: без неё Hermes не увидит description
+     и не подгрузит скилл никогда. Это ровно тот факт, ради которого не заходят
+     внутрь блока, поэтому он идёт в заголовок. */
+  if (draft.skill && draft.skill.frontmatter === false) {
+    bits.push('⚠ шапка SKILL.md не распознана')
+  }
+  if (draft.name && want && draft.name !== want) {
+    bits.push('это «' + draft.name + '», а в поле «' + want + '»')
+  }
+  const c = draft.counts || {}
+  if (c.files != null) bits.push(c.files + ' ' + plural(c.files, 'файл', 'файла', 'файлов'))
+  if (c.chapters) bits.push(c.chapters + ' ' + plural(c.chapters, 'глава', 'главы', 'глав'))
+  if (c.chars != null) bits.push(fmtInt(c.chars) + ' симв')
+  if (draft.glossary_terms) bits.push(draft.glossary_terms + ' терминов')
+  if (draft.at) bits.push('в ' + draft.at)
+  return bits
+}
+
 function Field({ label, hint, children }) {
   return jsxs('label', {
     className: 'flex min-w-0 flex-col gap-1',
@@ -301,6 +372,16 @@ function B2SPane({ ctx }) {
   const [textInfo, setTextInfo] = useState(null) // путь/объём/обрезано — ответ /text
   const [textBusy, setTextBusy] = useState(false)
   const [outOpen, setOutOpen] = useState(false)  // свёртка «Результат разбора» (шаг 1)
+  /* Черновик скилла — своя свёртка и своя сводка. Отдельное состояние, а не
+     переиспользование outOpen: у блока разбора и блока черновика разные жизни
+     (разбор — Python в ядре, черновик — LLM в чате), и раскрытие одного не
+     должно тащить за собой другое. */
+  const [draft, setDraft] = useState(null)        // сводка из /draft (или из /state)
+  const [draftBusy, setDraftBusy] = useState(false)
+  const [draftOpen, setDraftOpen] = useState(false)
+  const [draftFile, setDraftFile] = useState('')  // какой файл черновика открыт
+  const [draftText, setDraftText] = useState(null) // его текст (null — не читали)
+  const [draftTextBusy, setDraftTextBusy] = useState(false)
 
   const focusedId = useValue(host.state.focusedSessionId)
 
@@ -348,6 +429,45 @@ function B2SPane({ ctx }) {
     }
   }
 
+  /** Сводка черновика с диска: ядро читает staging и отдаёт цифры — дёшево и без LLM.
+   *  Панель зовёт это при раскрытии блока, по кнопке «обновить» и по таймеру, пока
+   *  блок открыт: черновик пишет LLM в чате, о готовности панель узнать не может —
+   *  единственный честный источник правды здесь файлы в staging. */
+  const loadDraft = async (silent = false) => {
+    if (!silent) setDraftBusy(true)
+    try {
+      const out = await ctx.rest('/draft', {
+        method: 'POST',
+        body: { name: (name || '').trim() },
+        timeoutMs: 8000
+      })
+      if (out) setDraft(out)
+    } catch (err) {
+      setDraft((prev) => prev || { ok: false, has_draft: false, error: note(err) })
+    } finally {
+      if (!silent) setDraftBusy(false)
+    }
+  }
+
+  /** Файл черновика — по клику внутри блока. limit 0 = файл целиком: SKILL.md и
+   *  главы читаются глазами, а не «первым экраном», как сырой источник. */
+  const loadDraftText = async (rel) => {
+    setDraftFile(rel || '')
+    setDraftTextBusy(true)
+    try {
+      const out = await ctx.rest('/draft_text', {
+        method: 'POST',
+        body: { name: (name || '').trim(), file: rel || '', limit: 0 },
+        timeoutMs: 15000
+      })
+      setDraftText(out && out.ok ? out : { ok: false, error: (out && out.error) || 'файл не прочитан' })
+    } catch (err) {
+      setDraftText({ ok: false, error: note(err) })
+    } finally {
+      setDraftTextBusy(false)
+    }
+  }
+
   // Проба ядра и последний прогон — тоже без LLM. Панель открылась — уже знает состояние.
   useEffect(() => {
     let alive = true
@@ -369,6 +489,10 @@ function B2SPane({ ctx }) {
             setReport({ ...rep, at: (s && s.report_at) || '' })
             loadText(6000)   // текст последнего прогона готов сразу, без кликов
           }
+          /* Сводка черновика приходит тем же ответом: блок стоит свёрнутым, и его
+             заголовок обязан быть фактом уже при открытии панели — иначе владелец
+             не поймёт, есть черновик или нет, не раскрыв блок. */
+          if (alive && s && s.draft) setDraft(s.draft)
           if (alive && s && s.last_error) {
             setTone('error')
             setStatus('последний прогон провалился (' + (s.last_error.at || '') + '): ' +
@@ -384,6 +508,18 @@ function B2SPane({ ctx }) {
     load()
     return () => { alive = false }
   }, [])
+
+  /* Черновик пишет LLM в чате, а не панель: о том, что файлы появились, панель
+     не узнаёт ниоткуда. Пока блок раскрыт — читаем сводку с диска раз в 4 с
+     (ядро отвечает мгновенно: это staging на десяток файлов); блок свернули —
+     таймер погашен, свёрнутая панель ядро не дёргает. Плюс к этому — кнопка
+     «обновить с диска»: она нужна, когда смотришь на блок, не раскрывая. */
+  useEffect(() => {
+    if (!draftOpen) return undefined
+    loadDraft(true)
+    const t = setInterval(() => loadDraft(true), 4000)
+    return () => clearInterval(t)
+  }, [draftOpen, name])
 
   // Категории. По категории Hermes решает, когда подгружать скилл, поэтому выбор
   // идёт из существующих — но список не клетка: «своя категория…» заводит новую,
@@ -1080,6 +1216,146 @@ function B2SPane({ ctx }) {
     ]
   })
 
+  /* Блок черновика скилла — результат шага 2, поэтому стоит сразу ПОД его кнопкой
+     и по устройству повторяет «Результат разбора»: тот же details-спойлер, тот же
+     фон и граница, и так же НЕ раскрывается сам (решение владельца: «схожим с
+     "Результат разбора"... сворачиваться и разворачиваться»).
+     Сводка в заголовке — факт с диска (файлы, главы, объём, время), по нему
+     решается, надо ли вообще заходить внутрь. Внутри — состав черновика и текст
+     выбранного файла; «показать всё сразу» здесь не нужно: SKILL.md и главы
+     читаются по одному, а не простынёй. */
+  const draftBits = draftBitsOf({ draft, want: (name || '').trim(), busy })
+  const draftRowsList = draftRows(draft)
+  const draftBlock = jsxs('details', {
+    className: 'rounded border px-2 py-1 text-[0.625rem] leading-snug',
+    style: { backgroundColor: BLOCK_BG, border: BLOCK_LINE },
+    open: draftOpen,
+    onToggle: (e) => setDraftOpen(!!(e && e.target && e.target.open)),
+    children: [
+      jsx('summary', {
+        className: 'cursor-pointer select-none text-(--ui-text-secondary)',
+        children: jsx('span', Ell('📝 Черновик скилла' +
+          (draftBits.length ? ' · ' + draftBits.join(' · ') : '')))
+      }),
+
+      ...(draft && draft.has_draft
+        ? [
+            /* Паспорт: имя скилла и description. По description Hermes решает,
+               подгружать ли скилл, поэтому «шапки нет» — не мелочь, а состояние,
+               которое обязано быть видно здесь, а не при установке. */
+            jsxs('div', {
+              className: 'mt-1 flex flex-col gap-0.5 text-(--ui-text-secondary)',
+              children: [
+                jsx('div', Ell('лежит в ' + (draft.dir || 'staging/' + (draft.name || '')) +
+                  ' — в постоянные скиллы ничего не ушло')),
+                jsx('div', { className: 'break-words', children:
+                  'SKILL.md: ' + ((draft.skill && draft.skill.name) || draft.name || '—') +
+                  (draft.skill && draft.skill.description ? ' — ' + draft.skill.description : '') }),
+                draft.skill && draft.skill.frontmatter === false
+                  ? jsx('div', {
+                      className: 'text-(--ui-text-primary)',
+                      children: '⚠ шапка SKILL.md не распознана: Hermes не увидит description и скилл не подхватится'
+                    })
+                  : null,
+                jsx('div', { className: 'opacity-80', children:
+                  'глав ' + ((draft.counts && draft.counts.chapters) || 0) +
+                  ' · терминов ' + (draft.glossary_terms || 0) +
+                  ' · строк ' + fmtInt((draft.counts && draft.counts.lines) || 0) })
+              ]
+            }),
+
+            jsx('div', { className: 'mt-2 text-(--ui-text-secondary)',
+              children: 'состав черновика — нажми файл, чтобы прочитать' }),
+            /* Скроллится ТОЛЬКО список файлов: управление под ним обязано остаться
+               на виду (грабля: кнопка внутри зоны с потолком уезжает под скроллбар). */
+            jsx('div', {
+              className: GROUP_LEAD,
+              style: GROUP_CAP,
+              children: draftRowsList.map((r) => jsx(Button, {
+                size: 'sm',
+                variant: 'ghost',
+                disabled: draftTextBusy,
+                onClick: () => loadDraftText(r.rel),
+                className: 'h-6 justify-start text-[0.625rem]',
+                style: CHIP_FIT,
+                title: r.label,
+                children: cutSpan((draftFile === r.rel ? '▸ ' : '') + r.label)
+              }, r.rel))
+            }),
+            jsx('div', {
+              className: 'mt-1 flex flex-wrap gap-1',
+              children: [
+                jsx(Button, {
+                  size: 'sm',
+                  variant: 'ghost',
+                  disabled: draftBusy,
+                  onClick: () => loadDraft(),
+                  className: 'h-6 text-[0.625rem]',
+                  style: CHIP_FIT,
+                  children: fitLabel(draftBusy ? '⟳ читаю staging…' : '⟳ обновить с диска')
+                }),
+                jsx(Button, {
+                  size: 'sm',
+                  variant: 'ghost',
+                  disabled: draftTextBusy,
+                  onClick: () => loadDraftText(draftFile || 'SKILL.md'),
+                  className: 'h-6 text-[0.625rem]',
+                  style: CHIP_FIT,
+                  children: fitLabel('📄 SKILL.md')
+                })
+              ]
+            }),
+            /* Текст файла — тем же «окном», что очищенный текст источника в блоке
+               разбора: фон панели + data-glass-raised, потому что под стеклом
+               токен обнуляется и поле слилось бы с фоном. */
+            draftText || draftTextBusy
+              ? jsx('pre', {
+                  className: 'mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded px-1.5 py-1 text-[0.625rem] leading-snug text-(--ui-text-secondary)',
+                  'data-glass-raised': '',
+                  style: { border: FIELD_LINE, backgroundColor: PANEL_BG },
+                  children: draftTextBusy
+                    ? 'читаю…'
+                    : (draftText && draftText.ok === false
+                        ? 'файл не прочитан: ' + (draftText.error || 'причина неизвестна')
+                        : (draftText.text || ''))
+                })
+              : jsx('div', {
+                  className: 'mt-1 opacity-70',
+                  children: 'нажми файл в списке — текст покажется здесь (SKILL.md — кнопкой ниже)'
+                }),
+            jsx('div', {
+              className: 'pt-1 opacity-70',
+              children: 'черновик правят в чате (шаг 2 перегенерирует), а в skills/ переносит шаг 3'
+            })
+          ]
+        : [
+            jsx('div', {
+              className: 'mt-1 opacity-80',
+              children: 'черновик пишет LLM в чате: шаг 2 отправляет задание, файлы ложатся в staging — сюда они приедут сами, как только агент их допишет'
+            }),
+            jsx('div', {
+              className: 'mt-1 flex flex-wrap gap-1',
+              children: jsx(Button, {
+                size: 'sm',
+                variant: 'ghost',
+                disabled: draftBusy,
+                onClick: () => loadDraft(),
+                className: 'h-6 text-[0.625rem]',
+                style: CHIP_FIT,
+                children: fitLabel(draftBusy ? '⟳ читаю staging…' : '⟳ проверить staging')
+              })
+            }),
+            jsx('div', {
+              className: 'mt-1 opacity-70',
+              children: (draft && draft.error)
+                || (draft && Array.isArray(draft.drafts) && draft.drafts.length
+                    ? 'в staging есть черновики: ' + draft.drafts.join(', ')
+                    : 'в staging черновиков нет')
+            })
+          ])
+    ]
+  })
+
   /* План установки — не украшение: второй клик по шагу 3 ЗАПИСЫВАЕТ в профиль.
      Поэтому сперва видно, что именно изменится: сколько файлов добавится, какие
      перезапишутся, что останется как было, куда лёг бэкап. Раньше панель писала
@@ -1471,6 +1747,8 @@ function B2SPane({ ctx }) {
                 s.kind === 'rerun' ? statusLine : null,
                 /* всё про шаг 1 (сводка + очищенный текст) — сразу под кнопкой */
                 s.kind === 'rerun' ? resultBlock : null,
+                /* Блок черновика — сразу под кнопкой шага 2: это его результат. */
+                s.kind === 'draft' ? draftBlock : null,
                 /* план записи — под кнопкой шага 3: второй клик пишет в профиль */
                 s.kind === 'install' ? planBlock : null,
                 /* подготовка долива: раскладка по главам (что слить / переписать) */

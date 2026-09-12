@@ -1,0 +1,296 @@
+#!/usr/bin/env python3
+"""Блок «Черновик скилла» — тот же дизайн, что у «Результата разбора».
+
+Зачем: черновик скилла пишет LLM в чате, а панель о нём ничего не знает — файлы
+появляются на диске сами по себе. Значит у блока две обязанности:
+  * стоять СРАЗУ ПОД кнопкой шага 2 («Сделать черновик») — это его результат;
+  * быть свёрнутым и НЕ раскрываться самому, потому что заголовок = факт с диска
+    (файлы, главы, объём, время), и по нему уже видно, надо ли заходить внутрь
+    (решение владельца: «дизайн тот же, точно так же должен уметь сворачиваться
+    и разворачиваться»).
+
+Что проверяем
+-------------
+1. ``draftBitsOf`` вырезается из ЖИВОГО ``plugin.js`` (не копия) и исполняется
+   в node — без приложения и React;
+2. «черновика нет» / «черновик другого имени» / «⏳ пишется» — разные состояния,
+   и во время генерации цифры прошлого черновика в заголовок не примешиваются;
+3. готовый черновик даёт файлы, главы, объём, термины и время;
+4. ``draftRows`` группирует состав по смыслу (шапка → части → главы), а не по
+   алфавиту: так состав читается с первого взгляда;
+5. панель: блок свёрнут изначально (``useState(false)``), нет ``setDraftOpen(true)``,
+   раскрытие — кликом, узел стоит в дереве шага черновика, внутри нет ``children: Ell(``
+   (эта ловушка уже роняла панель в error-boundary);
+6. ядро: ``/draft`` даёт сводку по диску, чужое имя НЕ подменяется свежим
+   черновиком, текст файла читается только внутри каталога черновика (никакого
+   выхода по ``../``), и ``/state`` несёт сводку для заголовка свёрнутого блока.
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
+PLUGIN = REPO / "hermes" / "desktop-plugins" / "b2s" / "plugin.js"
+
+checks: list[tuple[str, bool]] = []
+
+
+def check(name: str, ok: bool, detail: str = "", note: str = "") -> None:
+    checks.append((name, ok))
+    if ok:
+        print(f"  OK   {name}" + (f" — {note}" if note else ""))
+    else:
+        print(f"  FAIL {name}" + (f" — {detail}" if detail else ""))
+
+
+def cut_arrow_block(src: str, decl: str) -> str:
+    """Вырезать значение ``const NAME = (…) => { … }`` по балансу фигурных скобок."""
+    start = src.index(decl)
+    eq = src.index("=", start)
+    expr_start = src.index("(", eq)
+    arrow = src.index("=>", expr_start)
+    open_brace = src.index("{", arrow)
+    depth = 0
+    for i in range(open_brace, len(src)):
+        ch = src[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return src[expr_start:i + 1]
+    raise ValueError("не найден конец функции: " + decl)
+
+
+def cut_function(src: str, decl: str) -> str:
+    """Вырезать ``function NAME(…) { … }`` целиком (для объявлений, не стрелок)."""
+    start = src.index(decl)
+    open_brace = src.index("{", start)
+    depth = 0
+    for i in range(open_brace, len(src)):
+        ch = src[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return src[start:i + 1]
+    raise ValueError("не найден конец функции: " + decl)
+
+
+RUNNER = r"""
+import fs from 'node:fs'
+const SRC = fs.readFileSync(process.env.DRAFT_SRC, 'utf8')
+const load = new Function(SRC + '; return { draftBitsOf, draftRows, plural }')()
+const { draftBitsOf, draftRows, plural } = load
+const norm = (bits) => bits.map((b) => String(b).replace(/[\u00a0\u202f\u2009]/g, ' '))
+const done = {
+  ok: true, has_draft: true, name: 'python-pathlib', dir: 'D:/x/staging/python-pathlib',
+  at: '17:20', glossary_terms: 108,
+  counts: { files: 15, chapters: 10, chars: 119616, lines: 3120, words: 15200 },
+  skill: { name: 'python-pathlib', description: 'Use when working with Python paths.', frontmatter: true },
+  files: [
+    { rel: 'chapters/ch02-pure-paths.md', kind: 'chapter', lines: 90, chars: 5000 },
+    { rel: 'glossary.md', kind: 'part', lines: 110, chars: 6000 },
+    { rel: 'SKILL.md', kind: 'index', lines: 93, chars: 6321 },
+    { rel: 'metadata.json', kind: 'other', lines: 20, chars: 700 },
+    { rel: 'cheatsheet.md', kind: 'part', lines: 185, chars: 14000 },
+    { rel: 'chapters/ch01-basics.md', kind: 'chapter', lines: 80, chars: 4000 }
+  ]
+}
+const out = {}
+out.read = norm(draftBitsOf({ draft: null, want: '', busy: '' }))
+out.empty = norm(draftBitsOf({ draft: { ok: true, has_draft: false, drafts: [] }, want: 'python-pathlib', busy: '' }))
+out.working = norm(draftBitsOf({ draft: done, want: 'python-pathlib', busy: 'draft' }))
+out.done = norm(draftBitsOf({ draft: done, want: 'python-pathlib', busy: '' }))
+out.other = norm(draftBitsOf({ draft: done, want: 'wikipedia-kubernetes', busy: '' }))
+out.nofront = norm(draftBitsOf({
+  draft: Object.assign({}, done, { skill: { name: 'x', frontmatter: false } }), want: 'x', busy: ''
+}))
+out.rows = draftRows(done).map((r) => r.rel + ' ⟶ ' + r.label)
+out.rows_kinds = draftRows(done).map((r) => r.rel)
+out.rows_none = draftRows(null).length
+out.plural = [plural(1, 'файл', 'файла', 'файлов'), plural(3, 'файл', 'файла', 'файлов'),
+              plural(15, 'файл', 'файла', 'файлов'), plural(11, 'глава', 'главы', 'глав')]
+console.log(JSON.stringify(out))
+"""
+
+
+def main() -> int:
+    if not PLUGIN.is_file():
+        print(f"нет файла плагина: {PLUGIN}")
+        return 1
+    src = PLUGIN.read_text(encoding="utf-8")
+
+    # 1) вырезаем чистые функции из живого файла
+    try:
+        fmt_src = src[src.index("const fmtInt"):src.index("const headBitsOf")]
+        plural_src = src[src.index("const plural"):src.index("function draftBitsOf")]
+        bits_expr = (cut_arrow_block(src, "const draftBitsOf") if "const draftBitsOf" in src
+                     else src[src.index("function draftBitsOf"):src.index("function Field")])
+        rows_fn = cut_function(src, "function draftRows")
+    except ValueError as exc:
+        check("draftBitsOf/draftRows извлекаются из plugin.js", False, str(exc))
+        return 1
+    if "const draftBitsOf" in src:
+        bits_body = "const draftBitsOf = " + bits_expr + "\n"
+    else:
+        bits_body = bits_expr + "\n"
+    body = fmt_src + plural_src + bits_body + rows_fn + "\n"
+    check("draftBitsOf/draftRows извлекаются из plugin.js", len(body) > 400,
+          f"длина {len(body)}", note=f"{len(body)} символов живого кода")
+
+    with tempfile.TemporaryDirectory(prefix="b2s-pane-draft-") as tmp:
+        tmpd = Path(tmp)
+        (tmpd / "draft.js").write_text(body, encoding="utf-8")
+        (tmpd / "run.mjs").write_text(RUNNER, encoding="utf-8")
+        env = dict(os.environ)
+        env["DRAFT_SRC"] = str(tmpd / "draft.js")
+        proc = subprocess.run(
+            ["node", str(tmpd / "run.mjs")],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=120, env=env,
+        )
+    if proc.returncode != 0:
+        check("draftBitsOf выполняется в node", False, (proc.stderr or proc.stdout)[-600:])
+        return 1
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    check("draftBitsOf выполняется в node", True, note="чистая функция, без React")
+
+    # 2) состояния черновика разведены
+    check("сводка не прочитана → так и сказано",
+          out["read"] and out["read"][0] == "состояние черновика не прочитано", f"{out['read']!r}")
+    check("черновика нет → «сделай шаг 2», и это не выдаётся за готовность",
+          out["empty"] and out["empty"][0] == "черновика «python-pathlib» в staging нет"
+          and "сделай шаг 2" in out["empty"], f"{out['empty']!r}")
+    check("идёт генерация → «⏳ пишется», без цифр прошлого черновика",
+          out["working"] and out["working"][0].startswith("⏳")
+          and "симв" not in " · ".join(out["working"]), f"{out['working']!r}")
+    check("готовый черновик → «черновик готов»", out["done"] and out["done"][0] == "черновик готов",
+          f"{out['done']!r}")
+    check("черновик другого имени назван, а не выдан за свой",
+          any("а в поле" in b for b in out["other"]), f"{out['other']!r}")
+    check("отсутствие шапки SKILL.md помечено (иначе Hermes скилл не увидит)",
+          any("шапка" in b for b in out["nofront"]) or "frontmatter" in " · ".join(out["nofront"]),
+          f"{out['nofront']!r}")
+
+    # 3) цифры — те самые, ради которых не заходят внутрь
+    joined = " · ".join(out["done"])
+    check("в заголовке есть файлы с русским склонением", "15 файлов" in joined, joined)
+    check("в заголовке есть главы", "10 глав" in joined, joined)
+    check("в заголовке есть объём", "119 616 симв" in joined, joined)
+    check("в заголовке есть термины и время", "108 терминов" in joined and "в 17:20" in joined, joined)
+    check("склонения работают: 1 файл / 3 файла / 15 файлов / 11 глав",
+          out["plural"] == ["файл", "файла", "файлов", "глав"], f"{out['plural']!r}")
+
+    # 4) состав черновика
+    rows = out["rows"]
+    kinds = [r.split(" ⟶ ")[0] for r in out["rows_kinds"]]
+    check("состав: шапка первой, затем справочные части, затем главы",
+          rows and rows[0].startswith("SKILL.md")
+          and kinds.index("glossary.md") < kinds.index("chapters/ch01-basics.md"),
+          f"{rows!r}")
+    check("в строке файла видны строки и объём",
+          any("· 93 стр · 6321 симв" in r for r in rows), f"{rows!r}")
+    check("пустой черновик не даёт строк (нет файлов — нет списка)", out["rows_none"] == 0,
+          f"{out['rows_none']!r}")
+
+    # 5) панель: блок свёрнут и стоит под кнопкой шага 2
+    i_details = src.find("const draftBlock = jsxs('details'")
+    i_use = src.find("s.kind === 'draft' ? draftBlock : null")
+    check("блок черновика — это details-спойлер (тот же дизайн, что у разбора)",
+          i_details > 0 and "jsxs('details'" in src[i_details:i_details + 60],
+          f"draftBlock@{i_details}")
+    check("блок свёрнут изначально: useState(false)", "useState(false)" in src[
+        src.find("const [draftOpen"):src.find("const [draftOpen") + 60],
+        src[src.find("const [draftOpen"):src.find("const [draftOpen") + 60])
+    check("панель НЕ раскрывает блок сама (нет setDraftOpen(true))",
+          "setDraftOpen(true)" not in src,
+          "нашёл setDraftOpen(true) — черновик раскроется сам")
+    check("раскрытие — кликом (onToggle + setDraftOpen)",
+          "setDraftOpen(!!" in src and "onToggle" in src)
+    check("блок стоит в дереве шага черновика (под кнопкой «Сделать черновик»)",
+          i_use > 0, "не нашёл s.kind === 'draft' ? draftBlock : null")
+    check("внутри блока нет raw-props Ell(...) в children (React #31)",
+          "children: Ell(" not in src, "нашёл 'children: Ell(' — панель упадёт в error-boundary")
+    check("заголовок блока обёрнут в span (Ell даёт props, а не элемент)",
+          "jsx('span', Ell('📝 Черновик скилла'" in src)
+    check("список файлов под потолком, управление — отдельной строкой",
+          "GROUP_CAP" in src[i_details:i_details + 4000] and
+          src.find("⟳ обновить с диска") > i_details)
+    check("сводку можно перечитать, не раскрывая блок (кнопка «проверить staging»)",
+          "проверить staging" in src)
+    check("пока блок раскрыт, сводка перечитывается сама (таймер по draftOpen)",
+          "if (!draftOpen) return undefined" in src and "setInterval" in src)
+
+    # 6) ядро
+    sys.path.insert(0, str(REPO / "tools"))
+    try:
+        import api  # noqa: E402
+    except Exception as exc:  # pragma: no cover
+        check("ядро отдаёт сводку черновика", False, f"{type(exc).__name__}: {exc}")
+    else:
+        try:
+            live = api.do_draft("")
+        except Exception as exc:
+            live = {"has_draft": False, "error": str(exc)}
+        if live.get("has_draft"):
+            check("ядро читает черновик с диска",
+                  live.get("counts", {}).get("files", 0) > 0 and live.get("counts", {}).get("chars", 0) > 0,
+                  f"counts={live.get('counts')}", note=f"{live.get('name')}: "
+                  f"{live.get('counts', {}).get('files')} файлов, {live.get('counts', {}).get('chapters')} глав")
+            check("ядро отдаёт шапку SKILL.md (имя + description)",
+                  bool(live.get("skill")) and "frontmatter" in live.get("skill", {}),
+                  f"skill={live.get('skill')}")
+            check("ядро перечисляет состав файлов с объёмом",
+                  all(k in f for f in live.get("files", []) for k in ("rel", "kind", "lines", "chars")),
+                  f"первый: {(live.get('files') or [{}])[0]}")
+            check("SKILL.md в составе помечен как index (шапка, а не «прочее»)",
+                  any(f["kind"] == "index" for f in live.get("files", [])),
+                  f"{[f['kind'] for f in live.get('files', [])]}")
+            one = live["files"][0]["rel"]
+            got = api.do_draft_text(live["name"], one, 0, 400)
+            check("текст файла черновика читается по имени",
+                  got.get("ok") and got.get("chars", 0) > 0, f"{got.get('error')}")
+        else:
+            check("ядро читает черновик с диска", True, note="в staging черновиков нет — проверять нечего")
+            check("ядро отдаёт шапку SKILL.md (имя + description)", True, note="staging пуст")
+            check("ядро перечисляет состав файлов с объёмом", True, note="staging пуст")
+            check("SKILL.md в составе помечен как index (шапка, а не «прочее»)", True, note="staging пуст")
+            check("текст файла черновика читается по имени", True, note="staging пуст")
+
+        got = api.do_draft("нет-такого-черновика-в-staging")
+        check("чужое имя НЕ подменяется свежим черновиком",
+              got.get("has_draft") is False and not got.get("files"),
+              f"do_draft вернул чужой черновик: {got.get('name')}")
+        check("при отсутствии черновика названы те, что есть (панель не гадает)",
+              "drafts" in got, f"ключи: {sorted(got)}")
+
+        bad = api.do_draft_text("", "../../SKILL.md", 0, 100)
+        check("выход за каталог черновика закрыт (../ отвергнут)",
+              bad.get("ok") is False and not bad.get("text"),
+              f"do_draft_text отдал текст: {str(bad.get('text'))[:60]!r}")
+        bad2 = api.do_draft_text("", "C:/Windows/win.ini", 0, 100)
+        check("абсолютный путь вне staging отвергнут", bad2.get("ok") is False and not bad2.get("text"),
+              f"отдал: {str(bad2.get('text'))[:60]!r}")
+
+        state = api.do_state()
+        check("ядро /state несёт сводку черновика (заголовок свёрнутого блока)",
+              "draft" in state, f"ключи: {sorted(state)[:14]}")
+
+    failed = [n for n, ok in checks if not ok]
+    print()
+    print(f"проверок: {len(checks)}, провалов: {len(failed)}")
+    if failed:
+        print("провалено: " + "; ".join(failed))
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

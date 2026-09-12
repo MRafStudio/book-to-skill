@@ -41,6 +41,7 @@ import shutil
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -161,6 +162,10 @@ def do_state() -> dict:
         "report_src": (light.get("url") or ""),
         "last_error": st.get("last_error"),
         "has_report": bool(rep),
+        # Сводка черновика — сразу в состоянии: блок «Черновик скилла» стоит
+        # свёрнутым, и его заголовок обязан быть фактом уже при открытии панели,
+        # как у «Результата разбора» (панель не должна ждать клика).
+        "draft": do_draft(st.get("name") or ""),
     }
 
 
@@ -416,6 +421,174 @@ def do_text(path: str = "", offset: int = 0, limit: int = 0) -> dict:
         "ok": True,
         "path": str(target),
         "name": target.name,
+        "chars": len(text),
+        "lines": text.count("\n") + 1,
+        "offset": start,
+        "limit": size,
+        "returned": len(window),
+        "truncated": start + len(window) < len(text),
+        "text": window,
+    }
+
+
+def _draft_dirs() -> list[Path]:
+    """Каталоги черновиков в ``staging`` — по одному на скилл.
+
+    Служебные (``_probe*``) и просто файлы (``merge-plan.json``) не считаем:
+    черновик — это каталог, в котором есть ``SKILL.md`` (индекс) или ``chapters/``.
+    """
+    if not STAGING.is_dir():
+        return []
+    out: list[Path] = []
+    for p in STAGING.iterdir():
+        if not p.is_dir() or p.name.startswith((".", "_")):
+            continue
+        if (p / "SKILL.md").is_file() or (p / "chapters").is_dir():
+            out.append(p)
+    return sorted(out, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def _draft_dir(name: str = "") -> Path:
+    """Каталог черновика: по имени скилла либо самый свежий.
+
+    Имя приходит из панели (поле «Имя скилла»), и то же имя лежит в ``state``
+    последнего прогона — поэтому сводка всегда про тот черновик, который видит
+    владелец, а не про случайный каталог в staging.
+    """
+    dirs = _draft_dirs()
+    wanted = (name or "").strip()
+    if wanted:
+        for p in dirs:
+            if p.name == wanted:
+                return p
+        # Имя задано явно — чужие цифры не подставляем: панель скажет «для этого
+        # имени черновика нет», а не покажет объём другого скилла.
+        raise ValueError(f"черновика «{wanted}» в staging нет — его пишет шаг 2")
+    if not dirs:
+        raise ValueError("в staging нет черновиков — черновик пишет шаг 2 (это работа LLM)")
+    return dirs[0]
+
+
+def _draft_file(dir_path: Path, rel: str = "") -> Path:
+    """Файл ВНУТРИ каталога черновика — панель не читает произвольный путь.
+
+    ``rel`` пустой → ``SKILL.md``. Выход за каталог (``..``, абсолютный путь)
+    отсекаем по ``resolve()``: тем же приёмом, что ``_fetched_file``.
+    """
+    root = dir_path.resolve()
+    rel = (rel or "").strip().replace("\\", "/").lstrip("/")
+    if not rel:
+        rel = "SKILL.md"
+    if ".." in rel.split("/"):
+        raise ValueError(f"путь вне черновика: {rel!r}")
+    target = (root / rel).resolve()
+    if target != root and root not in target.parents:
+        raise ValueError(f"путь вне черновика: {rel!r}")
+    if not target.is_file():
+        raise ValueError(f"файла нет в черновике: {rel}")
+    return target
+
+
+def _md_stat(path: Path) -> dict:
+    """Объём файла черновика: строки, символы, слова — без чтения всего в память подолгу."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return {
+        "lines": text.count("\n") + 1,
+        "chars": len(text),
+        "words": len(text.split()),
+    }
+
+
+def do_draft(name: str = "") -> dict:
+    """Сводка черновика скилла из ``staging`` — по ней панель пишет заголовок блока.
+
+    Блок черновика устроен как «Результат разбора»: свёрнут, а в заголовке —
+    ФАКТ (файлы, главы, объём, время), по которому видно, надо ли вообще
+    заглядывать внутрь. Поэтому ядро отдаёт именно цифры и список файлов, а не
+    текст: текст живёт в ``do_draft_text`` — его панель тянет лишь по клику.
+
+    Ничего не пишет: только читает staging. Пустой staging — не ошибка, а
+    состояние ``has_draft: False`` («черновика ещё нет»), иначе панель показала
+    бы красную аварию там, где всё нормально.
+    """
+    dirs = _draft_dirs()
+    try:
+        d = _draft_dir(name)
+    except ValueError as exc:
+        return {"ok": True, "has_draft": False, "error": str(exc),
+                "drafts": [p.name for p in dirs]}
+
+    files: list[dict] = []
+    for p in sorted(d.rglob("*")):
+        if not p.is_file() or p.suffix.lower() not in (".md", ".json"):
+            continue
+        rel = p.relative_to(d).as_posix()
+        if rel == "merge-plan.json":
+            continue        # служебный план раскладки, не содержимое скилла
+        row = {"rel": rel, "kind": "index" if rel == "SKILL.md" else _kind(rel)}
+        row.update(_md_stat(p))
+        files.append(row)
+
+    chapters = [f["rel"] for f in files if f["rel"].startswith("chapters/")]
+    skill_md = d / "SKILL.md"
+    skill: dict = {"frontmatter": False, "name": "", "description": ""}
+    if skill_md.is_file():
+        fm = _frontmatter(skill_md.read_text(encoding="utf-8", errors="replace"))
+        skill = {
+            "frontmatter": bool(fm),
+            "name": fm.get("name", ""),
+            "description": fm.get("description", ""),
+        }
+
+    glossary = next((f for f in files if f["rel"].lower().endswith("glossary.md")), None)
+    terms = 0
+    if glossary:
+        terms = sum(1 for line in (d / glossary["rel"]).read_text(
+            encoding="utf-8", errors="replace").splitlines() if line.startswith("**"))
+
+    newest = max((p.stat().st_mtime for p in d.rglob("*") if p.is_file()), default=0)
+    return {
+        "ok": True,
+        "has_draft": True,
+        "name": d.name,
+        "dir": str(d),
+        "at": (datetime.fromtimestamp(newest).strftime("%H:%M:%S") if newest else ""),
+        "mtime": newest,
+        "files": files,
+        "counts": {
+            "files": len(files),
+            "chapters": len(chapters),
+            "chars": sum(f["chars"] for f in files),
+            "lines": sum(f["lines"] for f in files),
+            "words": sum(f["words"] for f in files),
+        },
+        "chapter_list": chapters,
+        "glossary_terms": terms,
+        "skill": skill,
+        "drafts": [p.name for p in dirs],
+    }
+
+
+def do_draft_text(name: str = "", path: str = "", offset: int = 0, limit: int = 0) -> dict:
+    """Текст файла черновика — то, что панель показывает по клику внутри блока.
+
+    ``limit=0`` — файл целиком; иначе окно ``offset…offset+limit``: панель берёт
+    первый экран и догружает остаток, а не тянет 60 КБ на каждый рендер.
+    """
+    try:
+        d = _draft_dir(name)
+        target = _draft_file(d, path)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    text = target.read_text(encoding="utf-8", errors="replace")
+    start = max(0, int(offset or 0))
+    size = max(0, int(limit or 0))
+    window = text[start:start + size] if size else text[start:]
+    return {
+        "ok": True,
+        "name": d.name,
+        "path": str(target),
+        "rel": target.relative_to(d).as_posix(),
         "chars": len(text),
         "lines": text.count("\n") + 1,
         "offset": start,
@@ -1063,6 +1236,15 @@ def main(argv: list[str] | None = None) -> int:
     p_text.add_argument("--offset", type=int, default=0)
     p_text.add_argument("--limit", type=int, default=0, help="0 = весь текст")
 
+    p_draft = sub.add_parser("draft", help="сводка черновика в staging (заголовок блока панели)")
+    p_draft.add_argument("--name", default="", help="имя скилла; по умолчанию — самый свежий черновик")
+
+    p_dtext = sub.add_parser("draft-text", help="текст файла черновика (то, что видно в панели)")
+    p_dtext.add_argument("--name", default="", help="имя скилла; по умолчанию — самый свежий черновик")
+    p_dtext.add_argument("--file", dest="rel", default="", help="файл внутри черновика; по умолчанию SKILL.md")
+    p_dtext.add_argument("--offset", type=int, default=0)
+    p_dtext.add_argument("--limit", type=int, default=0, help="0 = весь файл")
+
     p_inst = sub.add_parser("install", help="перенести черновик в skills/ (по умолчанию предпросмотр)")
     p_inst.add_argument("--name", required=True)
     p_inst.add_argument("--cat", default="")
@@ -1111,6 +1293,10 @@ def main(argv: list[str] | None = None) -> int:
                        args.depth, args.lang)
     elif args.cmd == "text":
         out = do_text(args.path, args.offset, args.limit)
+    elif args.cmd == "draft":
+        out = do_draft(args.name)
+    elif args.cmd == "draft-text":
+        out = do_draft_text(args.name, args.rel, args.offset, args.limit)
     elif args.cmd == "plan":
         out = do_chapter_plan(args.name, args.cat, args.mode, args.save, args.threshold)
     elif args.cmd == "desc":

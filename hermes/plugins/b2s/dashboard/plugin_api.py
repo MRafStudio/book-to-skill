@@ -19,6 +19,8 @@ LLM остаётся только там, где без него нельзя: �
     GET  /state               состояние панели + история прогонов
     GET  /categories          существующие категории скиллов (список для выпадашки)
     GET  /skills              существующие скиллы профиля: имя = тема, главы внутри
+    GET  /draft?name=…        сводка черновика в staging: файлы, главы, объём, шапка
+    POST /draft_text {…}      текст файла черновика (по клику внутри блока черновика)
     POST /rerun   {src,…}     каскад: загрузка + очистка + отчёт
     POST /text    {limit,…}   очищенный текст источника — то, что видно в панели
     POST /install {name,…}    план (added/overwrite/keep); пишет ТОЛЬКО при confirm=true,
@@ -171,6 +173,18 @@ class TextBody(BaseModel):
     limit: int = 6000
 
 
+class DraftTextBody(BaseModel):
+    """Текст файла черновика: пустой file = SKILL.md, limit 0 = весь файл."""
+    name: str = ""
+    file: str = ""
+    offset: int = 0
+    limit: int = 0
+
+class DraftBody(BaseModel):
+    """Сводка черновика: пустое имя = самый свежий черновик в staging."""
+    name: str = ""
+
+
 @router.get("/health")
 def health() -> Dict[str, Any]:
     """Быстрая проба: панель показывает «ядро: на связи» без прогонов."""
@@ -219,6 +233,43 @@ def rerun(body: RerunBody) -> Dict[str, Any]:
 def text(body: TextBody) -> Dict[str, Any]:
     """Очищенный текст источника: панель показывает его тем же экраном, что и метрики."""
     return core().do_text(body.path, body.offset, body.limit)
+
+
+@router.get("/draft")
+def draft(name: str = "") -> Dict[str, Any]:
+    """Сводка черновика в staging — заголовок блока «Черновик скилла».
+
+    Блок стоит свёрнутым, поэтому заголовок обязан быть ФАКТОМ: файлов, глав,
+    символов, время. Пустой staging — не ошибка (``has_draft: false``): панель
+    скажет «черновика ещё нет — шаг 2», а не нарисует аварию.
+
+    Отдельным маршрутом, а не только внутри ``/state``, потому что черновик
+    пишет LLM в чате: панель обновляет сводку по кнопке и при раскрытии блока,
+    не перезапуская всю панель.
+    """
+    return core().do_draft(name)
+
+
+@router.post("/draft")
+def draft_post(body: DraftBody) -> Dict[str, Any]:
+    """То же, что ``GET /draft``, но телом: панель ходит POST'ом, как в /text и /plan.
+
+    Одна и та же сводка на двух глаголах — не дубль: GET удобен для curl и проб,
+    POST — для панели, которой иначе пришлось бы клеить query-строку к пути
+    маршрута (в ``ctx.rest`` это лишний риск, а поведение одинаково).
+    """
+    return core().do_draft(body.name)
+
+
+@router.post("/draft_text")
+def draft_text(body: DraftTextBody) -> Dict[str, Any]:
+    """Текст файла черновика — то, что панель показывает по клику внутри блока.
+
+    Ядро режет путь по каталогу черновика (``..`` и абсолютные пути отклоняются)
+    и умеет отдавать окно ``offset…offset+limit``: панель берёт первый экран,
+    а остаток догружает, а не тянет весь скилл на каждый рендер.
+    """
+    return core().do_draft_text(body.name, body.file, body.offset, body.limit)
 
 
 @router.post("/plan")
