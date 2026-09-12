@@ -612,6 +612,23 @@ function B2SPane({ ctx }) {
   const CHIP_MUTED = 'text-[10px] leading-snug text-(--ui-text-tertiary, #8a8a8a)'
   const CHIP_CHIEF = 'text-[10px] leading-snug text-(--ui-text-primary)'
   const CHIP_LINK = 'h-6 justify-start px-1 text-[10px] text-(--ui-text-primary)'
+  /* Кнопка-действие внутри блока описания: фон — тот же ИДЕНТИФИКАТОР, что у
+     «показать весь текст» в «Результате разбора» (PANEL_BG на обёртке с
+     data-glass-raised + ghost-вариант), а не прямой цвет. Заливку выбирает тема,
+     и hover у ghost-варианта остаётся живым: inline-фон на самой кнопке его убил бы. */
+  const chipAction = (label, onClick, disabled) => jsx('div', {
+    'data-glass-raised': '',
+    className: 'inline-flex rounded',
+    style: { backgroundColor: PANEL_BG },
+    children: jsx(Button, {
+      size: 'sm',
+      variant: 'ghost',
+      disabled,
+      onClick,
+      className: CHIP_LINK,
+      children: label
+    })
+  })
 
   /* Своя категория: её в списке нет по определению — значит её надо завести.
      Каталог создастся при установке, но описание пишем сразу: категория без
@@ -666,13 +683,8 @@ function B2SPane({ ctx }) {
                   className: CHIP_MUTED,
                   children: 'сейчас в файле: ' + ((catInfo.desc_raw || '').slice(0, 240) || '—')
                 }),
-                jsx(Button, {
-                  variant: 'ghost',
-                  disabled: busy === 'desc-fix',
-                  onClick: () => sendDesc('desc-fix'),
-                  className: CHIP_LINK,
-                  children: jsx('span', { children: '🩹 Починить файл — обернуть текст в frontmatter' })
-                })
+                chipAction('🩹 Починить файл — обернуть текст в frontmatter',
+                  () => sendDesc('desc-fix'), busy === 'desc-fix')
               ]
             : [
                 jsx('div', {
@@ -682,13 +694,8 @@ function B2SPane({ ctx }) {
                 catEmpty
                   ? jsx('div', { className: CHIP_MUTED, children: 'каталог пока пуст: в нём ни одного скилла' })
                   : null,
-                jsx(Button, {
-                  variant: 'ghost',
-                  disabled: busy === 'desc',
-                  onClick: () => sendDesc('desc'),
-                  className: CHIP_LINK,
-                  children: jsx('span', { children: '✍ Дописать описание категории' })
-                })
+                chipAction('✍ Дописать описание категории',
+                  () => sendDesc('desc'), busy === 'desc')
               ]
       })
     ]
