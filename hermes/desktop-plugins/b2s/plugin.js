@@ -1084,7 +1084,7 @@ function B2SPane({ ctx }) {
         className: 'grid grid-cols-2 gap-2',
         children: [
           jsx(Field, {
-            label: 'Категория',
+            label: 'Категория скилла',
             children: cats && cats.length
               ? jsxs('div', { className: 'space-y-1', children: [
                   jsxs(Select, {
