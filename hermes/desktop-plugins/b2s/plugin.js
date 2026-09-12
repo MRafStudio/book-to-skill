@@ -127,19 +127,40 @@ function chapterRows(out) {
    а полный текст читается наведением — он уходит в title.
    Возвращаем props, а не готовый элемент: в списках нужен key, и его даёт
    вызывающий — `jsx('div', Ell(line), 'plan-' + i)`. */
+/* Инлайн-страховка к классу `truncate`. Класс один не спасает: у flex-item по
+   умолчанию `min-width: auto`, поэтому подпись не сжимается, `overflow: hidden`
+   не срабатывает — и текст рисуется ПОВЕРХ соседей, а не режется.
+   `min-width: 0` + собственный `overflow: hidden` обязательны. */
+const CUT = {
+  minWidth: 0,
+  display: 'block',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap'
+}
 const Ell = (text, cls) => ({
   className: cls ? 'truncate ' + cls : 'truncate',
-  style: { minWidth: 0, display: 'block' },
+  style: CUT,
   title: String(text),
   children: text
 })
+/* Готовая обрезаемая подпись — для мест, где нужен элемент (внутри кнопок). */
+const cutSpan = (text, cls) => jsx('span', Ell(text, cls))
 
-/* То же правило для значения комбобокса. Radix SelectValue рендерит голый span, а
-   триггер объявлен `whitespace-nowrap`: без `min-width: 0` span не сжимается ниже
-   min-content, и значение лезет за бокс триггера (замер на реальном CSS: до +87 px
-   при ширине панели 160 px, +3 px при 200 px). `min-w-0 flex-1 truncate` сжимает
-   подпись и режет её многоточием; полный текст уходит в title. */
-const VALUE_FIT = { className: 'min-w-0 flex-1 truncate', style: { minWidth: 0 } }
+/* Значение комбобокса. Radix `SelectValue` рендерит голый span и НАМЕРЕННО выбрасывает
+   из props `className` и `style` (проверено на живом DOM плагина: `title` и `data-*`
+   доезжают, классы и стили — нет, см. references/desktop-plugin-pane.md). Поэтому
+   обрезаем не его, а свой span ВОКРУГ: триггер — flex, наш span — сжимаемый
+   flex-item (`min-width: 0` + `flex: 1 1 auto`), внутри лежит Radix-овский
+   inline-span, и многоточие рисует родитель. Замер до фикса (панель 280 px):
+   значение 179 px внутри кнопки 124 px, текст выезжал наружу на 55 px. */
+const vFit = (node, label) =>
+  jsx('span', {
+    className: 'truncate',
+    style: { minWidth: 0, flex: '1 1 auto', display: 'block' },
+    title: label,
+    children: node
+  })
 /* Подпись выбранного значения — для title: у Radix в DOM лежит только value. */
 const labelOf = (list, value) => {
   const hit = (list || []).find((x) => x.value === value)
@@ -740,7 +761,7 @@ function B2SPane({ ctx }) {
   /* Подпись в кнопке живёт в своём span.truncate: многоточие умеет только блочный
      бокс, а у flex-контейнера (какова кнопка) `text-overflow` не срабатывает.
      Общее правило подписей — у `Ell` выше. */
-  const fitLabel = (label) => jsx('span', Ell(label))
+  const fitLabel = (label) => cutSpan(label)
   const chipAction = (label, onClick, disabled, tone) => {
     const fix = tone === 'fix'
     return jsx('div', {
@@ -1137,7 +1158,7 @@ function B2SPane({ ctx }) {
                        может показывать профиль вчерашней давности. */
                     onOpenChange: (open) => { if (open) loadCats() },
                     children: [
-                      jsx(SelectTrigger, { className: 'h-7 text-xs', children: jsx(SelectValue, Object.assign({ title: isCustomCat ? 'своя категория' : cat }, VALUE_FIT)) }),
+                      jsx(SelectTrigger, { className: 'h-7 text-xs', children: vFit(jsx(SelectValue, {}), isCustomCat ? 'своя категория' : cat) }),
                       jsx(SelectContent, {
                         children: [
                           ...cats.map((c) => jsx(SelectItem, {
@@ -1222,7 +1243,7 @@ function B2SPane({ ctx }) {
                     value: act,
                     onValueChange: setAct,
                     children: [
-                      jsx(SelectTrigger, { className: 'h-6 text-[10px]', children: jsx(SelectValue, Object.assign({ title: labelOf(ACTS, act) }, VALUE_FIT)) }),
+                      jsx(SelectTrigger, { className: 'h-6 text-[10px]', children: vFit(jsx(SelectValue, {}), labelOf(ACTS, act)) }),
                       jsx(SelectContent, {
                         children: ACTS.map((a) => jsx(SelectItem, { value: a.value, children: a.label }, a.value))
                       })
@@ -1246,7 +1267,7 @@ function B2SPane({ ctx }) {
           value: strat,
           onValueChange: setStrat,
           children: [
-            jsx(SelectTrigger, { className: 'h-7 text-xs', children: jsx(SelectValue, Object.assign({ title: labelOf(STRATEGIES, strat) }, VALUE_FIT)) }),
+            jsx(SelectTrigger, { className: 'h-7 text-xs', children: vFit(jsx(SelectValue, {}), labelOf(STRATEGIES, strat)) }),
             jsx(SelectContent, {
               children: STRATEGIES.map((s) => jsx(SelectItem, { value: s.value, children: s.label }, s.value))
             })
@@ -1263,7 +1284,7 @@ function B2SPane({ ctx }) {
               value: mode,
               onValueChange: setMode,
               children: [
-                jsx(SelectTrigger, { className: 'h-7 text-xs', children: jsx(SelectValue, Object.assign({ title: labelOf(MODES, mode) }, VALUE_FIT)) }),
+                jsx(SelectTrigger, { className: 'h-7 text-xs', children: vFit(jsx(SelectValue, {}), labelOf(MODES, mode)) }),
                 jsx(SelectContent, {
                   children: MODES.map((m) => jsx(SelectItem, { value: m.value, children: m.label }, m.value))
                 })
@@ -1276,7 +1297,7 @@ function B2SPane({ ctx }) {
               value: lang,
               onValueChange: setLang,
               children: [
-                jsx(SelectTrigger, { className: 'h-7 text-xs', children: jsx(SelectValue, Object.assign({ title: labelOf(LANGS, lang) }, VALUE_FIT)) }),
+                jsx(SelectTrigger, { className: 'h-7 text-xs', children: vFit(jsx(SelectValue, {}), labelOf(LANGS, lang)) }),
                 jsx(SelectContent, {
                   children: LANGS.map((l) => jsx(SelectItem, { value: l.value, children: l.label }, l.value))
                 })
@@ -1307,10 +1328,14 @@ function B2SPane({ ctx }) {
                     variant: 'ghost',
                     disabled: busy === s.kind,
                     onClick: s.run,
-                    className: 'h-7 justify-start text-xs text-(--ui-text-primary)',
+                    className: 'h-7 min-w-0 justify-start text-xs text-(--ui-text-primary)',
                     children: [
-                      jsx('span', { 'aria-hidden': true, children: s.icon }),
-                      jsx('span', { children: (i + 1) + '. ' + s.title })
+                      jsx('span', { 'aria-hidden': true, style: { flexShrink: 0 }, children: s.icon }),
+                      /* Подпись шага — сжимаемым span'ом с обрезкой по границе кнопки.
+                         Кнопка сжимается, но её собственный текст (children кнопки)
+                         лежит прямо во flex-контейнере и не режется: у него
+                         min-width: auto, и он выезжает за границу кнопки. */
+                      cutSpan((i + 1) + '. ' + s.title)
                     ]
                   })
                 }),
