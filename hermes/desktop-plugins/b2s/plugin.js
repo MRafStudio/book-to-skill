@@ -288,55 +288,50 @@ function B2SPane({ ctx }) {
   // и это осознанный шаг (каталог создастся при установке, описание пишем сразу).
   // К каждой категории ядро отдаёт её описание — чипса показывает суть, а не
   // служебный текст, и предупреждает, когда Hermes описания не увидит.
-  useEffect(() => {
-    let alive = true
-    const load = async () => {
-      try {
-        const out = await ctx.rest('/categories', { timeoutMs: 8000 })
-        if (!alive) return
-        const list = ((out && out.categories) || []).slice()
-        setCats(list)
-        setCatMeta((out && out.details) || {})
-        setCatLoose((out && out.loose) || [])
-        setCatErr('')
-        // Категорию больше НЕ перетираем дефолтом: в поле может стоять своя, и
-        // сброс стирал бы ввод на каждой загрузке. Дефолт ставим только в пустое
-        // поле — прежнее поведение «исчезла из профиля» теперь даёт предупреждение
-        // в чипсе, а не молчаливую подмену категории.
-        setCat((cur) => (cur && cur.trim()
-          ? cur
-          : (list.includes('software-development') ? 'software-development' : (list[0] || cur))))
-      } catch (err) {
-        if (!alive) return
-        setCats([])
-        setCatErr('список категорий недоступен: ' + note(err))
-      }
+  /** Категории и скиллы читаются с диска ФУНКЦИЯМИ, а не в useEffect([]) один раз.
+      Панель живёт в приложении с Fast Refresh: состояние компонента при хот-релоаде
+      СОХРАНЯЕТСЯ, поэтому «прочитано при монтировании» = панель до конца сессии
+      показывает тот профиль, который был на момент её открытия. Так и терялась
+      `networking` — каталог на диске есть, ядро его отдаёт, а в выпадашке он не
+      появлялся, пока панель не переоткроют. Перечитывание при открытии списка
+      делает выпадашку живой: каталог создали руками или скилл поставили — видно сразу. */
+  const loadCats = async () => {
+    try {
+      const out = await ctx.rest('/categories', { timeoutMs: 8000 })
+      const list = ((out && out.categories) || []).slice()
+      setCats(list)
+      setCatMeta((out && out.details) || {})
+      setCatLoose((out && out.loose) || [])
+      setCatErr('')
+      // Категорию больше НЕ перетираем дефолтом: в поле может стоять своя, и
+      // сброс стирал бы ввод на каждой загрузке. Дефолт ставим только в пустое
+      // поле — прежнее поведение «исчезла из профиля» теперь даёт предупреждение
+      // в чипсе, а не молчаливую подмену категории.
+      setCat((cur) => (cur && cur.trim()
+        ? cur
+        : (list.includes('software-development') ? 'software-development' : (list[0] || cur))))
+    } catch (err) {
+      setCats([])
+      setCatErr('список категорий недоступен: ' + note(err))
     }
-    load()
-    return () => { alive = false }
-  }, [])
+  }
 
   // Существующие скиллы профиля: имя выбирают из списка, а не придумывают.
   // Занятое имя — не отказ, а сигнал «источник доливается в этот скилл»: панель
   // сама переключается в режим дополнения. Иначе на 600 страницах пришлось бы
   // каждый раз угадывать правильное имя, а промах создал бы второй скилл-дубль.
-  useEffect(() => {
-    let alive = true
-    const load = async () => {
-      try {
-        const out = await ctx.rest('/skills', { timeoutMs: 10000 })
-        if (!alive) return
-        setSkills(Array.isArray(out && out.skills) ? out.skills : [])
-        setSkillsErr('')
-      } catch (err) {
-        if (!alive) return
-        setSkills([])
-        setSkillsErr('список скиллов недоступен: ' + note(err))
-      }
+  const loadSkills = async () => {
+    try {
+      const out = await ctx.rest('/skills', { timeoutMs: 10000 })
+      setSkills(Array.isArray(out && out.skills) ? out.skills : [])
+      setSkillsErr('')
+    } catch (err) {
+      setSkills([])
+      setSkillsErr('список скиллов недоступен: ' + note(err))
     }
-    load()
-    return () => { alive = false }
-  }, [])
+  }
+
+  useEffect(() => { loadCats(); loadSkills() }, [])
 
   const sendIntent = async (kind) => {
     const sid = host.state.focusedSessionId.get()
@@ -446,6 +441,11 @@ function B2SPane({ ctx }) {
           'установлено: ' + out.target + (out.backup ? ' · бэкап: ' + out.backup : ' · бэкап не нужен (новая цель)') +
           (out.category_desc_written ? ' · описание категории записано' : '')
         )
+        /* Профиль изменился прямо сейчас: перечитываем скиллы и категории, иначе
+           свежепоставленный скилл и созданная категория видны только после
+           переоткрытия панели (та же болезнь, что и с пропавшей `networking`). */
+        loadSkills()
+        loadCats()
       } else {
         setTone('error')
         setStatus('записано, но проверка не прошла: ' + (out.error || 'см. подробности ниже'))
@@ -1002,6 +1002,9 @@ function B2SPane({ ctx }) {
                   jsxs(Select, {
                     value: isCustomCat ? '__custom__' : cat,
                     onValueChange: (v) => setCat(v === '__custom__' ? '' : v),
+                    /* Список читается заново на каждое открытие — выпадашка не
+                       может показывать профиль вчерашней давности. */
+                    onOpenChange: (open) => { if (open) loadCats() },
                     children: [
                       jsx(SelectTrigger, { className: 'h-7 text-xs', children: jsx(SelectValue, {}) }),
                       jsx(SelectContent, {
