@@ -76,6 +76,20 @@ function planRows(out) {
   put('＋ добавится', plan.added)
   put('⟳ перезапишется', plan.overwrite)
   put('＝ останется как есть', plan.keep)
+  /* Что уже внесено в скилл: долив «органичен» только когда это видно ДО клика.
+     Без журнала вторая страница вливается вслепую, и в скилле не остаётся следа,
+     откуда взята та или иная глава. */
+  const known = (out && out.existing_sources) || []
+  if (known.length) {
+    rows.push('⌸ уже внесено источников (' + known.length + '): ' + known.slice(0, 3)
+      .map((s) => s.src || '?').join(', ') + (known.length > 3 ? ' …' : ''))
+  }
+  const jr = (out && out.journal) || null
+  if (jr && jr.file) {
+    rows.push((jr.new_source ? '✚ журнал: источник записан впервые'
+      : '⟳ журнал: источник уже был — обновлён') +
+      ' · всего источников: ' + jr.sources + ' · установок этого: ' + jr.installs)
+  }
   return rows
 }
 
