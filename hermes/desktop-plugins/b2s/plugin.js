@@ -176,8 +176,9 @@ const labelOf = (list, value) => {
 }
 
 /* Заголовок блока «Результат разбора» — то, что видно в СВЁРНУТОМ виде.
-   Правило владельца: «если будет выведено "XXX симв. 0 мусора", то и зачем туда
-   заглядывать» — значит заголовок обязан нести факт последнего разбора и
+   Правило владельца: «если будет выведено "XXX симв. 0 ошибок 0 мусора", то и
+   зачем туда заглядывать» — значит заголовок обязан нести факт последнего
+   разбора и
    признак свежести, иначе он врёт (раньше он собирался из `history[0]` и вечно
    показывал «готово · trafilatura · 55938 симв» независимо от того, был разбор
    или нет). Состояния разведены явно: не производился / идёт / провал / готово /
@@ -200,8 +201,13 @@ const headBitsOf = ({ report, src, tone, busy }) => {
     if (report.chars != null) bits.push(fmtInt(report.chars) + ' симв')
     if (report.est_tokens != null) bits.push('~' + fmtInt(report.est_tokens) + ' токенов')
     if (report.junk_total != null) bits.push('мусор ' + report.junk_total)
+    /* «0 ошибок» — не украшение: это тот бит, из-за которого в блок не заходят.
+       Источник — провалы каскада (attempts с ok:false); отдельного поля errors
+       отчёт фетчера не несёт, но если оно появится — берём его. */
+    const tries = (report.attempts || []).length
     const fails = (report.attempts || []).filter((a) => a && a.ok === false).length
-    if (fails) bits.push('провалено попыток ' + fails)
+    const errs = report.errors != null ? report.errors : (tries ? fails : null)
+    if (errs != null) bits.push('ошибок ' + errs)
     if (report.at) bits.push('в ' + report.at)
   }
   return bits

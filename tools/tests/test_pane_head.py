@@ -146,14 +146,16 @@ def main() -> int:
     fresh = " · ".join(out["fresh"])
     check("в заголовке есть объём в символах", "55 938 симв" in fresh, fresh)
     check("в заголовке есть «мусор 0» (ноль — тоже факт)", "мусор 0" in fresh, fresh)
+    check("в заголовке есть «ошибок 0» — тот самый бит, ради которого не заходят внутрь",
+          "ошибок 0" in fresh, fresh)
     check("в заголовке есть оценка токенов", "~13 984 токенов" in fresh, fresh)
     check("в заголовке есть время прогона", "в 16:37" in fresh, fresh)
     check("заголовок показывает источник отчёта действия (не константа)",
           any(b.startswith("разбор") for b in out["fresh"]) and "разбор" in out["none"][0], fresh)
     check("мусор ненулевой виден счётчиком",
           any("мусор 7" in b for b in out["junk"]), f"{out['junk']!r}")
-    check("проваленные попытки каскада видны счётчиком",
-          any("провалено попыток 2" in b for b in out["failed"]), f"{out['failed']!r}")
+    check("провалы каскада видны счётчиком ошибок",
+          any("ошибок 2" in b for b in out["failed"]), f"{out['failed']!r}")
 
     # 4) блок не раскрывается сам
     check("панель НЕ раскрывает блок сама (нет setOutOpen(true))",
