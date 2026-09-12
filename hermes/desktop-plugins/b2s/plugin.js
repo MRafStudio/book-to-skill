@@ -1152,10 +1152,10 @@ function B2SPane({ ctx }) {
                 : jsx(Badge, { variant: 'warn', children: 'ядро не ответило' })
         ]
       }),
-      jsx('div', {
-        className: 'text-[0.625rem] leading-snug text-(--ui-text-tertiary)',
-        children: 'Шаги 1 и 3 — локальный Python (без LLM, мимо чата). Шаги 2 и разбор — в ЭТОТ чат: там пишет модель.'
-      }),
+      /* Назначение инструмента — одной строкой с многоточием: при сужении панели
+         подпись не растягивается в несколько строк, полный текст — в title (наведение). */
+      jsx('div', Ell('Инструмент создания скиллов из документации (html, pdf и других)',
+        'text-[0.625rem] leading-snug text-(--ui-text-tertiary)')),
 
       jsx(Field, {
         label: 'Источник',
