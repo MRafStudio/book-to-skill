@@ -17,8 +17,9 @@
     python tools/sync_hermes.py --check    # только показать дрейф (exit 1, если есть)
     python tools/sync_hermes.py --pull     # профиль → форк (забрать правку в git)
 
-``config.json`` синхронизируется как обычный файл, но он машинно-специфичный
-(пути к форку и интерпретатору) — на другой машине правь руками.
+``config.json`` в синхронизации НЕ участвует: он машинно-специфичный (пути к
+клону и интерпретатору) и создаётся установщиком ``tools/install_plugin.py``.
+В репозитории вместо него лежит шаблон ``config.example.json``.
 
 После развёртывания ``plugin.js`` подхватывается хот-релоадом панели, а
 ``plugin_api.py`` — только рестартом dashboard (``tools/restart_dashboard.bat``):
@@ -36,8 +37,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 MIRROR = REPO / "hermes"
-DEFAULT_HOME = "D:/NEURO/Hermes/data/hermes"
-SKIP = {"__pycache__", ".DS_Store"}
+SKIP = {"__pycache__", ".DS_Store", "config.json", "config.example.json"}
+# ↑ config.json — локальный для машины (пути к клону и интерпретатору), его пишет
+#   tools/install_plugin.py; config.example.json — шаблон из репозитория.
+#   Ни то, ни другое в профиль не копируем и из профиля не забираем.
 # Синхронизируем только эти ветки зеркала: всё остальное (README и прочая
 # документация) живёт в репозитории и в профиль не копируется.
 MIRROR_ROOTS = ("desktop-plugins", "plugins")
@@ -47,9 +50,17 @@ NEEDS_RESTART = {"plugin_api.py", "manifest.json"}
 
 
 def hermes_home(explicit: str = "") -> Path:
-    """Где профиль Hermes: аргумент → env HERMES_HOME → дефолт этой машины."""
-    raw = explicit or os.environ.get("HERMES_HOME") or DEFAULT_HOME
-    return Path(raw)
+    """Где профиль Hermes: аргумент → env HERMES_HOME → типовые места установки.
+
+    Общий детект живёт в ``tools/hermes_paths.py`` — тот же код нужен ядру и
+    установщику плагина: путь этой машины в коде держать нельзя.
+    """
+    if explicit:
+        return Path(explicit)
+    sys.path.insert(0, str(REPO / "tools"))
+    from hermes_paths import hermes_home as detect  # noqa: PLC0415 — локальный импорт
+
+    return detect(REPO)
 
 
 def pairs(home: Path) -> list[tuple[Path, Path]]:
@@ -143,7 +154,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Зеркало hermes/ (форк) ↔ $HERMES_HOME")
     ap.add_argument("--check", action="store_true", help="только показать дрейф, ничего не писать")
     ap.add_argument("--pull", action="store_true", help="профиль → форк (забрать правку в git)")
-    ap.add_argument("--hermes-home", default="", help=f"путь профиля (по умолчанию {DEFAULT_HOME})")
+    ap.add_argument("--hermes-home", default="",
+                    help="путь профиля Hermes (по умолчанию: HERMES_HOME или типовые места)")
     args = ap.parse_args(argv)
 
     home = hermes_home(args.hermes_home)

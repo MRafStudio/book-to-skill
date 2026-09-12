@@ -59,7 +59,9 @@ from serve import (  # noqa: E402  — логику прогона переис�
     summary_line,
 )
 
-DEFAULT_HOME = "D:/NEURO/Hermes/data/hermes"
+# Машинно-специфичных путей здесь нет: профиль ищет hermes_paths.detect_hermes_home
+# по HERMES_HOME и типовым местам установки — иначе плагин не перенести на другую
+# машину. Здесь определяем только рабочие каталоги самого клона.
 STAGING = REPO / "staging"
 FETCH_DIR = REPO / "b2s_fetched"   # сюда каскад кладёт очищенный текст и report.json
 BACKUP_DIR = REPO / "backups"      # копия скилла перед правкой на месте (долив/замена)
@@ -70,9 +72,10 @@ SKILL_PY = Path(os.environ.get("B2S_PYTHON") or sys.executable)
 
 
 # ── помощники ────────────────────────────────────────────────────────────────
-def hermes_home() -> Path:
-    """Каталог профиля Hermes (там живут ``skills/<категория>/``)."""
-    return Path(os.environ.get("HERMES_HOME") or DEFAULT_HOME)
+# Профиль Hermes и интерпретатор гейтов ищет общий модуль: тот же код нужен
+# установщику плагина и синхронизатору зеркала (tools/hermes_paths.py). Путь
+# этой машины в коде держать нельзя — панель ставится и на другие компьютеры.
+from hermes_paths import detect_hermes_home, hermes_home  # noqa: E402,F401
 
 
 def _safe_segment(value: str, what: str) -> str:
@@ -333,6 +336,137 @@ def _prune_backups(name: str, keep: int = BACKUP_KEEP) -> None:
         shutil.rmtree(dead, ignore_errors=True)
 
 
+def _source_entry(staging: Path) -> dict:
+    """Источник черновика: из его ``metadata.json``, иначе — из последнего прогона каскада.
+
+    Нужен именно доливу: без журнала вторая страница вливается «вслепую», и в
+    скилле не остаётся следов, откуда взята та или иная глава.
+    """
+    meta_file = staging / "metadata.json"
+    if meta_file.is_file():
+        try:
+            meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            meta = {}
+        src = meta.get("source") if isinstance(meta, dict) else None
+        if isinstance(src, dict) and (src.get("url") or src.get("path") or src.get("file")):
+            return dict(src)
+    rep = load_state().get("report") or {}
+    url = str(rep.get("url") or "")
+    return {
+        "url": url,
+        "path": "" if url else str(rep.get("source_file") or ""),
+        "title": rep.get("title") or "",
+        "strategy": rep.get("strategy") or "",
+        "chars": rep.get("chars") or 0,
+        "cleaned_file": rep.get("source_file") or "",
+        "junk": rep.get("junk"),
+    }
+
+
+def _read_json(path: Path) -> dict:
+    """JSON-файл как словарь: битый, чужой или отсутствующий — пустой словарь."""
+    if not path.is_file():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _source_key(entry: dict) -> str:
+    """Чем источники отличаются друг от друга: адрес, а если его нет — файл."""
+    return str(entry.get("url") or entry.get("path") or entry.get("file")
+               or entry.get("cleaned_file") or "").strip()
+
+
+def _existing_sources(target: Path) -> list[dict]:
+    """Что уже внесено в скилл — панель показывает это рядом с режимом долива."""
+    meta_file = target / "metadata.json"
+    if not meta_file.is_file():
+        return []
+    try:
+        meta = json.loads(meta_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    srcs = meta.get("sources") if isinstance(meta, dict) else None
+    if not isinstance(srcs, list):
+        one = meta.get("source") if isinstance(meta, dict) else None
+        srcs = [one] if isinstance(one, dict) else []
+    out: list[dict] = []
+    for item in srcs:
+        if not isinstance(item, dict):
+            continue
+        out.append({
+            "src": _source_key(item),
+            "title": item.get("title") or "",
+            "installed_at": item.get("last_installed_at") or item.get("fetched_at") or "",
+            "installs": int(item.get("installs") or 1),
+        })
+    return out
+
+
+def _record_sources(target: Path, skill: str, mode: str, plan: dict,
+                    backup: str, staging: Path, prior: dict | None = None) -> dict:
+    """Дописать в ``metadata.json`` скилла, ЧТО и ИЗ ЧЕГО в него влито.
+
+    ``prior`` — журнал целевого скилла, снятый ДО копирования файлов: долив копирует
+    ``metadata.json`` черновика поверх целевого, и без этого снимка история источников
+    стиралась бы при каждом доливе (проверено тестом: sources оставался равен 1).
+    """
+    meta_file = target / "metadata.json"
+    meta = _read_json(meta_file)          # что лежит сейчас (возможно, версия черновика)
+    prior = prior if isinstance(prior, dict) else {}
+    for field in ("sources", "install_log", "source"):
+        if field in prior:                # журнал скилла главнее: его не теряем
+            meta[field] = prior[field]
+
+    entry = _source_entry(staging)
+    key = _source_key(entry)
+    now = time.strftime("%Y-%m-%dT%H:%M:%S")
+    today = now[:10]
+
+    sources = meta.get("sources")
+    if not isinstance(sources, list):
+        sources = []
+        old = meta.get("source")          # скилл, собранный до журнала
+        if isinstance(old, dict):
+            sources.append(dict(old))
+    known = next((item for item in sources
+                  if isinstance(item, dict) and key and _source_key(item) == key), None)
+    if known is None:
+        known = {"first_installed_at": today}
+        sources.append(known)
+    known.update({k: v for k, v in entry.items() if v not in (None, "")})
+    known["last_installed_at"] = today
+    known["installs"] = int(known.get("installs") or 0) + 1
+
+    log = meta.get("install_log")
+    if not isinstance(log, list):
+        log = []
+    log.append({
+        "at": now,
+        "mode": mode,
+        "source": key,
+        "added": len(plan.get("added") or []),
+        "overwritten": len(plan.get("overwrite") or []),
+        "kept": len(plan.get("keep") or []),
+        "backup": backup or "",
+    })
+
+    meta["skill"] = meta.get("skill") or skill
+    meta["sources"] = sources
+    meta["source"] = known               # обратная совместимость: «последний источник»
+    meta["install_log"] = log[-30:]      # история установок, а не свалка
+    meta_file.parent.mkdir(parents=True, exist_ok=True)
+    meta_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n",
+                         encoding="utf-8")
+    return {"file": str(meta_file), "source": key, "sources": len(sources),
+            "installs": known["installs"], "mode": mode,
+            "new_source": known["installs"] == 1}
+
+
 def do_install(name: str, cat: str = "", confirm: bool = False,
                force: bool = False, mode: str = "auto",
                allow_overwrite: bool = True) -> dict:
@@ -370,7 +504,12 @@ def do_install(name: str, cat: str = "", confirm: bool = False,
 
     target = hermes_home() / "skills" / category / skill
     target_exists = target.is_dir() and any(target.iterdir())
-    if wanted in ("auto", "create") and target_exists:
+    # Режим фиксируем ЯВНО: «auto» — это решение по состоянию цели, а не отдельный
+    # режим. Иначе он и в отчёт, и в журнал установки попадает как «auto», и по
+    # записи невозможно понять, что же реально сделали.
+    if wanted == "auto":
+        wanted = "append" if target_exists else "create"
+    if wanted == "create" and target_exists:
         wanted = "append"
 
     files = sorted(p for p in staging.rglob("*") if p.is_file())
@@ -398,6 +537,8 @@ def do_install(name: str, cat: str = "", confirm: bool = False,
         # «Опасная зона»: есть что перезаписывать или что терять при замене
         "risk": bool(plan["overwrite"] or plan["keep"]),
         "warning": _install_warning(wanted, counts, target),
+        # что уже внесено: долив «органичен» только когда это видно до клика
+        "existing_sources": _existing_sources(target),
     }
     if not skill_md.is_file():
         return {**info, "ok": False, "error": "в черновике нет SKILL.md"}
@@ -405,6 +546,8 @@ def do_install(name: str, cat: str = "", confirm: bool = False,
         return info
 
     backup = ""
+    # Снимок журнала ДО копирования: черновик может принести свой metadata.json.
+    prior = _read_json(target / "metadata.json")
     if target_exists:
         backup = _backup_target(target, skill)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -432,8 +575,10 @@ def do_install(name: str, cat: str = "", confirm: bool = False,
         wrote = sorted(p.relative_to(staging).as_posix() for p in files)
 
     validation = _validate(target, skill_md)
+    journal = _record_sources(target, skill, wanted, plan, backup, staging, prior=prior)
     return {**info, "dry_run": False, "installed": str(target), "backup": backup,
             "wrote": sorted(wrote), "kept": plan["keep"],
+            "journal": journal,
             "validation": validation,
             "ok": bool(validation.get("validate", {}).get("ok"))}
 
@@ -454,6 +599,9 @@ def _install_warning(mode: str, counts: dict, target: Path) -> str:
             # Сносить нечего: режим выбран заранее, но цели ещё нет — говорим прямо,
             # иначе предупреждение пугает сносом того, что не существует.
             parts.append("каталога ещё нет — заменять нечего, будет обычная установка")
+    known = _existing_sources(target)
+    if known:
+        parts.append(f"источников внесено ранее: {len(known)}")
     if not parts:
         return ""
     return "Долив в существующий скилл: " + "; ".join(parts) + "." if mode == "append" \

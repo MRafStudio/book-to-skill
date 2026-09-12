@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 FAKE = Path("D:/tmp/b2s-fakehome")
+REAL_HOME = os.environ.get("HERMES_HOME", "")   # настоящий профиль вернём после проверки
 os.environ["HERMES_HOME"] = str(FAKE)
 sys.path.insert(0, "D:/.VS/Projects/BOOK-TO-SKILL/_fork/tools")
 import api  # noqa: E402
@@ -48,7 +49,7 @@ def show(tag, out):
 
 
 print("=== 0. список скиллов профиля (реальный, не песочница) ===")
-os.environ["HERMES_HOME"] = api.DEFAULT_HOME
+os.environ["HERMES_HOME"] = REAL_HOME
 sk = api.do_skills()
 print(f"count={sk['count']}  root={sk['root']}")
 ch = [s for s in sk["skills"] if s["chapters"]]

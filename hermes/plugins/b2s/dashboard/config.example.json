@@ -1,0 +1,5 @@
+{
+  "_comment": "Локальный config.json плагина BOOK → SKILL. Его создаёт tools/install_plugin.py при установке — вручную править нужно только если ставишь без установщика. Файл НЕ в git: он у каждой машины свой.",
+  "fork": "C:/путь/к/клону/book-to-skill",
+  "python": "C:/путь/к/профилю/hermes-agent/venv/Scripts/python.exe"
+}

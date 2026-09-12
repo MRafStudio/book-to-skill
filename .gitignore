@@ -41,3 +41,8 @@ backups/
 # Hermes fork: состояние и лог локального сервера дашборда (tools/serve.py)
 dashboard/.state.json
 dashboard/.serve.log*
+
+# Hermes fork: локальный config плагина — пути к клону и интерпретатору этой
+# машины. Его пишет tools/install_plugin.py при установке; в репозитории вместо
+# него лежит шаблон hermes/plugins/b2s/dashboard/config.example.json.
+hermes/plugins/b2s/dashboard/config.json

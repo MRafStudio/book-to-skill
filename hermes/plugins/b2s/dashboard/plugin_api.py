@@ -41,24 +41,53 @@ from pydantic import BaseModel
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = PLUGIN_DIR / "config.json"
-DEFAULT_FORK = "D:/.VS/Projects/BOOK-TO-SKILL/_fork"
-DEFAULT_PYTHON = "D:/NEURO/Hermes/data/hermes/hermes-agent/venv/Scripts/python.exe"
+# $HERMES_HOME/plugins/b2s/dashboard → parents[2] == профиль Hermes: он же дом
+# venv-интерпретатора, которым гоняются гейты.
+HERMES_HOME = Path(os.environ.get("HERMES_HOME") or PLUGIN_DIR.parents[2])
 
 _lock = threading.Lock()
 _core: Any = None
 
 
-def config() -> Dict[str, str]:
-    """Настройки плагина: путь форка и интерпретатор для гейтов."""
-    data: Dict[str, Any] = {}
+def _read_config() -> Dict[str, Any]:
+    """Локальный config.json плагина (его пишет установщик) — или пусто."""
     try:
         loaded = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        if isinstance(loaded, dict):
-            data = loaded
+        return loaded if isinstance(loaded, dict) else {}
     except (OSError, ValueError):
-        data = {}
-    fork = os.environ.get("B2S_FORK") or data.get("fork") or DEFAULT_FORK
-    python = os.environ.get("B2S_PYTHON") or data.get("python") or DEFAULT_PYTHON
+        return {}
+
+
+def _guess_python() -> str:
+    """Интерпретатор с зависимостями форка: venv Hermes рядом с профилем.
+
+    В службе ``sys.executable`` — это hermes.exe, а не python, поэтому сначала
+    пробуем venv профиля и только потом откатываемся на текущий процесс.
+    """
+    candidates = [
+        HERMES_HOME / "hermes-agent" / "venv" / "Scripts" / "python.exe",  # Windows
+        HERMES_HOME / "hermes-agent" / "venv" / "bin" / "python",          # POSIX
+        Path(sys.executable),
+    ]
+    for cand in candidates:
+        try:
+            if cand.is_file():
+                return str(cand)
+        except OSError:
+            continue
+    return sys.executable
+
+
+def config() -> Dict[str, str]:
+    """Настройки плагина: путь форка и интерпретатор для гейтов.
+
+    Путь к форку НЕ зашит в код: он приходит из окружения (``B2S_FORK``) либо из
+    ``config.json``, который пишет ``tools/install_plugin.py`` при установке.
+    Зашитый путь сделал бы плагин непереносимым на другую машину.
+    """
+    data = _read_config()
+    fork = os.environ.get("B2S_FORK") or data.get("fork") or ""
+    python = os.environ.get("B2S_PYTHON") or data.get("python") or _guess_python()
     return {"fork": str(fork), "python": str(python)}
 
 
@@ -69,6 +98,11 @@ def core() -> Any:
         if _core is not None:
             return _core
         cfg = config()
+        if not cfg["fork"]:
+            raise HTTPException(status_code=503, detail=(
+                "не задан путь к клону book-to-skill: запусти tools/install_plugin.py "
+                "в клоне (он создаст config.json рядом с plugin_api.py) или задай "
+                "переменную окружения B2S_FORK"))
         api_file = Path(cfg["fork"]) / "tools" / "api.py"
         if not api_file.is_file():
             raise HTTPException(status_code=503,
