@@ -630,6 +630,20 @@ function B2SPane({ ctx }) {
      --translucency-glass-keep), ровно как у карточек поверх стекла. Без стекла
      атрибут безвреден и даёт просто фон панели. */
   const PANEL_BG = 'var(--ui-chat-surface-background, var(--ui-bg-chrome, transparent))'
+  /* Рамки полей и комбобоксов панели — заметнее штатных. Приложение рисует борт
+     поля правилом `.desktop-input-chrome` (unlayered) как
+     `color-mix(in srgb, var(--dt-composer-ring) var(--dt-input-border), transparent)`,
+     где ring — это var(--ui-base), а knob темы равен 7 % (светлая) / 4 % (тёмная).
+     На стекле такая линия почти не читается (владелец: «просто швах»), поэтому
+     поднимаем knob до 22 % — плотность рамки поля «Очищенный текст источника».
+     Крутим ИМЕННО knob, а не inline borderColor: unlayered-правила приложения
+     проигрывают inline-стилю, и борт замер бы намертво — hover (×2) и focus/open
+     (полный ring) перестали бы работать. С knob'ом состояния считает само
+     приложение, а цвета остаются темными (color-mix от var(--ui-base)).
+     Ставим на корень панели: все поля живут внутри неё и наследуют переменную.
+     Портальные поверхности (выпадашка SelectContent, диалог) внутрь не попадают —
+     у них своя тема, и это правильно: список не поле, а меню. */
+  const FIELD_CHROME = { '--dt-input-border': '22%' }
   /* Заливка трёх кнопок-шагов: слабо-зелёная, своей константой. База 4% — плотность
      прежней кнопки шага 1, зелёный #22c55e — примесь сверху. Не токен темы: палитру
      кнопок владелец будет крутить, а шаги должны остаться узнаваемыми. */
@@ -1029,6 +1043,7 @@ function B2SPane({ ctx }) {
 
   return jsxs('div', {
     className: cn('flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-3'),
+    style: FIELD_CHROME,
     children: [
       jsxs('div', {
         className: 'flex items-center justify-between gap-2',
