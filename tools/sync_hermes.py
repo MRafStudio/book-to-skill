@@ -144,7 +144,7 @@ def run(direction: str, home: Path, check: bool) -> int:
         if restart:
             print("нужен рестарт dashboard (роутеры монтируются на старте): "
                   + ", ".join(restart))
-            print("  python tools/restart_dashboard.bat  (или двойной клик)")
+            print("  python tools/restart_dashboard.py  (права просит сам; .bat рядом — обёртка)")
         if any(rel.endswith("plugin.js") for rel in changed + created):
             print("plugin.js подхватится хот-релоадом панели — переключать ничего не нужно")
     return 0
