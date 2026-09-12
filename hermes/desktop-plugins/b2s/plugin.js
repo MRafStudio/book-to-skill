@@ -134,6 +134,18 @@ const Ell = (text, cls) => ({
   children: text
 })
 
+/* То же правило для значения комбобокса. Radix SelectValue рендерит голый span, а
+   триггер объявлен `whitespace-nowrap`: без `min-width: 0` span не сжимается ниже
+   min-content, и значение лезет за бокс триггера (замер на реальном CSS: до +87 px
+   при ширине панели 160 px, +3 px при 200 px). `min-w-0 flex-1 truncate` сжимает
+   подпись и режет её многоточием; полный текст уходит в title. */
+const VALUE_FIT = { className: 'min-w-0 flex-1 truncate', style: { minWidth: 0 } }
+/* Подпись выбранного значения — для title: у Radix в DOM лежит только value. */
+const labelOf = (list, value) => {
+  const hit = (list || []).find((x) => x.value === value)
+  return hit ? hit.label : String(value == null ? '' : value)
+}
+
 function Field({ label, hint, children }) {
   return jsxs('label', {
     className: 'flex min-w-0 flex-col gap-1',
@@ -1125,7 +1137,7 @@ function B2SPane({ ctx }) {
                        может показывать профиль вчерашней давности. */
                     onOpenChange: (open) => { if (open) loadCats() },
                     children: [
-                      jsx(SelectTrigger, { className: 'h-7 text-xs', children: jsx(SelectValue, {}) }),
+                      jsx(SelectTrigger, { className: 'h-7 text-xs', children: jsx(SelectValue, Object.assign({ title: isCustomCat ? 'своя категория' : cat }, VALUE_FIT)) }),
                       jsx(SelectContent, {
                         children: [
                           ...cats.map((c) => jsx(SelectItem, {
@@ -1210,7 +1222,7 @@ function B2SPane({ ctx }) {
                     value: act,
                     onValueChange: setAct,
                     children: [
-                      jsx(SelectTrigger, { className: 'h-6 text-[10px]', children: jsx(SelectValue, {}) }),
+                      jsx(SelectTrigger, { className: 'h-6 text-[10px]', children: jsx(SelectValue, Object.assign({ title: labelOf(ACTS, act) }, VALUE_FIT)) }),
                       jsx(SelectContent, {
                         children: ACTS.map((a) => jsx(SelectItem, { value: a.value, children: a.label }, a.value))
                       })
@@ -1234,7 +1246,7 @@ function B2SPane({ ctx }) {
           value: strat,
           onValueChange: setStrat,
           children: [
-            jsx(SelectTrigger, { className: 'h-7 text-xs', children: jsx(SelectValue, {}) }),
+            jsx(SelectTrigger, { className: 'h-7 text-xs', children: jsx(SelectValue, Object.assign({ title: labelOf(STRATEGIES, strat) }, VALUE_FIT)) }),
             jsx(SelectContent, {
               children: STRATEGIES.map((s) => jsx(SelectItem, { value: s.value, children: s.label }, s.value))
             })
@@ -1251,7 +1263,7 @@ function B2SPane({ ctx }) {
               value: mode,
               onValueChange: setMode,
               children: [
-                jsx(SelectTrigger, { className: 'h-7 text-xs', children: jsx(SelectValue, {}) }),
+                jsx(SelectTrigger, { className: 'h-7 text-xs', children: jsx(SelectValue, Object.assign({ title: labelOf(MODES, mode) }, VALUE_FIT)) }),
                 jsx(SelectContent, {
                   children: MODES.map((m) => jsx(SelectItem, { value: m.value, children: m.label }, m.value))
                 })
@@ -1264,7 +1276,7 @@ function B2SPane({ ctx }) {
               value: lang,
               onValueChange: setLang,
               children: [
-                jsx(SelectTrigger, { className: 'h-7 text-xs', children: jsx(SelectValue, {}) }),
+                jsx(SelectTrigger, { className: 'h-7 text-xs', children: jsx(SelectValue, Object.assign({ title: labelOf(LANGS, lang) }, VALUE_FIT)) }),
                 jsx(SelectContent, {
                   children: LANGS.map((l) => jsx(SelectItem, { value: l.value, children: l.label }, l.value))
                 })
