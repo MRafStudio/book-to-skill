@@ -1170,14 +1170,20 @@ function B2SPane({ ctx }) {
     className: cn('flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-3'),
     style: FIELD_CHROME,
     children: [
+      /* Шапка — КОЛОНКА, а не ряд: плашка режима всегда стоит второй строкой под
+         названием плагина (решение владельца: «просто смести плашку вниз, под
+         название плагина — в этом проекте это допустимо»). В ряду она блуждала:
+         при сжатии панели «BOOK → SKILL» переносился по пробелам, ряд вырастал в
+         2–3 строки (замер: rowH 32/48 вместо 16) и плашка уезжала на 9–17 px вниз.
+         В колонке её позиция не зависит от ширины вовсе. */
       jsxs('div', {
-        className: 'flex items-center justify-between gap-2',
+        className: 'flex flex-col items-start gap-1',
         children: [
           jsxs('div', {
-            className: 'flex items-center gap-2',
+            className: 'flex items-center gap-2 min-w-0',
             children: [
-              jsx(StatusDot, { tone: dotTone }),
-              jsx('span', { className: 'text-xs font-medium text-(--ui-text-primary)', children: 'BOOK → SKILL' })
+              jsx(StatusDot, { tone: dotTone, style: { flexShrink: 0 } }),
+              jsx('span', Ell('BOOK → SKILL', 'text-xs font-medium text-(--ui-text-primary)'))
             ]
           }),
           isWorking
