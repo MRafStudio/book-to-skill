@@ -347,6 +347,12 @@ function B2SPane({ ctx }) {
       await host.request('prompt.submit', { session_id: sid, text: intentText })
       setTone('sent')
       setStatus('→ ушло в чат агенту: ' + intentText)
+      /* Описание категории пишет агент, а не панель: без слежения за целью красная
+         рамка и кнопка «написать» остались бы в панели до её переоткрытия. */
+      if (kind === 'desc' || kind === 'desc-fix') {
+        const m = (catMeta || {})[cat]
+        watchDesc(cat, (m && m.desc_state) || 'no-file')
+      }
       return true
     } catch (err) {
       setTone('error')
@@ -358,6 +364,51 @@ function B2SPane({ ctx }) {
   }
 
   const note = (err) => (err && err.message ? err.message : String(err))
+
+  /** Опрос состояния после действия, ушедшего в чат: описание категории пишет агент,
+      ядро только кладёт готовый текст в файл. Панель о результате не узнаёт никак —
+      интент отправлен, и всё. Поэтому она сама следит за целевой категорией, пока её
+      `desc_state` не изменится, и тогда перечитывает категории: рамка блока и кнопка
+      внутри него переключаются без переоткрытия панели. Владелец: «нажал кнопку, а
+      красная рамка и "Написать описание категории" остались» — это он и есть,
+      непройденный refresh. Следим за целью ПО ИМЕНИ, а не за текущим выбором: пока
+      думает агент, в выпадашке могли выбрать другую категорию — её состояние вотчер
+      тоже обновит, потому что перечитывает весь снимок ядра. */
+  const watchDesc = (targetCat, before) => {
+    if (!targetCat) return
+    const deadline = Date.now() + 180000     // агент отвечает минутами — трёх хватит
+    let inFlight = false                     // запрос длиннее тика не копит вызовы
+    const id = setInterval(async () => {
+      if (inFlight) return
+      inFlight = true
+      try {
+        const out = await ctx.rest('/categories', { timeoutMs: 8000 })
+        const det = ((out && out.details) || {})[targetCat] || null
+        const now = det ? (det.desc_state || 'ok') : 'no-file'
+        if (now !== before) {
+          clearInterval(id)
+          setCats(((out && out.categories) || []).slice())
+          setCatMeta((out && out.details) || {})
+          setCatLoose((out && out.loose) || [])
+          setTone('done')
+          setStatus('описание категории «' + targetCat + '» ' +
+            (now === 'ok' ? 'записано — Hermes его читает' : 'обновлено: ' + now))
+        } else if (Date.now() > deadline) {
+          clearInterval(id)
+          setTone('error')
+          setStatus('описание «' + targetCat + '» не изменилось за 3 минуты — смотри ответ агента в чате')
+        }
+      } catch (err) {
+        if (Date.now() > deadline) {
+          clearInterval(id)
+          setTone('error')
+          setStatus('состояние «' + targetCat + '» не перечитать: ' + note(err))
+        }
+      } finally {
+        inFlight = false
+      }
+    }, 2500)
+  }
 
   /** Шаг 1: детерминированный прогон источника. Никакого чата — прямой REST. */
   const runRerun = async () => {
