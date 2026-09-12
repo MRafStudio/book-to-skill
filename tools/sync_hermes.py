@@ -22,7 +22,7 @@
 В репозитории вместо него лежит шаблон ``config.example.json``.
 
 После развёртывания ``plugin.js`` подхватывается хот-релоадом панели, а
-``plugin_api.py`` — только рестартом dashboard (``tools/restart_dashboard.bat``):
+``plugin_api.py`` — только рестартом dashboard (``tools/restart_dashboard.py``):
 роутеры монтируются на старте процесса.
 """
 from __future__ import annotations
