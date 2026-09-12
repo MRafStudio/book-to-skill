@@ -57,6 +57,7 @@ from serve import (  # noqa: E402  — логику прогона переис�
 
 DEFAULT_HOME = "D:/NEURO/Hermes/data/hermes"
 STAGING = REPO / "staging"
+FETCH_DIR = REPO / "b2s_fetched"   # сюда каскад кладёт очищенный текст и report.json
 # Интерпретатор для гейтов (validate/scan). Плагин задаёт его через B2S_PYTHON:
 # сам dashboard запущен как hermes.exe, и sys.executable в службе — не python.
 SKILL_PY = Path(os.environ.get("B2S_PYTHON") or sys.executable)
@@ -149,6 +150,55 @@ def do_rerun(src: str = "", strat: str = "", mode: str = "",
     return result
 
 
+def _fetched_file(path: str = "") -> Path:
+    """Файл очищенного текста: явный путь либо ``source_file`` последнего прогона.
+
+    Показываем только то, что лежит внутри ``b2s_fetched``: панель не должна
+    уметь прочитать произвольный файл с диска по строке из поля ввода.
+    """
+    raw = (path or "").strip()
+    if not raw:
+        rep = load_state().get("report") or {}
+        raw = str(rep.get("source_file") or "")
+    if not raw:
+        raise ValueError("нечего показывать: сначала шаг 1 — разбор источника")
+    target = Path(raw).resolve()
+    if not target.is_file():
+        raise ValueError(f"файл не найден: {target}")
+    root = FETCH_DIR.resolve()
+    if target != root and root not in target.parents:
+        raise ValueError("файл лежит вне b2s_fetched — показываю только своё сырьё")
+    return target
+
+
+def do_text(path: str = "", offset: int = 0, limit: int = 0) -> dict:
+    """Очищенный текст источника — то, что панель показывает после шага 1. Без LLM.
+
+    ``limit=0`` — файл целиком; иначе окно ``offset…offset+limit``: панель сначала
+    берёт первый экран и догружает остаток, а не тянет 60 КБ на каждый рендер.
+    """
+    try:
+        target = _fetched_file(path)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    text = target.read_text(encoding="utf-8", errors="replace")
+    start = max(0, int(offset or 0))
+    size = max(0, int(limit or 0))
+    window = text[start:start + size] if size else text[start:]
+    return {
+        "ok": True,
+        "path": str(target),
+        "name": target.name,
+        "chars": len(text),
+        "lines": text.count("\n") + 1,
+        "offset": start,
+        "limit": size,
+        "returned": len(window),
+        "truncated": start + len(window) < len(text),
+        "text": window,
+    }
+
+
 def do_install(name: str, cat: str = "", confirm: bool = False,
                force: bool = False) -> dict:
     """Перенос готового черновика в ``skills/<категория>/<имя>/``.
@@ -229,6 +279,11 @@ def main(argv: list[str] | None = None) -> int:
     p_rerun.add_argument("--depth", default="")
     p_rerun.add_argument("--lang", default="")
 
+    p_text = sub.add_parser("text", help="очищенный текст источника (то, что видно в панели)")
+    p_text.add_argument("--path", default="", help="файл; по умолчанию — последний прогон")
+    p_text.add_argument("--offset", type=int, default=0)
+    p_text.add_argument("--limit", type=int, default=0, help="0 = весь текст")
+
     p_inst = sub.add_parser("install", help="перенести черновик в skills/ (по умолчанию предпросмотр)")
     p_inst.add_argument("--name", required=True)
     p_inst.add_argument("--cat", default="")
@@ -243,6 +298,8 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "rerun":
         out = do_rerun(args.src, args.strat, args.mode, args.name, args.cat,
                        args.depth, args.lang)
+    elif args.cmd == "text":
+        out = do_text(args.path, args.offset, args.limit)
     else:
         out = do_install(args.name, args.cat, args.confirm, args.force)
     print(json.dumps(out, ensure_ascii=False, indent=1))
