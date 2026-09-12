@@ -157,6 +157,11 @@ def main() -> int:
     check("провалы каскада видны счётчиком ошибок",
           any("ошибок 2" in b for b in out["failed"]), f"{out['failed']!r}")
 
+    check("во время работы шага в заголовке нет цифр прошлого прогона",
+          "симв" not in " · ".join(out["busy"]), f"{out['busy']!r}")
+    check("при ошибке заголовок не выдаёт метрики за текущие",
+          "симв" not in " · ".join(out["error"]), f"{out['error']!r}")
+
     # 4) блок не раскрывается сам
     check("панель НЕ раскрывает блок сама (нет setOutOpen(true))",
           "setOutOpen(true)" not in src,

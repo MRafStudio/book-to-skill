@@ -197,7 +197,7 @@ const headBitsOf = ({ report, src, tone, busy }) => {
   else if (!report) bits.push('разбор не производился')
   else if (stale) bits.push('отчёт по другому источнику — прогони шаг 1')
   else bits.push('разбор готов')
-  if (report) {
+  if (report && !busy && tone !== 'error') {
     if (report.chars != null) bits.push(fmtInt(report.chars) + ' симв')
     if (report.est_tokens != null) bits.push('~' + fmtInt(report.est_tokens) + ' токенов')
     if (report.junk_total != null) bits.push('мусор ' + report.junk_total)
