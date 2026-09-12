@@ -139,14 +139,28 @@ def do_health() -> dict:
 
 
 def do_state() -> dict:
+    """Состояние панели + история прогонов.
+
+    Отчёт отдаётся ЦЕЛИКОМ (кроме ``preview`` — текст панель берёт маршрутом
+    ``/text``), потому что по нему панель пишет заголовок блока «Результат
+    разбора». Раньше уезжал только флаг ``has_report``, и панель собирала
+    заголовок из ``history[0]`` — урезанной записи без ``junk_total``. Владелец:
+    «в заголовке выводится одно и то же текстовое сообщение! Даже если разбор не
+    произведён, не производился или был выполнен новый» — это оно: заголовок
+    жил по истории, а не по отчёту.
+    """
     st = load_state()
+    rep = st.get("report") or {}
+    light = {k: v for k, v in rep.items() if k != "preview"} if rep else {}
     return {
         "ok": True,
         "state": {k: v for k, v in st.items() if k not in ("report", "history")},
         "history": st.get("history") or [],
+        "report": light,
         "report_at": st.get("report_at") or "",
+        "report_src": (light.get("url") or ""),
         "last_error": st.get("last_error"),
-        "has_report": bool(st.get("report")),
+        "has_report": bool(rep),
     }
 
 

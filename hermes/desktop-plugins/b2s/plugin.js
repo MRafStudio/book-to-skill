@@ -175,6 +175,38 @@ const labelOf = (list, value) => {
   return hit ? hit.label : String(value == null ? '' : value)
 }
 
+/* Заголовок блока «Результат разбора» — то, что видно в СВЁРНУТОМ виде.
+   Правило владельца: «если будет выведено "XXX симв. 0 мусора", то и зачем туда
+   заглядывать» — значит заголовок обязан нести факт последнего разбора и
+   признак свежести, иначе он врёт (раньше он собирался из `history[0]` и вечно
+   показывал «готово · trafilatura · 55938 симв» независимо от того, был разбор
+   или нет). Состояния разведены явно: не производился / идёт / провал / готово /
+   готов, но по ДРУГОМУ источнику (в поле источника уже другой URL — цифры к нему
+   не относятся).
+   Функция чистая и живёт на модульном уровне специально: её гоняет
+   tools/tests/test_pane_head.py в node на живом файле. */
+const fmtInt = (n) => (typeof n === 'number' ? n.toLocaleString('ru-RU') : String(n))
+const headBitsOf = ({ report, src, tone, busy }) => {
+  const bits = []
+  const want = (src || '').trim()
+  const have = report ? String(report.url || report.src || '').trim() : ''
+  const stale = !!want && !!have && want !== have
+  if (tone === 'error') bits.push('⚠ ошибка')
+  else if (busy) bits.push('⏳ ' + busy)
+  else if (!report) bits.push('разбор не производился')
+  else if (stale) bits.push('отчёт по другому источнику — прогони шаг 1')
+  else bits.push('разбор готов')
+  if (report) {
+    if (report.chars != null) bits.push(fmtInt(report.chars) + ' симв')
+    if (report.est_tokens != null) bits.push('~' + fmtInt(report.est_tokens) + ' токенов')
+    if (report.junk_total != null) bits.push('мусор ' + report.junk_total)
+    const fails = (report.attempts || []).filter((a) => a && a.ok === false).length
+    if (fails) bits.push('провалено попыток ' + fails)
+    if (report.at) bits.push('в ' + report.at)
+  }
+  return bits
+}
+
 function Field({ label, hint, children }) {
   return jsxs('label', {
     className: 'flex min-w-0 flex-col gap-1',
@@ -300,7 +332,6 @@ function B2SPane({ ctx }) {
       if (out && out.ok) {
         setText(out.text || '')
         setTextInfo({ path: out.path, chars: out.chars, lines: out.lines, truncated: out.truncated })
-        if (limit) setOutOpen(true)
       } else {
         setTextInfo((prev) => ({ ...(prev || {}), error: (out && out.error) || 'текст недоступен' }))
       }
@@ -320,15 +351,24 @@ function B2SPane({ ctx }) {
         if (!alive) return
         setCore(true)
         setCoreInfo(h || null)
+        setStatus('ядро на связи — шаги 1 и 3 идут мимо чата')
         try {
           const s = await ctx.rest('/state', { timeoutMs: 8000 })
-          const last = s && s.history && s.history.length ? s.history[0] : null
-          if (alive && last) {
-            setReport(last)
-            loadText(6000)   // текст последнего прогона виден сразу, без кликов
+          /* Отчёт берём из /state (ядро отдаёт его целиком, кроме preview), а НЕ
+             из history[0]: история — урезанная запись без junk_total, и заголовок
+             блока вечно показывал «готово · trafilatura · 55938 симв» независимо
+             от того, был разбор или нет. Цифры заголовка должны быть про отчёт. */
+          const rep = s && s.report && Object.keys(s.report).length ? s.report : null
+          if (alive && rep) {
+            setReport({ ...rep, at: (s && s.report_at) || '' })
+            loadText(6000)   // текст последнего прогона готов сразу, без кликов
+          }
+          if (alive && s && s.last_error) {
+            setTone('error')
+            setStatus('последний прогон провалился (' + (s.last_error.at || '') + '): ' +
+              (s.last_error.message || 'причина неизвестна'))
           }
         } catch (err) { /* история не критична */ }
-        setStatus('ядро на связи — шаги 1 и 3 идут мимо чата')
       } catch (err) {
         if (!alive) return
         setCore(false)
@@ -398,7 +438,6 @@ function B2SPane({ ctx }) {
     }
     const intentText = intentOf(kind, { src, name, strat, mode, lang, cat, act, desc: catDesc })
     setBusy(kind)
-    setOutOpen(true)
     try {
       await host.request('prompt.submit', { session_id: sid, text: intentText })
       setTone('sent')
@@ -470,7 +509,6 @@ function B2SPane({ ctx }) {
   const runRerun = async () => {
     setBusy('rerun')
     setTone('working')
-    setOutOpen(true)
     setStatus('шаг 1 · загрузка и очистка источника…')
     try {
       const out = await ctx.rest('/rerun', {
@@ -479,7 +517,7 @@ function B2SPane({ ctx }) {
         timeoutMs: 300000
       })
       setCore(true)
-      if (out.report) setReport({ ...out.report, won: out.strategy, at: 'сейчас' })
+      if (out.report) setReport({ ...out.report, at: out.report_at || 'сейчас' })
       if (out.fetch_ok) {
         setTone('done')
         setStatus('источник разобран: ' + summaryOf(out))
@@ -493,7 +531,6 @@ function B2SPane({ ctx }) {
             truncated: true,
             partial: true
           })
-          setOutOpen(true)
         }
         loadText(6000)   // уточняем из файла: весь объём, число строк. Нет маршрута — останется превью
       } else {
@@ -518,7 +555,6 @@ function B2SPane({ ctx }) {
   const runInstall = async (confirm) => {
     setBusy('install')
     setTone('working')
-    setOutOpen(true)
     setStatus(confirm ? 'установка · перенос в skills/…' : 'шаг 3 · предпросмотр переноса…')
     try {
       const out = await ctx.rest('/install', {
@@ -572,7 +608,6 @@ function B2SPane({ ctx }) {
   const runPlan = async () => {
     setChapterBusy(true)
     setTone('working')
-    setOutOpen(true)
     setStatus('шаг 3 · раскладка по главам…')
     try {
       const out = await ctx.rest('/plan', {
@@ -666,18 +701,15 @@ function B2SPane({ ctx }) {
     }
   ]
 
-  /* Всё про шаг 1 — одним сворачиваемым блоком сразу под его кнопкой:
-     строка статуса, сводка последнего прогона и очищенный текст источника.
-     Свёрнутый блок всё равно показывает выжимку в summary, а при любом
-     действии раскрывается сам — иначе клик выглядел бы как «ничего не
-     происходит» (ровно эту граблю уже ловили, когда статус жил под спойлером). */
-  const headBits = [
-    tone === 'error' ? '⚠ ошибка' : busy ? '⏳ ' + busy : report && report.won ? 'готово' : '',
-    report && report.won,
-    report && report.chars != null ? report.chars + ' симв' : '',
-    report && report.lines != null ? report.lines + ' строк' : '',
-    report && report.junk_total != null ? 'мусор ' + report.junk_total : ''
-  ].filter(Boolean)
+  /* Всё про шаг 1 — сворачиваемый блок сразу под его кнопкой: сводка последнего
+     прогона и очищенный текст источника.
+     Блок СВЁРНУТ по умолчанию и сам не раскрывается (решение владельца: «Не надо
+     его автоматически раскрывать — если будет выведено "XXX симв. 0 мусора", то и
+     зачем туда заглядывать»). Факт живёт в summary — его собирает headBitsOf по
+     НАСТОЯЩЕМУ отчёту из /state, — а строка статуса вынесена НАРУЖУ, потому что
+     иначе клик по кнопке выглядел бы как «ничего не происходит» (эту граблю
+     ловили, когда статус жил под спойлером). */
+  const headBits = headBitsOf({ report, src, tone, busy })
 
   /* Контраст от темы без угадывания имени фонового токена: вуаль берём
      от ЦВЕТА ТЕКСТА темы. В тёмной теме текст светлый — блок выходит
@@ -937,6 +969,21 @@ function B2SPane({ ctx }) {
     ]
   })
 
+  /* Строка статуса живёт ВНЕ спойлера: состояние шага обязано быть видно всегда —
+     иначе клик по кнопке выглядит как «ничего не происходит» (эту граблю ловили,
+     когда статус стоял ПОД спойлером), а раскрывать блок разбора владелец запретил. */
+  const statusLine = status
+    ? jsx('div', {
+        className: cn(
+          'mt-1 rounded border border-(--ui-border) px-2 py-1 text-[0.625rem] leading-snug',
+          tone === 'error' ? 'text-(--ui-text-primary)' : 'text-(--ui-text-secondary)'
+        ),
+        /* cutSpan, а НЕ Ell: Ell отдаёт props-объект {сlassName,style,title,children},
+           и в children он роняет рендер (React #31 → error-boundary плагина). */
+        children: cutSpan((tone === 'error' ? '⚠ ' : '') + status)
+      })
+    : null
+
   const resultBlock = jsxs('details', {
     className: 'rounded border px-2 py-1 text-[0.625rem] leading-snug',
     style: { backgroundColor: BLOCK_BG, border: BLOCK_LINE },
@@ -948,17 +995,6 @@ function B2SPane({ ctx }) {
         children: jsx('span', Ell('📊 Результат разбора' + (headBits.length ? ' · ' + headBits.join(' · ') : ' — пока пусто')))
       }),
 
-      /* 1) строка статуса — что именно сделал шаг 1/3 */
-      status
-        ? jsx('div', {
-            className: cn(
-              'mt-1 rounded border border-(--ui-border) px-2 py-1',
-              tone === 'error' ? 'text-(--ui-text-primary)' : 'text-(--ui-text-secondary)'
-            ),
-            children: (tone === 'error' ? '⚠ ' : '') + status
-          })
-        : null,
-
       /* 2) сводка последнего прогона: стратегия-победитель, объём, путь к файлу */
       report
         ? jsxs('div', {
@@ -966,7 +1002,7 @@ function B2SPane({ ctx }) {
             children: [
               jsx('div', {
                 children: 'последний прогон' + (report.at ? ' (' + report.at + ')' : '') +
-                  (report.won ? ' · ' + report.won : '')
+                  (report.strategy || report.won ? ' · ' + (report.strategy || report.won) : '')
               }),
               jsx('div', {
                 children: [
@@ -1425,7 +1461,9 @@ function B2SPane({ ctx }) {
                   })
                 }),
                 jsx('span', Ell(s.note, 'pl-1 text-[0.625rem] leading-snug text-(--ui-text-tertiary)')),
-                /* всё про шаг 1 (статус + сводка + очищенный текст) — сразу под кнопкой */
+                /* строка статуса — всегда видна, даже когда блок разбора свёрнут */
+                s.kind === 'rerun' ? statusLine : null,
+                /* всё про шаг 1 (сводка + очищенный текст) — сразу под кнопкой */
                 s.kind === 'rerun' ? resultBlock : null,
                 /* план записи — под кнопкой шага 3: второй клик пишет в профиль */
                 s.kind === 'install' ? planBlock : null,
@@ -1457,8 +1495,9 @@ function B2SPane({ ctx }) {
         ]
       }),
 
-      /* Статус, сводка прогона и очищенный текст переехали выше — в один
-         сворачиваемый блок сразу под кнопкой шага 1 (resultBlock). Здесь их нет. */
+      /* Сводка прогона и очищенный текст переехали выше — в сворачиваемый блок
+         сразу под кнопкой шага 1 (resultBlock); строка статуса — отдельным узлом
+         над ним, чтобы быть видимой при свёрнутом блоке. Здесь их нет. */
 
       jsxs('div', {
         className: 'flex flex-col gap-0.5 pt-1 text-[0.625rem] text-(--ui-text-tertiary)',
