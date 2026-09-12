@@ -254,6 +254,7 @@ function B2SPane({ ctx }) {
   const [tone, setTone] = useState('idle')
   const [busy, setBusy] = useState('')
   const [core, setCore] = useState(null)         // null — неизвестно, true/false — ответ /health
+  const [coreInfo, setCoreInfo] = useState(null) // тело /health: staging, python, черновики — в подсказке бейджа
   const [report, setReport] = useState(null)     // последний прогон из /state
   const [preview, setPreview] = useState(null)   // предпросмотр установки (без записи)
   const [chapterPlan, setChapterPlan] = useState(null) // раскладка по главам (ответ /plan)
@@ -318,6 +319,7 @@ function B2SPane({ ctx }) {
         const h = await ctx.rest('/health', { timeoutMs: 8000 })
         if (!alive) return
         setCore(true)
+        setCoreInfo(h || null)
         try {
           const s = await ctx.rest('/state', { timeoutMs: 8000 })
           const last = s && s.history && s.history.length ? s.history[0] : null
@@ -602,7 +604,33 @@ function B2SPane({ ctx }) {
   }
 
   const isWorking = !!busy
-  const dotTone = tone === 'error' ? 'bad' : core === false ? 'warn' : isWorking || tone === 'done' ? 'good' : 'muted'
+  /* Точка у шапки: авария — красная, ядро молчит — жёлтая, работа/готово/ядро на связи —
+     зелёная, покой — серая. Ядро отвечает всегда, кроме неразвёрнутого dashboard, поэтому
+     «на связи» = зелёный: состояние видно без наведения. */
+  const dotTone =
+    tone === 'error'
+      ? 'bad'
+      : core === false
+        ? 'warn'
+        : isWorking || tone === 'done' || core === true
+          ? 'good'
+          : 'muted'
+
+  /* Подсказка бейджа: ЧТО именно ответило. Серая плашка «ядро на связи» не сообщала ничего
+     (владелец: «непонятно, что он там отображает»), а в /health лежит вся начинка ядра:
+     где staging, какой Python, какие черновики наготове. */
+  const coreTip = coreInfo
+    ? [
+        'Прямой режим: шаги 1 и 3 идут мимо чата — локальный Python ядра (без LLM).',
+        coreInfo.layer ? 'слой: ' + coreInfo.layer : '',
+        coreInfo.repo ? 'репо: ' + coreInfo.repo : '',
+        coreInfo.staging ? 'staging: ' + coreInfo.staging : '',
+        coreInfo.python ? 'python: ' + coreInfo.python : '',
+        Array.isArray(coreInfo.drafts)
+          ? 'черновики (' + coreInfo.drafts.length + '): ' + coreInfo.drafts.join(', ')
+          : ''
+      ].filter(Boolean).join('\n')
+    : 'Прямой режим: локальный Python ядра, без LLM.'
 
   const steps = [
     {
@@ -1153,12 +1181,27 @@ function B2SPane({ ctx }) {
             ]
           }),
           isWorking
-            ? jsx(Badge, { variant: 'warn', children: 'работаю' })
+            ? jsx(Badge, { variant: 'warn', style: BTN_FIT, children: cutSpan('работаю') })
             : core === null
-              ? jsx(Badge, { variant: 'muted', children: 'проба ядра…' })
+              ? jsx(Badge, {
+                  variant: 'muted', style: BTN_FIT,
+                  title: 'проверяю ответ локального ядра: GET /api/plugins/b2s/health',
+                  children: cutSpan('проба ядра…')
+                })
               : core
-                ? jsx(Badge, { variant: 'muted', children: 'ядро на связи' })
-                : jsx(Badge, { variant: 'warn', children: 'ядро не ответило' })
+                /* Зелёный success, а не серый muted: «на связи» — это норма, и она должна
+                   читаться состоянием, а не фоном; подробности (staging, python, черновики) —
+                   в наведении. Badge SDK тоже `shrink-0 whitespace-nowrap` в базовом классе,
+                   поэтому сжимается инлайном BTN_FIT + подпись cutSpan (грабля 15). */
+                ? jsx(Badge, {
+                    variant: 'success', style: BTN_FIT, title: coreTip,
+                    children: cutSpan('прямой режим · локальный Python')
+                  })
+                : jsx(Badge, {
+                    variant: 'warn', style: BTN_FIT,
+                    title: 'Маршруты /api/plugins/b2s/ ещё не смонтированы — панель уходит в чат. Перезапусти dashboard-службу: tools\\restart_dashboard.py',
+                    children: cutSpan('ядро не ответило — перезапусти dashboard')
+                  })
         ]
       }),
       /* Назначение инструмента — одной строкой с многоточием: при сужении панели
