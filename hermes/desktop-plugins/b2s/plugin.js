@@ -612,23 +612,43 @@ function B2SPane({ ctx }) {
   const CHIP_MUTED = 'text-[10px] leading-snug text-(--ui-text-tertiary, #8a8a8a)'
   const CHIP_CHIEF = 'text-[10px] leading-snug text-(--ui-text-primary)'
   const CHIP_LINK = 'h-6 justify-start px-1 text-[10px] text-(--ui-text-primary)'
-  /* Кнопка-действие внутри блока описания: фон — тот же ИДЕНТИФИКАТОР, что у
-     «показать весь текст» в «Результате разбора» (PANEL_BG на обёртке с
-     data-glass-raised + ghost-вариант), а не прямой цвет. Заливку выбирает тема,
-     и hover у ghost-варианта остаётся живым: inline-фон на самой кнопке его убил бы. */
-  const chipAction = (label, onClick, disabled) => jsx('div', {
-    'data-glass-raised': '',
-    className: 'inline-flex rounded',
-    style: { backgroundColor: PANEL_BG },
-    children: jsx(Button, {
-      size: 'sm',
-      variant: 'ghost',
-      disabled,
-      onClick,
-      className: CHIP_LINK,
-      children: label
+  /* Кнопка-действие внутри блока описания. Нейтральная («показать весь текст»,
+     «Разобрать черновик») фон берёт идентификатором у обёртки: PANEL_BG +
+     data-glass-raised + ghost-вариант, иначе hover у ghost убился бы inline-фоном.
+     Лечащая («Починить файл», «Дописать описание») — отдельный ЗЕЛЁНЫЙ токен:
+     починка = хорошее действие. Зелёный взят ИЗ ТЕМЫ (--ui-green = #1f8a65 в
+     светлой, #55a583 в тёмной) вместе с её производными --ui-diff-add-*, где текст
+     уже подмешан к чёрному/белому ради читаемости, — поэтому кнопка едет за темой
+     вместе с остальной панелью, а не спорит с ней. Своих hex нет, только запасные
+     значения на случай урезанной чужой темы (иначе var() отдал бы пусто). */
+  const PANEL_FILL = { backgroundColor: PANEL_BG }
+  const FIX_GREEN = 'var(--ui-green, #1f8a65)'
+  /* Плотность 20%, а не штатные 12% из --ui-diff-add-background: кнопка живёт поверх
+     блока описания, который сам залит 12% базового цвета, и 12% зелёного на этой
+     вуали читались почти как прозрачность. Цвет всё равно темо-зависимый (--ui-green),
+     своя только плотность. Рамка и текст — штатные производные темы. */
+  const FIX_FILL = {
+    backgroundColor: 'color-mix(in srgb, ' + FIX_GREEN + ' 20%, transparent)',
+    border: '1px solid var(--ui-diff-add-border, ' + FIX_GREEN + ')'
+  }
+  const FIX_TEXT = { color: 'var(--ui-diff-add-foreground, ' + FIX_GREEN + ')' }
+  const chipAction = (label, onClick, disabled, tone) => {
+    const fix = tone === 'fix'
+    return jsx('div', {
+      'data-glass-raised': '',
+      className: 'inline-flex rounded',
+      style: fix ? FIX_FILL : PANEL_FILL,
+      children: jsx(Button, {
+        size: 'sm',
+        variant: 'ghost',
+        disabled,
+        onClick,
+        className: CHIP_LINK + (fix ? ' font-medium' : ''),
+        style: fix ? FIX_TEXT : undefined,
+        children: label
+      })
     })
-  })
+  }
 
   /* Своя категория: её в списке нет по определению — значит её надо завести.
      Каталог создастся при установке, но описание пишем сразу: категория без
@@ -684,7 +704,7 @@ function B2SPane({ ctx }) {
                   children: 'сейчас в файле: ' + ((catInfo.desc_raw || '').slice(0, 240) || '—')
                 }),
                 chipAction('🩹 Починить файл — обернуть текст в frontmatter',
-                  () => sendDesc('desc-fix'), busy === 'desc-fix')
+                  () => sendDesc('desc-fix'), busy === 'desc-fix', 'fix')
               ]
             : [
                 jsx('div', {
@@ -695,7 +715,7 @@ function B2SPane({ ctx }) {
                   ? jsx('div', { className: CHIP_MUTED, children: 'каталог пока пуст: в нём ни одного скилла' })
                   : null,
                 chipAction('✍ Дописать описание категории',
-                  () => sendDesc('desc'), busy === 'desc')
+                  () => sendDesc('desc'), busy === 'desc', 'fix')
               ]
       })
     ]
