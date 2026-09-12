@@ -200,9 +200,11 @@ def main() -> int:
     check("пустой черновик не даёт строк (нет файлов — нет списка)", out["rows_none"] == 0,
           f"{out['rows_none']!r}")
 
-    # 5) панель: блок свёрнут и стоит под кнопкой шага 2
+    # 5) панель: блок свёрнут и стоит в своём шаге мастера
     i_details = src.find("const draftBlock = jsxs('details'")
-    i_use = src.find("s.kind === 'draft' ? draftBlock : null")
+    i_b3 = src.find("        n: 3,")
+    i_b4 = src.find("        n: 4,")
+    blk3 = src[i_b3:i_b4] if 0 < i_b3 < i_b4 else ""
     check("блок черновика — это details-спойлер (тот же дизайн, что у разбора)",
           i_details > 0 and "jsxs('details'" in src[i_details:i_details + 60],
           f"draftBlock@{i_details}")
@@ -214,8 +216,9 @@ def main() -> int:
           "нашёл setDraftOpen(true) — черновик раскроется сам")
     check("раскрытие — кликом (onToggle + setDraftOpen)",
           "setDraftOpen(!!" in src and "onToggle" in src)
-    check("блок стоит в дереве шага черновика (под кнопкой «Сделать черновик»)",
-          i_use > 0, "не нашёл s.kind === 'draft' ? draftBlock : null")
+    check("блок стоит в шаге 3 мастера (рядом с кнопкой «Сделать черновик»)",
+          bool(blk3) and "draftBlock" in blk3 and "sendIntent('draft')" in blk3,
+          f"block3@{i_b3}, len={len(blk3)}")
     check("внутри блока нет raw-props Ell(...) в children (React #31)",
           "children: Ell(" not in src, "нашёл 'children: Ell(' — панель упадёт в error-boundary")
     check("заголовок блока обёрнут в span (Ell даёт props, а не элемент)",

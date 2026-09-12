@@ -227,6 +227,25 @@ const looksLikePath = (s) => typeof s === 'string' && /[\\/]/.test(s.trim()) && 
    не относятся).
    Функция чистая и живёт на модульном уровне специально: её гоняет
    tools/tests/test_pane_head.py в node на живом файле. */
+/* Готовый markdown или исходник под разбор? Это разные пути: у .md разметка
+   заголовков уже на месте, и «Анализ источника» — лишний экран, поэтому блок 2
+   панели пропускается. Признак берём из СТРОКИ, без сети: решение обязано быть
+   видно до нажатия «ДАЛЕЕ». Query (`?raw=1`) и якорь (`#section`) не мешают —
+   смотрим только путь. `.txt` СОЗНАТЕЛЬНО не markdown: разметки заголовков там
+   нет, главы в нём ищет ядро, поэтому отдельный разбор ему нужен (решение
+   владельца: «txt это далеко не md»). */
+const MD_EXT = /\.(md|markdown)$/i
+const stripQuery = (s) => String(s || '').trim().split(/[?#]/)[0]
+const isRemoteSrc = (s) => /^[a-z][a-z0-9+.-]*:\/\//i.test(String(s || '').trim())
+const srcIsMarkdown = (s) => {
+  const v = String(s || '').trim()
+  if (!v) return false
+  if (!isRemoteSrc(v)) return MD_EXT.test(stripQuery(v))
+  let p = stripQuery(v)
+  try { p = new URL(v).pathname || p } catch (err) { /* кривой URL — судим по строке */ }
+  return MD_EXT.test(stripQuery(p))
+}
+
 const fmtInt = (n) => (typeof n === 'number' ? n.toLocaleString('ru-RU') : String(n))
 const headBitsOf = ({ report, src, tone, busy }) => {
   const bits = []
@@ -303,6 +322,75 @@ function draftBitsOf({ draft, want, busy }) {
   if (draft.glossary_terms) bits.push(draft.glossary_terms + ' терминов')
   if (draft.at) bits.push('в ' + draft.at)
   return bits
+}
+
+/* Блок-шаг панели: шапка-переключатель (номер, имя, состояние) + содержимое +
+   футер, где справа стоит главная кнопка блока, а слева — причина, по которой
+   она пока не активна. Блоки сворачиваются кликом по шапке: владелец хотел
+   видеть только тот шаг, на котором стоит, и разворачивать нужный руками.
+   Компонент не знает ни про ядро, ни про REST — только раскладка, поэтому его
+   можно проверять без моков (как Field и Ell). */
+function PaneBlock({ n, title, state, tone, open, onToggle, hint, foot, style, children }) {
+  const edge =
+    tone === 'done' ? '#22c55e' : tone === 'bad' ? '#dc2626' : tone === 'skip' ? 'currentColor' : null
+  return jsxs('section', {
+    className: 'flex min-w-0 flex-col rounded-md border',
+    style: Object.assign(
+      {
+        borderColor: edge
+          ? 'color-mix(in srgb, ' + edge + ' 45%, transparent)'
+          : 'color-mix(in srgb, currentColor 20%, transparent)',
+        backgroundColor: tone === 'done' ? 'color-mix(in srgb, #22c55e 7%, transparent)' : 'transparent'
+      },
+      style || {}
+    ),
+    children: [
+      jsxs('div', {
+        className: 'flex min-w-0 cursor-pointer select-none items-center gap-1 rounded-md px-2 py-1',
+        role: 'button',
+        'aria-expanded': open ? 'true' : 'false',
+        title: (open ? 'свернуть: ' : 'развернуть: ') + n + '. ' + title,
+        onClick: onToggle,
+        children: [
+          jsx('span', {
+            className: 'shrink-0 text-[0.625rem] opacity-60',
+            'aria-hidden': 'true',
+            children: open ? '▾' : '▸'
+          }),
+          cutSpan(n + '. ' + title, 'text-[0.6875rem] font-medium'),
+          state ? cutSpan(' · ' + state, 'text-[0.625rem] opacity-80') : null
+        ]
+      }),
+      open ? jsx('div', { className: 'flex min-w-0 flex-col gap-2 px-2 pb-1', children }) : null,
+      open
+        ? jsx('div', {
+            className: 'flex min-w-0 items-center gap-2 px-2 pb-2',
+            children: [
+              jsx('div', {
+                className: 'min-w-0 flex-1',
+                children: hint ? cutSpan(hint, 'text-[0.625rem] leading-snug opacity-70') : null
+              }),
+              foot || null
+            ]
+          })
+        : null
+    ]
+  })
+}
+
+/* Главная кнопка блока — всегда в правом нижнем углу (просьба владельца).
+   Подпись режется многоточием: кнопка SDK сжимается, а текст внутри неё — нет. */
+function NextBtn({ label, onClick, disabled, fill, title }) {
+  return jsx(Button, {
+    size: 'sm',
+    variant: 'ghost',
+    disabled,
+    onClick,
+    title,
+    className: 'h-7 shrink-0 justify-end text-xs text-(--ui-text-primary)',
+    style: Object.assign({ backgroundColor: fill }, BTN_FIT),
+    children: cutSpan(label)
+  })
 }
 
 function Field({ label, hint, children }) {
@@ -407,6 +495,35 @@ function B2SPane({ ctx }) {
      дал прочитать буфер (тогда единственный путь — Ctrl+V руками). */
   const srcRow = useRef(null)
   const [draftTextBusy, setDraftTextBusy] = useState(false)
+
+  /* Мастер из четырёх блоков: источник → анализ → черновик → запись. Открыт ровно
+     один блок (владелец: «запускаем плагин — виден только первый»), шапка блока
+     сворачивает/разворачивает его руками, а кнопка в правом нижнем углу ведёт к
+     следующему шагу. Пропуск блока 2 для готового markdown — тоже переход. */
+  const [openB, setOpenB] = useState({ 1: true, 2: false, 3: false, 4: false })
+  const curB = [1, 2, 3, 4].find((k) => openB[k]) || 0
+  const bodyRef = useRef(null)
+  const bRefs = { 1: useRef(null), 2: useRef(null), 3: useRef(null), 4: useRef(null) }
+  /* Один шаг в работе — второй клик не копит вызовы (владелец: «чтобы не копить
+     вызовы по тупому в очереди»). Именно ref, а не только setBusy: состояние
+     обновится позже повторного клика в том же тике, а ref держит запрет сразу. */
+  const busyRef = useRef(false)
+  const [rerunErr, setRerunErr] = useState('')
+  /* Какой источник ядро УЖЕ разобрало. Отчёт про другой источник свежим не
+     считается — иначе черновик собрался бы по метрикам прошлого прогона. */
+  const [fetchedSrc, setFetchedSrc] = useState('')
+  const onlyB = (n) => setOpenB({ 1: n === 1, 2: n === 2, 3: n === 3, 4: n === 4 })
+  const toggleB = (n) => setOpenB((cur) => Object.assign({}, cur, { [n]: !cur[n] }))
+
+  /* Открытый блок обязан оказаться в поле зрения: панель длиннее окна, и переход
+     без прокрутки читался бы как «кнопка ничего не сделала». */
+  useEffect(() => {
+    const body = bodyRef.current
+    const node = bRefs[curB] && bRefs[curB].current
+    if (!body || !node || typeof body.scrollTo !== 'function') return
+    const top = node.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop
+    body.scrollTo({ top: Math.max(0, top - 6), behavior: 'smooth' })
+  }, [curB])
 
   const focusedId = useValue(host.state.focusedSessionId)
 
@@ -720,6 +837,7 @@ function B2SPane({ ctx }) {
   useEffect(() => { loadCats(); loadSkills() }, [])
 
   const sendIntent = async (kind) => {
+    if (busyRef.current) return false     // шаг уже в работе: второй клик не копит вызовы
     const sid = host.state.focusedSessionId.get()
     if (!sid) {
       setTone('error')
@@ -727,6 +845,7 @@ function B2SPane({ ctx }) {
       return false
     }
     const intentText = intentOf(kind, { src, name, strat, mode, lang, cat, act, desc: catDesc })
+    busyRef.current = true
     setBusy(kind)
     try {
       await host.request('prompt.submit', { session_id: sid, text: intentText })
@@ -744,6 +863,7 @@ function B2SPane({ ctx }) {
       setStatus('не доехало: ' + (err && err.message ? err.message : String(err)))
       return false
     } finally {
+      busyRef.current = false
       setBusy('')
     }
   }
@@ -796,8 +916,16 @@ function B2SPane({ ctx }) {
   }
 
   /** Шаг 1: детерминированный прогон источника. Никакого чата — прямой REST. */
+  /** Шаг 1: детерминированный прогон источника — только ядро, без LLM и без чата.
+   *  Возврат { ok, strategy, md } нужен кнопке «ДАЛЕЕ»: по нему она решает, можно
+   *  ли идти дальше и не оказался ли «markdown» на деле HTML-страницей. */
   const runRerun = async () => {
+    /* Повторный вход отсекает синхронный ref: двойной клик в один тик иначе
+       отправит два REST и устроит гонку за один файл. */
+    if (busyRef.current) return { ok: false, busy: true }
+    busyRef.current = true
     setBusy('rerun')
+    setRerunErr('')
     setTone('working')
     setStatus('шаг 1 · загрузка и очистка источника…')
     try {
@@ -808,9 +936,11 @@ function B2SPane({ ctx }) {
       })
       setCore(true)
       if (out.report) setReport({ ...out.report, at: out.report_at || 'сейчас' })
+      const strategy = out.strategy || (out.report && out.report.strategy) || ''
       if (out.fetch_ok) {
         setTone('done')
         setStatus('источник разобран: ' + summaryOf(out))
+        setFetchedSrc(src)
         // Текст показываем сразу, из самого отчёта: он пришёл вместе с метриками.
         if (out.report && out.report.preview) {
           setText(out.report.preview)
@@ -823,16 +953,27 @@ function B2SPane({ ctx }) {
           })
         }
         loadText(6000)   // уточняем из файла: весь объём, число строк. Нет маршрута — останется превью
-      } else {
-        setTone('error')
-        setStatus('источник не разобран: ' + (out.warning || 'причина неизвестна'))
+        /* «Не HTML» = текст пришёл как текст. Для .md-источника это и есть ответ
+           на вопрос «правда ли он markdown»: решил трафик, а не догадка по имени. */
+        return { ok: true, strategy, md: !/html|bs4|trafilatura|stdlib|sphinx/i.test(strategy) }
       }
+      const why = out.warning || 'причина неизвестна'
+      setTone('error')
+      setStatus('источник не разобран: ' + why)
+      setRerunErr(why)
+      return { ok: false, why }
     } catch (err) {
+      /* Раньше здесь был тихий уход в чат (`sendIntent('rerun')`): сбой ядра
+         выглядел как «отправил агенту», хотя агент этого шага не делает вовсе, а
+         счёт за LLM всё равно бы рос. Теперь авария названа, и есть «Повторить». */
       setCore(false)
       setTone('error')
-      setStatus('REST-ядро недоступно (' + note(err) + ') — ухожу в чат')
-      await sendIntent('rerun')
+      const why = 'REST-ядро недоступно (' + note(err) + ')'
+      setStatus(why + ' — шаг 1 не выполнен')
+      setRerunErr(why)
+      return { ok: false, why }
     } finally {
+      busyRef.current = false
       setBusy('')
     }
   }
@@ -957,39 +1098,8 @@ function B2SPane({ ctx }) {
       ].filter(Boolean).join('\n')
     : 'Прямой режим: локальный Python ядра, без LLM.'
 
-  const steps = [
-    {
-      kind: 'rerun',
-      icon: '🔎',
-      title: 'Анализ источника и очистка',
-      note: 'скачать и вычистить текст — мимо чата, прямо в ядро; файлы скилла не пишутся',
-      run: runRerun
-    },
-    {
-      kind: 'draft',
-      icon: '✎',
-      title: 'Сделать черновик',
-      note: 'проза глав — это работа LLM, поэтому идёт в чат (staging/, перегенерация после правок)',
-      run: () => sendIntent('draft')
-    },
-    {
-      kind: 'install',
-      icon: '⇩',
-      title: preview
-        ? (preview.mode === 'replace' ? 'Подтвердить ЗАМЕНУ' : preview.mode === 'append' ? 'Подтвердить долив' : 'Подтвердить установку')
-        : existing
-          ? (act === 'replace' ? 'Заменить скилл' : 'Дополнить скилл')
-          : 'Установить',
-      note: preview
-        ? (preview.mode === 'replace'
-            ? 'второй клик = снести каталог и залить черновик целиком; бэкап снимается до записи'
-            : 'второй клик = записать план в skills/<категория>/<имя>/')
-        : existing
-          ? 'имя занято → долив: новые главы лягут рядом, старое не тронем'
-          : 'перенос в skills/ — сначала предпросмотр без записи, пишет только второй клик',
-      run: () => runInstall(!!preview)
-    }
-  ]
+  /* Раскладка шагов уехала в блоки мастера (PaneBlock ниже): каждая кнопка живёт
+     в своём блоке, а «ДАЛЕЕ» в правом нижнем углу ведёт от блока к блоку. */
 
   /* Всё про шаг 1 — сворачиваемый блок сразу под его кнопкой: сводка последнего
      прогона и очищенный текст источника.
@@ -1632,8 +1742,64 @@ function B2SPane({ ctx }) {
     ]
   })
 
+  /* --- переходы «ДАЛЕЕ» -------------------------------------------------------
+     Проверка дешёвая и на месте: не пускаем дальше, когда дальше нечего делать,
+     и говорим причину подписью у кнопки (hint), а не молчанием. Никакого REST в
+     самих проверках — только состояние панели. */
+  const trimSrc = (src || '').trim()
+  const mdSrc = srcIsMarkdown(trimSrc)
+  const analyzed = !!report && report.chars != null && fetchedSrc === trimSrc
+  const hasDraft = !!(draft && draft.has_draft)
+
+  /* Шаг 1 → 2 (или сразу 3, если источник — готовый markdown). Разбор запускаем
+     заодно: «ДАЛЕЕ» значит «идём дальше», а не «вернись и нажми ещё раз». */
+  const next1 = async () => {
+    if (!trimSrc) {
+      setTone('error')
+      setStatus('блок 1 · пустой источник: вставь URL или путь к файлу')
+      return
+    }
+    if (mdSrc) {
+      onlyB(3)
+      if (!analyzed) {
+        const res = await runRerun()
+        /* Сказали «markdown», а пришёл HTML — или ядро упало. Не тащим это в
+           черновик молча: открываем блок 2 с честной причиной. */
+        if (!res.ok) { onlyB(2); return }
+        if (!res.md) {
+          onlyB(2)
+          setStatus('блок 1 · источник не похож на markdown (стратегия ' + (res.strategy || '?') + ') — смотри блок 2')
+        }
+      }
+      return
+    }
+    onlyB(2)
+    if (!analyzed) await runRerun()
+  }
+
+  /* Шаг 2 → 3: без отчёта о разборе черновик собирать не из чего. */
+  const next2 = () => {
+    if (!analyzed) {
+      setTone('error')
+      setStatus('блок 2 · сначала разбери источник — без отчёта черновик не собрать')
+      return
+    }
+    onlyB(3)
+  }
+
+  /* Шаг 3 → 4: записывать в профиль можно только то, что лежит в staging. */
+  const next3 = () => {
+    if (!hasDraft) {
+      setTone('error')
+      setStatus('блок 3 · черновика в staging нет — нажми «Сделать черновик»')
+      return
+    }
+    onlyB(4)
+  }
+
   return jsxs('div', {
-    className: cn('flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-3'),
+    ref: bodyRef,
+    className: cn('flex h-full min-h-0 flex-col gap-2 overflow-y-auto p-3'),
     style: FIELD_CHROME,
     children: [
       /* Шапка — КОЛОНКА, а не ряд: плашка режима всегда стоит второй строкой под
@@ -1671,7 +1837,7 @@ function B2SPane({ ctx }) {
                   })
                 : jsx(Badge, {
                     variant: 'warn', style: BTN_FIT,
-                    title: 'Маршруты /api/plugins/b2s/ ещё не смонтированы — панель уходит в чат. Перезапусти dashboard-службу: tools\\restart_dashboard.py',
+                    title: 'Маршруты /api/plugins/b2s/ ещё не смонтированы — панель уходит в чат. Перезапусти dashboard-службу: tools/restart_dashboard.py',
                     children: cutSpan('ядро не ответило — перезапусти dashboard')
                   })
         ]
@@ -1681,283 +1847,398 @@ function B2SPane({ ctx }) {
       jsx('div', Ell('Инструмент создания скиллов из документации (html, pdf и других)',
         'text-[0.625rem] leading-snug text-(--ui-text-tertiary)')),
 
-      jsx(Field, {
-        label: 'Источник',
-        hint: 'URL или путь',
-        children: jsxs('div', {
-          ref: srcRow,
-          className: 'flex items-center gap-1',
-          children: [
-            jsx(Input, {
-              value: src,
-              onChange: (e) => setSrc(e.target.value),
-              placeholder: 'https://… или D:/путь/файл.md',
-              className: 'h-7 text-xs',
-              style: { minWidth: 0, flex: '1 1 auto' }
-            }),
-            /* Пиктограммы вместо подписей: «Выбрать файл» и «Вставить из буфера
-               обмена» в узкую панель не влезают, а сжатые превращаются в кашу.
-               Полный текст — в нативном тултипе (title) и для озвучки (aria-label). */
-            jsx(Button, {
-              variant: 'secondary',
-              size: 'icon-xs',
-              className: 'shrink-0',
-              title: 'Выбрать файл на диске — полный путь встанет в поле «Источник»',
-              'aria-label': 'Выбрать файл',
-              onClick: pickFile,
-              children: iconFolder()
-            }),
-            jsx(Button, {
-              variant: 'secondary',
-              size: 'icon-xs',
-              className: 'shrink-0',
-              title: 'Вставить из буфера обмена — URL страницы или путь к файлу',
-              'aria-label': 'Вставить из буфера обмена',
-              onClick: pasteSrc,
-              children: iconClipboard()
-            })
-          ]
-        })
-      }),
+      /* Строка статуса живёт ВНЕ блоков: её пишут все шаги, и внутри одного блока
+         она сообщала бы «ничего не происходит» всем остальным. */
+      statusLine,
 
-      jsxs('div', {
-        className: 'grid grid-cols-2 gap-2',
+      /* ── 1. Источник и имя скилла ───────────────────────────────────────── */
+      jsx(PaneBlock, {
+        n: 1,
+        title: 'Источник и имя скилла',
+        state: trimSrc
+          ? (mdSrc ? 'markdown: шаг 2 пропустим' : (isRemoteSrc(trimSrc) ? 'URL — нужен разбор' : 'файл — нужен разбор'))
+          : 'пусто',
+        tone: trimSrc ? (mdSrc ? 'done' : null) : 'bad',
+        open: !!openB[1],
+        onToggle: () => toggleB(1),
+        style: { backgroundColor: openB[1] ? BLOCK_BG : 'transparent' },
+        hint: trimSrc
+          ? (mdSrc ? 'файл уже markdown — анализ пропустим' : 'шаг 2 разберёт источник')
+          : 'впиши URL или путь к файлу',
+        foot: jsx(NextBtn, {
+          label: 'ДАЛЕЕ →',
+          onClick: next1,
+          disabled: !!busy,
+          fill: STEP_BG,
+          title: 'запомнить выбор и открыть следующий шаг'
+        }),
         children: [
           jsx(Field, {
-            label: 'Категория скилла',
-            children: cats && cats.length
-              ? jsxs('div', { className: 'space-y-1', children: [
-                  jsxs(Select, {
-                    value: isCustomCat ? '__custom__' : cat,
-                    onValueChange: (v) => setCat(v === '__custom__' ? '' : v),
-                    /* Список читается заново на каждое открытие — выпадашка не
-                       может показывать профиль вчерашней давности. */
-                    onOpenChange: (open) => { if (open) loadCats() },
-                    children: [
-                      jsx(SelectTrigger, { className: 'h-7 text-xs', children: vFit(jsx(SelectValue, {}), isCustomCat ? 'своя категория' : cat) }),
-                      jsx(SelectContent, {
+            label: 'Источник',
+            hint: 'URL или путь',
+            children: jsxs('div', {
+              ref: srcRow,
+              className: 'flex items-center gap-1',
+              children: [
+                jsx(Input, {
+                  value: src,
+                  onChange: (e) => setSrc(e.target.value),
+                  placeholder: 'https://… или D:/путь/файл.md',
+                  className: 'h-7 text-xs',
+                  style: { minWidth: 0, flex: '1 1 auto' }
+                }),
+                /* Пиктограммы вместо подписей: «Выбрать файл» и «Вставить из буфера
+                   обмена» в узкую панель не влезают, а сжатые превращаются в кашу.
+                   Полный текст — в нативном тултипе (title) и для озвучки (aria-label). */
+                jsx(Button, {
+                  variant: 'secondary',
+                  size: 'icon-xs',
+                  className: 'shrink-0',
+                  title: 'Выбрать файл на диске — полный путь встанет в поле «Источник»',
+                  'aria-label': 'Выбрать файл',
+                  onClick: pickFile,
+                  children: iconFolder()
+                }),
+                jsx(Button, {
+                  variant: 'secondary',
+                  size: 'icon-xs',
+                  className: 'shrink-0',
+                  title: 'Вставить из буфера обмена — URL страницы или путь к файлу',
+                  'aria-label': 'Вставить из буфера обмена',
+                  onClick: pasteSrc,
+                  children: iconClipboard()
+                })
+              ]
+            })
+          }),
+
+          jsxs('div', {
+            className: 'grid grid-cols-2 gap-2',
+            children: [
+              jsx(Field, {
+                label: 'Категория скилла',
+                children: cats && cats.length
+                  ? jsxs('div', { className: 'space-y-1', children: [
+                      jsxs(Select, {
+                        value: isCustomCat ? '__custom__' : cat,
+                        onValueChange: (v) => setCat(v === '__custom__' ? '' : v),
+                        /* Список читается заново на каждое открытие — выпадашка не
+                           может показывать профиль вчерашней давности. */
+                        onOpenChange: (open) => { if (open) loadCats() },
                         children: [
-                          ...cats.map((c) => jsx(SelectItem, {
-                            value: c,
-                            children: (catMeta && catMeta[c] && catMeta[c].empty) ? c + ' (пусто)' : c
-                          }, c)),
-                          /* Выход из списка: своя категория. Без него выбор был
-                             клеткой — подходящей категории в профиле нет, и скилл
-                             уезжал в чужую, лишь бы из списка. */
-                          jsx(SelectItem, { value: '__custom__', children: '✎ своя категория…' })
+                          jsx(SelectTrigger, { className: 'h-7 text-xs', children: vFit(jsx(SelectValue, {}), isCustomCat ? 'своя категория' : cat) }),
+                          jsx(SelectContent, {
+                            children: [
+                              ...cats.map((c) => jsx(SelectItem, {
+                                value: c,
+                                children: (catMeta && catMeta[c] && catMeta[c].empty) ? c + ' (пусто)' : c
+                              }, c)),
+                              /* Выход из списка: своя категория. Без него выбор был
+                                 клеткой — подходящей категории в профиле нет, и скилл
+                                 уезжал в чужую, лишь бы из списка. */
+                              jsx(SelectItem, { value: '__custom__', children: '✎ своя категория…' })
+                            ]
+                          })
+                        ]
+                      }),
+                      isCustomCat
+                        ? jsxs('div', { className: 'space-y-1', children: [
+                            jsx(Input, {
+                              value: cat,
+                              onChange: (e) => setCat(e.target.value),
+                              placeholder: 'имя новой категории: латиница и дефис, например mlops/tuning',
+                              className: 'h-7 text-xs'
+                            }),
+                            jsxs('div', { className: CHIP_BOX, style: { backgroundColor: CHIP_BG }, children: [
+                              jsx('div', { className: GROUP_LEAD, style: GROUP_CAP, children: [
+                                jsx('div', { className: CHIP_CHIEF, children: '⚠ категории «' + (cat || '…') + '» в профиле нет — папка создастся при установке.' }),
+                                jsx('div', { className: CHIP_MUTED, children: 'Опиши её здесь: без описания Hermes покажет категорию агенту голым именем, и скилл в ней будет труднее найти.' })
+                              ] }),
+                              jsx('div', { className: 'pt-1', children: jsx(Input, {
+                                value: catDesc,
+                                onChange: (e) => setCatDesc(e.target.value),
+                                placeholder: 'описание категории для Hermes — одной строкой',
+                                className: 'h-7 text-xs'
+                              }) })
+                            ] })
+                          ] })
+                        : catChip,
+                      /* Строку про «скиллы вне категорий» больше не показываем: она пугала
+                         зря — пять таких каталогов Hermes сам считает категориями (и они
+                         вернулись в выпадашку), а настоящий сирота — SKILL.md прямо в
+                         skills/ — случай служебный и внимания владельца не стоит.
+                         Данные остаются в ответе ядра как catLoose. */
+                    ] })
+                  : jsx(Input, {
+                      value: cat,
+                      onChange: (e) => setCat(e.target.value),
+                      placeholder: cats === null ? 'список грузится…' : 'списка нет — перезапусти dashboard',
+                      title: catErr,
+                      className: 'h-7 text-xs'
+                    })
+              }),
+              jsxs(Field, {
+                label: 'Имя скилла',
+                hint: existing ? 'занято — долив' : skills ? 'свободно — новый' : '',
+                children: [
+                  jsx(Input, {
+                    value: name,
+                    onChange: (e) => setName(e.target.value),
+                    placeholder: 'python-pathlib',
+                    list: 'b2s-skill-names',
+                    title: skillsErr || '',
+                    className: 'h-7 text-xs'
+                  }),
+                  /* Подсказка имён — из профиля, а не выдуманная: на 600 страницах
+                     набирать имя руками и угадывать его написание невозможно. */
+                  jsx('datalist', {
+                    id: 'b2s-skill-names',
+                    children: (skills || []).slice(0, 300).map((s) =>
+                      jsx('option', { value: s.name, children: s.category || '' }, s.name))
+                  }),
+                  jsx('div', Ell(
+                    existing
+                      ? 'уже стоит: ' + (existing.category || 'без категории') + ' · глав ' +
+                        existing.chapters + ' · файлов ' + existing.files +
+                        ' — новые главы допишутся к нему'
+                      : skills === null
+                        ? 'список скиллов грузится…'
+                        : skillsErr
+                          ? 'списка нет — имя соберётся как новый скилл'
+                          : 'такого скилла нет — будет новый',
+                    'text-[10px] leading-tight text-(--ui-text-tertiary, #8a8a8a)'
+                  )),
+                  existing
+                    ? jsxs(Select, {
+                        value: act,
+                        onValueChange: setAct,
+                        children: [
+                          jsx(SelectTrigger, { className: 'h-6 text-[10px]', children: vFit(jsx(SelectValue, {}), labelOf(ACTS, act)) }),
+                          jsx(SelectContent, {
+                            children: ACTS.map((a) => jsx(SelectItem, { value: a.value, children: a.label }, a.value))
+                          })
                         ]
                       })
-                    ]
-                  }),
-                  isCustomCat
-                    ? jsxs('div', { className: 'space-y-1', children: [
-                        jsx(Input, {
-                          value: cat,
-                          onChange: (e) => setCat(e.target.value),
-                          placeholder: 'имя новой категории: латиница и дефис, например mlops/tuning',
-                          className: 'h-7 text-xs'
-                        }),
-                        jsxs('div', { className: CHIP_BOX, style: { backgroundColor: CHIP_BG }, children: [
-                          jsx('div', { className: GROUP_LEAD, style: GROUP_CAP, children: [
-                            jsx('div', { className: CHIP_CHIEF, children: '⚠ категории «' + (cat || '…') + '» в профиле нет — папка создастся при установке.' }),
-                            jsx('div', { className: CHIP_MUTED, children: 'Опиши её здесь: без описания Hermes покажет категорию агенту голым именем, и скилл в ней будет труднее найти.' })
-                          ] }),
-                          jsx('div', { className: 'pt-1', children: jsx(Input, {
-                            value: catDesc,
-                            onChange: (e) => setCatDesc(e.target.value),
-                            placeholder: 'описание категории для Hermes — одной строкой',
-                            className: 'h-7 text-xs'
-                          }) })
-                        ] })
-                      ] })
-                    : catChip,
-                  /* Строку про «скиллы вне категорий» больше не показываем: она пугала
-                     зря — пять таких каталогов Hermes сам считает категориями (и они
-                     вернулись в выпадашку), а настоящий сирота — SKILL.md прямо в
-                     skills/ — случай служебный и внимания владельца не стоит.
-                     Данные остаются в ответе ядра как catLoose. */
-                ] })
-              : jsx(Input, {
-                  value: cat,
-                  onChange: (e) => setCat(e.target.value),
-                  placeholder: cats === null ? 'список грузится…' : 'списка нет — перезапусти dashboard',
-                  title: catErr,
-                  className: 'h-7 text-xs'
-                })
+                    : null,
+                  existing && act === 'replace'
+                    ? jsx('div', Ell(
+                        '⚠ каталог скилла будет снесён и залит заново. Перед записью ядро снимет копию в backups/, но подтверждение спрошу ещё раз.',
+                        'text-[10px] leading-tight text-(--ui-text-primary)'
+                      ))
+                    : null
+                ]
+              })
+            ]
           }),
-          jsxs(Field, {
-            label: 'Имя скилла',
-            hint: existing ? 'занято — долив' : skills ? 'свободно — новый' : '',
+
+          jsx(Field, {
+            label: 'Стратегия загрузки',
+            children: jsxs(Select, {
+              value: strat,
+              onValueChange: setStrat,
+              children: [
+                jsx(SelectTrigger, { className: 'h-7 text-xs', children: vFit(jsx(SelectValue, {}), labelOf(STRATEGIES, strat)) }),
+                jsx(SelectContent, {
+                  children: STRATEGIES.map((s) => jsx(SelectItem, { value: s.value, children: s.label }, s.value))
+                })
+              ]
+            })
+          }),
+
+          jsxs('div', {
+            className: 'grid grid-cols-2 gap-2',
             children: [
-              jsx(Input, {
-                value: name,
-                onChange: (e) => setName(e.target.value),
-                placeholder: 'python-pathlib',
-                list: 'b2s-skill-names',
-                title: skillsErr || '',
-                className: 'h-7 text-xs'
+              jsx(Field, {
+                label: 'Режим',
+                children: jsxs(Select, {
+                  value: mode,
+                  onValueChange: setMode,
+                  children: [
+                    jsx(SelectTrigger, { className: 'h-7 text-xs', children: vFit(jsx(SelectValue, {}), labelOf(MODES, mode)) }),
+                    jsx(SelectContent, {
+                      children: MODES.map((m) => jsx(SelectItem, { value: m.value, children: m.label }, m.value))
+                    })
+                  ]
+                })
               }),
-              /* Подсказка имён — из профиля, а не выдуманная: на 600 страницах
-                 набирать имя руками и угадывать его написание невозможно. */
-              jsx('datalist', {
-                id: 'b2s-skill-names',
-                children: (skills || []).slice(0, 300).map((s) =>
-                  jsx('option', { value: s.name, children: s.category || '' }, s.name))
-              }),
-              jsx('div', Ell(
-                existing
-                  ? 'уже стоит: ' + (existing.category || 'без категории') + ' · глав ' +
-                    existing.chapters + ' · файлов ' + existing.files +
-                    ' — новые главы допишутся к нему'
-                  : skills === null
-                    ? 'список скиллов грузится…'
-                    : skillsErr
-                      ? 'списка нет — имя соберётся как новый скилл'
-                      : 'такого скилла нет — будет новый',
-                'text-[10px] leading-tight text-(--ui-text-tertiary, #8a8a8a)'
-              )),
-              existing
-                ? jsxs(Select, {
-                    value: act,
-                    onValueChange: setAct,
-                    children: [
-                      jsx(SelectTrigger, { className: 'h-6 text-[10px]', children: vFit(jsx(SelectValue, {}), labelOf(ACTS, act)) }),
-                      jsx(SelectContent, {
-                        children: ACTS.map((a) => jsx(SelectItem, { value: a.value, children: a.label }, a.value))
-                      })
-                    ]
-                  })
-                : null,
-              existing && act === 'replace'
-                ? jsx('div', Ell(
-                    '⚠ каталог скилла будет снесён и залит заново. Перед записью ядро снимет копию в backups/, но подтверждение спрошу ещё раз.',
-                    'text-[10px] leading-tight text-(--ui-text-primary)'
-                  ))
-                : null
+              jsx(Field, {
+                label: 'Язык скилла',
+                children: jsxs(Select, {
+                  value: lang,
+                  onValueChange: setLang,
+                  children: [
+                    jsx(SelectTrigger, { className: 'h-7 text-xs', children: vFit(jsx(SelectValue, {}), labelOf(LANGS, lang)) }),
+                    jsx(SelectContent, {
+                      children: LANGS.map((l) => jsx(SelectItem, { value: l.value, children: l.label }, l.value))
+                    })
+                  ]
+                })
+              })
             ]
           })
         ]
       }),
 
-      jsx(Field, {
-        label: 'Стратегия загрузки',
-        children: jsxs(Select, {
-          value: strat,
-          onValueChange: setStrat,
-          children: [
-            jsx(SelectTrigger, { className: 'h-7 text-xs', children: vFit(jsx(SelectValue, {}), labelOf(STRATEGIES, strat)) }),
-            jsx(SelectContent, {
-              children: STRATEGIES.map((s) => jsx(SelectItem, { value: s.value, children: s.label }, s.value))
-            })
-          ]
-        })
-      }),
-
-      jsxs('div', {
-        className: 'grid grid-cols-2 gap-2',
+      /* ── 2. Анализ источника (для готового .md — пропускается) ──────────── */
+      jsx(PaneBlock, {
+        n: 2,
+        title: mdSrc ? 'Анализ MD файла' : 'Анализ источника',
+        state: mdSrc
+          ? 'пропущен: файл уже markdown'
+          : (analyzed ? 'готов — ' + (report && report.chars ? fmtInt(report.chars) + ' симв.' : 'отчёт есть') : (rerunErr ? 'сорвался' : 'ещё не запускался')),
+        tone: mdSrc ? 'skip' : (analyzed ? 'done' : (rerunErr ? 'bad' : null)),
+        open: !!openB[2],
+        onToggle: () => toggleB(2),
+        style: { backgroundColor: openB[2] ? BLOCK_BG : 'transparent' },
+        hint: mdSrc
+          ? 'markdown — уже текст: чистить нечего, метрики посмотреть можно'
+          : (analyzed ? 'источник разобран — можно к черновику' : 'скачать и вычистить текст: мимо чата, прямо в ядро'),
+        foot: jsx(NextBtn, {
+          label: 'ДАЛЕЕ →',
+          onClick: next2,
+          disabled: !!busy || !analyzed,
+          fill: STEP_BG,
+          title: analyzed ? 'открыть черновик' : 'сначала прогони анализ источника'
+        }),
         children: [
-          jsx(Field, {
-            label: 'Режим',
-            children: jsxs(Select, {
-              value: mode,
-              onValueChange: setMode,
-              children: [
-                jsx(SelectTrigger, { className: 'h-7 text-xs', children: vFit(jsx(SelectValue, {}), labelOf(MODES, mode)) }),
-                jsx(SelectContent, {
-                  children: MODES.map((m) => jsx(SelectItem, { value: m.value, children: m.label }, m.value))
+          mdSrc
+            ? jsx('div', Ell('⚠ «уже markdown» решено по имени файла, до сети. Если это не так — жми «Прогнать всё равно», ядро разберёт как страницу.',
+                'text-[0.625rem] leading-snug opacity-80'))
+            : null,
+          jsx('div', {
+            className: 'flex min-w-0 flex-wrap items-center gap-1',
+            children: [
+              jsx('div', {
+                className: 'flex min-w-0 rounded',
+                style: { backgroundColor: STEP_BG },
+                children: jsxs(Button, {
+                  size: 'sm',
+                  variant: 'ghost',
+                  disabled: !!busy,
+                  onClick: runRerun,
+                  className: 'h-7 justify-start text-xs text-(--ui-text-primary)',
+                  style: BTN_FIT,
+                  children: [
+                    jsx('span', { 'aria-hidden': true, style: { flexShrink: 0 }, children: '🔎' }),
+                    cutSpan(mdSrc ? 'Прогнать всё равно' : (analyzed ? 'Прогнать заново' : 'Анализ источника и очистка'))
+                  ]
                 })
-              ]
-            })
-          }),
-          jsx(Field, {
-            label: 'Язык скилла',
-            children: jsxs(Select, {
-              value: lang,
-              onValueChange: setLang,
-              children: [
-                jsx(SelectTrigger, { className: 'h-7 text-xs', children: vFit(jsx(SelectValue, {}), labelOf(LANGS, lang)) }),
-                jsx(SelectContent, {
-                  children: LANGS.map((l) => jsx(SelectItem, { value: l.value, children: l.label }, l.value))
-                })
-              ]
-            })
-          })
-        ]
-      }),
-
-      jsx('div', { className: 'h-px bg-(--ui-border)' }),
-
-      jsxs('div', {
-        className: 'flex flex-col gap-2',
-        children: steps.map((s, i) =>
-          jsxs(
-            'div',
-            {
-              className: 'flex flex-col gap-1',
-              children: [
-                /* Три шага — один цвет, слабо-зелёный. Своя константа (не токен темы):
-                   тему кнопок владелец будет крутить, а шаги не должны уезжать за ней.
-                   Плотность как у прежней кнопки: база 4% + зелёная примесь сверху. */
-                jsx('div', {
-                  className: 'flex min-w-0 rounded',
-                  style: { backgroundColor: STEP_BG },
-                  children: jsxs(Button, {
+              }),
+              rerunErr
+                ? jsx(Button, {
                     size: 'sm',
                     variant: 'ghost',
-                    disabled: busy === s.kind,
-                    onClick: s.run,
-                    className: 'h-7 justify-start text-xs text-(--ui-text-primary)',
-                    style: BTN_FIT,
-                    children: [
-                      jsx('span', { 'aria-hidden': true, style: { flexShrink: 0 }, children: s.icon }),
-                      /* Подпись шага — сжимаемым span'ом с обрезкой по границе кнопки.
-                         Кнопка сжимается, но её собственный текст (children кнопки)
-                         лежит прямо во flex-контейнере и не режется: у него
-                         min-width: auto, и он выезжает за границу кнопки. */
-                      cutSpan((i + 1) + '. ' + s.title)
-                    ]
+                    disabled: !!busy,
+                    onClick: runRerun,
+                    className: 'h-7 text-[0.625rem]',
+                    style: Object.assign({ backgroundColor: REVIEW_BG }, BTN_FIT),
+                    children: cutSpan('⟳ Повторить')
                   })
-                }),
-                jsx('span', Ell(s.note, 'pl-1 text-[0.625rem] leading-snug text-(--ui-text-tertiary)')),
-                /* строка статуса — всегда видна, даже когда блок разбора свёрнут */
-                s.kind === 'rerun' ? statusLine : null,
-                /* всё про шаг 1 (сводка + очищенный текст) — сразу под кнопкой */
-                s.kind === 'rerun' ? resultBlock : null,
-                /* Блок черновика — сразу под кнопкой шага 2: это его результат. */
-                s.kind === 'draft' ? draftBlock : null,
-                /* план записи — под кнопкой шага 3: второй клик пишет в профиль */
-                s.kind === 'install' ? planBlock : null,
-                /* подготовка долива: раскладка по главам (что слить / переписать) */
-                s.kind === 'install' ? chapterSlot : null
-              ]
-            },
-            s.kind
-          )
-        )
-      }),
-
-      jsxs('div', {
-        className: 'flex flex-col gap-1',
-        children: [
-          jsx(Field, {
-            label: 'Разобрать черновик',
-            hint: 'критика от LLM — идёт в чат',
-            children: jsx(Button, {
-              size: 'sm',
-              variant: 'ghost',
-              disabled: busy === 'review',
-              onClick: () => sendIntent('review'),
-              className: 'h-7 justify-start text-xs',
-              style: Object.assign({ backgroundColor: REVIEW_BG }, BTN_FIT),
-              children: fitLabel('Критика и список правок')
-            })
-          })
+                : null
+            ]
+          }),
+          rerunErr
+            ? jsx('div', Ell('шаг 1 сорвался: ' + rerunErr + ' — в чат это не ушло, разбор делает ядро',
+                'text-[0.625rem] leading-snug text-(--ui-text-primary)'))
+            : null,
+          resultBlock
         ]
       }),
 
-      /* Сводка прогона и очищенный текст переехали выше — в сворачиваемый блок
-         сразу под кнопкой шага 1 (resultBlock); строка статуса — отдельным узлом
-         над ним, чтобы быть видимой при свёрнутом блоке. Здесь их нет. */
+      /* ── 3. Черновик (генерация в staging, в постоянные скиллы не пишем) ── */
+      jsx(PaneBlock, {
+        n: 3,
+        title: 'Черновик скилла — без записи',
+        state: hasDraft ? 'есть — в staging' : (busy === 'draft' ? 'пишется' : 'нет'),
+        tone: hasDraft ? 'done' : null,
+        open: !!openB[3],
+        onToggle: () => toggleB(3),
+        style: { backgroundColor: openB[3] ? BLOCK_BG : 'transparent' },
+        hint: hasDraft
+          ? 'правки принимаются — перегенерация считается заново'
+          : 'проза глав — работа LLM, поэтому идёт в чат',
+        foot: jsx(NextBtn, {
+          label: 'ДАЛЕЕ →',
+          onClick: next3,
+          disabled: !!busy || !hasDraft,
+          fill: STEP_BG,
+          title: hasDraft ? 'открыть запись в профиль' : 'сначала сделай черновик'
+        }),
+        children: [
+          jsx('div', {
+            className: 'flex min-w-0 flex-wrap items-center gap-1',
+            children: [
+              jsx('div', {
+                className: 'flex min-w-0 rounded',
+                style: { backgroundColor: STEP_BG },
+                children: jsxs(Button, {
+                  size: 'sm',
+                  variant: 'ghost',
+                  disabled: !!busy,
+                  onClick: () => sendIntent('draft'),
+                  className: 'h-7 justify-start text-xs text-(--ui-text-primary)',
+                  style: BTN_FIT,
+                  children: [
+                    jsx('span', { 'aria-hidden': true, style: { flexShrink: 0 }, children: '✎' }),
+                    cutSpan(hasDraft ? 'Перегенерировать с учётом замечаний' : 'Сделать черновик')
+                  ]
+                })
+              }),
+              jsx(Button, {
+                size: 'sm',
+                variant: 'ghost',
+                disabled: !!busy,
+                onClick: () => sendIntent('review'),
+                className: 'h-7 justify-start text-[0.625rem]',
+                style: Object.assign({ backgroundColor: REVIEW_BG }, BTN_FIT),
+                children: cutSpan('Критика и список правок')
+              })
+            ]
+          }),
+          jsx('span', Ell('Правки к черновику и повторный прогон считаются заново: счёт растёт с числом итераций.',
+            'pl-1 text-[0.625rem] leading-snug text-(--ui-text-tertiary)')),
+          draftBlock,
+          chapterSlot
+        ]
+      }),
+
+      /* ── 4. Запись в профиль (первый клик — план, второй — запись) ──────── */
+      jsx(PaneBlock, {
+        n: 4,
+        title: 'Запись в профиль',
+        state: preview
+          ? (preview.mode === 'replace' ? 'подтверди ЗАМЕНУ' : 'подтверди запись')
+          : (existing ? 'долив в ' + (existing.category || 'без категории') : 'новый скилл'),
+        tone: preview ? 'done' : null,
+        open: !!openB[4],
+        onToggle: () => toggleB(4),
+        style: { backgroundColor: openB[4] ? BLOCK_BG : 'transparent' },
+        hint: hasDraft
+          ? (preview ? 'второй клик пишет в skills/<категория>/<имя>/' : 'первый клик — предпросмотр, он ничего не пишет')
+          : 'черновика нет — записывать нечего',
+        foot: jsx(NextBtn, {
+          label: preview
+            ? (preview.mode === 'replace' ? 'Подтвердить ЗАМЕНУ' : preview.mode === 'append' ? 'Подтвердить долив' : 'Подтвердить установку')
+            : (existing ? (act === 'replace' ? 'Заменить скилл' : 'Дополнить скилл') : 'Установить'),
+          onClick: () => runInstall(!!preview),
+          disabled: !!busy || !hasDraft,
+          fill: hasDraft ? STEP_BG : undefined,
+          title: hasDraft
+            ? (preview ? 'записать черновик в профиль' : 'собрать план записи — без записи')
+            : 'сначала сделай черновик'
+        }),
+        children: [
+          jsx('span', Ell(preview
+            ? (preview.mode === 'replace'
+                ? 'второй клик = снести каталог и залить черновик целиком; бэкап снимается до записи'
+                : 'второй клик = записать план в skills/<категория>/<имя>/')
+            : (existing
+                ? 'имя занято → долив: новые главы лягут рядом, старое не тронем'
+                : 'перенос в skills/ — сначала предпросмотр без записи, пишет только второй клик'),
+            'text-[0.625rem] leading-snug text-(--ui-text-tertiary)')),
+          planBlock
+        ]
+      }),
 
       jsxs('div', {
         className: 'flex flex-col gap-0.5 pt-1 text-[0.625rem] text-(--ui-text-tertiary)',

@@ -171,15 +171,15 @@ def main() -> int:
     check("headBitsOf реально используется в панели (не мёртвый код)",
           "headBitsOf({" in src)
 
-    # 5) строка статуса — вне спойлера
+    # 5) строка статуса — вне блоков, видна всегда
     i_status = src.find("const statusLine")
     i_result = src.find("const resultBlock")
-    i_use_status = src.find("s.kind === 'rerun' ? statusLine : null")
-    i_use_result = src.find("s.kind === 'rerun' ? resultBlock : null")
+    i_use_status = src.find("      statusLine,")
+    i_block2 = src.find("        n: 2,")
     check("строка статуса вынесена из спойлера отдельным узлом",
           i_status > 0 and i_status < i_result, f"statusLine@{i_status}, resultBlock@{i_result}")
-    check("в дереве статус стоит раньше блока разбора (виден при свёрнутом)",
-          0 < i_use_status < i_use_result, f"use@{i_use_status}/{i_use_result}")
+    check("в дереве статус стоит раньше блока разбора (виден всегда)",
+          i_use_status > 0 and i_block2 > i_use_status, f"use@{i_use_status}, block2@{i_block2}")
     check("блок разбора не содержит строку статуса внутри",
           not re.search(r"children: \[[\s\S]{0,400}?\bstatus\b\s*\?", src[i_result:i_result + 3000]),
           "внутри details снова печатается status")
