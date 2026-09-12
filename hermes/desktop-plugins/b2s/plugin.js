@@ -121,6 +121,19 @@ function chapterRows(out) {
   return rows
 }
 
+/* Правило панели: ЛЮБАЯ подпись объекта (путь, URL, имя файла, строка плана,
+   подпись поля, шапка блока с данными) — всегда одна строка, лишнее режется
+   многоточием. Перенос такой подписи распирает бокс и ломает раскладку соседей,
+   а полный текст читается наведением — он уходит в title.
+   Возвращаем props, а не готовый элемент: в списках нужен key, и его даёт
+   вызывающий — `jsx('div', Ell(line), 'plan-' + i)`. */
+const Ell = (text, cls) => ({
+  className: cls ? 'truncate ' + cls : 'truncate',
+  style: { minWidth: 0, display: 'block' },
+  title: String(text),
+  children: text
+})
+
 function Field({ label, hint, children }) {
   return jsxs('label', {
     className: 'flex min-w-0 flex-col gap-1',
@@ -128,9 +141,9 @@ function Field({ label, hint, children }) {
       jsxs('span', {
         className: 'flex items-baseline gap-2',
         children: [
-          jsx('span', { className: 'text-[0.6875rem] text-(--ui-text-tertiary)', children: label }),
+          jsx('span', Ell(label, 'text-[0.6875rem] text-(--ui-text-tertiary)')),
           hint
-            ? jsx('span', { className: 'text-[0.625rem] text-(--ui-text-tertiary) opacity-70', children: hint })
+            ? jsx('span', Ell(hint, 'text-[0.625rem] text-(--ui-text-tertiary) opacity-70'))
             : null
         ]
       }),
@@ -700,11 +713,27 @@ function B2SPane({ ctx }) {
     border: '1px solid var(--ui-diff-add-border, ' + FIX_GREEN + ')'
   }
   const FIX_TEXT = { color: 'var(--ui-diff-add-foreground, ' + FIX_GREEN + ')' }
+  /* Кнопка SDK не сжимается и не переносится — в её базовом классе `shrink-0
+     whitespace-nowrap`, а обёртка `inline-flex` без ограничения ширины. Панель
+     же ужимается уже, чем подпись, и кнопка вылезала за рамку блока описания
+     (замер на собранном CSS приложения: «🩹 Починить файл — обернуть текст в
+     frontmatter» выезжает на 3 px при 270 px ширины панели и на 93 px при 180 px).
+     Поведение, которое нужно: подпись остаётся ОДНОЙ строкой и сжимается под
+     ширину блока, лишнее режется многоточием — никаких переносов. Многоточие
+     даёт только блочный бокс, поэтому подпись живёт в своём `span.truncate` с
+     `min-width: 0` (у flex-контейнера, каким является кнопка, `text-overflow`
+     сам не работает). Обёртке — `max-w-full min-w-0`: без этого она не даст
+     кнопке сжаться. Короткие подписи выглядят как раньше. */
+  const CHIP_FIT = { maxWidth: '100%', minWidth: 0, flexShrink: 1 }
+  /* Подпись в кнопке живёт в своём span.truncate: многоточие умеет только блочный
+     бокс, а у flex-контейнера (какова кнопка) `text-overflow` не срабатывает.
+     Общее правило подписей — у `Ell` выше. */
+  const fitLabel = (label) => jsx('span', Ell(label))
   const chipAction = (label, onClick, disabled, tone) => {
     const fix = tone === 'fix'
     return jsx('div', {
       'data-glass-raised': '',
-      className: 'inline-flex rounded',
+      className: 'inline-flex max-w-full min-w-0 rounded',
       style: fix ? FIX_FILL : PANEL_FILL,
       children: jsx(Button, {
         size: 'sm',
@@ -712,8 +741,8 @@ function B2SPane({ ctx }) {
         disabled,
         onClick,
         className: CHIP_LINK + (fix ? ' font-medium' : ''),
-        style: fix ? FIX_TEXT : undefined,
-        children: label
+        style: fix ? Object.assign({}, FIX_TEXT, CHIP_FIT) : CHIP_FIT,
+        children: fitLabel(label)
       })
     })
   }
@@ -826,7 +855,7 @@ function B2SPane({ ctx }) {
     children: [
       jsx('summary', {
         className: 'cursor-pointer select-none text-(--ui-text-secondary)',
-        children: '📊 Результат разбора' + (headBits.length ? ' · ' + headBits.join(' · ') : ' — пока пусто')
+        children: jsx('span', Ell('📊 Результат разбора' + (headBits.length ? ' · ' + headBits.join(' · ') : ' — пока пусто')))
       }),
 
       /* 1) строка статуса — что именно сделал шаг 1/3 */
@@ -857,20 +886,20 @@ function B2SPane({ ctx }) {
                 ].filter(Boolean).join('')
               }),
               report.source_file
-                ? jsx('div', { className: 'break-all opacity-80', children: report.source_file })
+                ? jsx('div', Ell(report.source_file, 'opacity-80'))
                 : null
             ]
           })
         : null,
 
       /* 3) собственно очищенный текст — то, что уйдёт в пайплайн */
-      jsx('div', {
-        className: 'mt-2 text-(--ui-text-secondary)',
-        children: '🔤 Очищенный текст источника' +
+      jsx('div', Ell(
+        '🔤 Очищенный текст источника' +
           (textInfo && textInfo.chars != null ? ' · ' + textInfo.chars + ' симв' : '') +
           (textInfo && textInfo.lines != null ? ' · ' + textInfo.lines + ' строк' : '') +
-          (textInfo && textInfo.partial ? ' · первые 6 КБ' : '')
-      }),
+          (textInfo && textInfo.partial ? ' · первые 6 КБ' : ''),
+        'mt-2 text-(--ui-text-secondary)'
+      )),
       textInfo && textInfo.error && !text
         ? jsx('div', {
             className: 'break-all pt-1 opacity-80',
@@ -889,7 +918,7 @@ function B2SPane({ ctx }) {
             children: 'нажми шаг 1 — вычищенный текст появится здесь'
           }),
       textInfo && textInfo.path
-        ? jsx('div', { className: 'break-all pt-1 opacity-70', children: textInfo.path })
+        ? jsx('div', Ell(textInfo.path, 'pt-1 opacity-70'))
         : null,
       textInfo && textInfo.truncated
         /* Фон кнопки — тот же, что у текстового поля (фон панели + data-glass-raised,
@@ -906,7 +935,8 @@ function B2SPane({ ctx }) {
               disabled: textBusy,
               onClick: () => loadText(0),
               className: 'h-6 justify-start text-[0.625rem]',
-              children: 'показать весь текст'
+              style: CHIP_FIT,
+              children: fitLabel('показать весь текст')
             })
           })
         : null,
@@ -932,12 +962,12 @@ function B2SPane({ ctx }) {
           borderColor: 'color-mix(in oklab, ' + BASE + ' 22%, transparent)'
         },
         children: [
-          jsx('div', {
-            className: 'text-(--ui-text-secondary)',
-            children: (preview.dry_run === false ? '📦 Установлено · ' : '📦 План установки · ') +
-              'режим ' + preview.mode + ' · ' + preview.files + ' файл(ов), ' + preview.kb + ' КБ'
-          }),
-          jsx('div', { className: 'break-all opacity-80', children: preview.target }),
+          jsx('div', Ell(
+            (preview.dry_run === false ? '📦 Установлено · ' : '📦 План установки · ') +
+              'режим ' + preview.mode + ' · ' + preview.files + ' файл(ов), ' + preview.kb + ' КБ',
+            'text-(--ui-text-secondary)'
+          )),
+          jsx('div', Ell(preview.target, 'opacity-80')),
           preview.dry_run === false
             ? jsx('div', {
                 children: '✔ записано ' + ((preview.wrote || []).length) + ' файл(ов)' +
@@ -947,7 +977,7 @@ function B2SPane({ ctx }) {
               })
             : null,
           ...planRowsList.map((line, i) =>
-            jsx('div', { className: 'break-all', children: line }, 'plan-' + i)),
+            jsx('div', Ell(line), 'plan-' + i)),
           preview.mode === 'replace'
             ? jsx('div', {
                 className: 'text-(--ui-text-primary)',
@@ -957,14 +987,14 @@ function B2SPane({ ctx }) {
           preview.warning
             ? jsx('div', { className: 'text-(--ui-text-primary)', children: '⚠ ' + preview.warning })
             : null,
-          jsx('div', {
-            className: 'opacity-70',
-            children: preview.backup
+          jsx('div', Ell(
+            preview.backup
               ? 'бэкап: ' + preview.backup
               : preview.target_exists
                 ? 'бэкап снимется перед записью'
-                : 'новый скилл — бэкап не нужен'
-          })
+                : 'новый скилл — бэкап не нужен',
+            'opacity-70'
+          ))
         ]
       })
     : null
@@ -981,15 +1011,15 @@ function B2SPane({ ctx }) {
           borderColor: 'color-mix(in oklab, ' + BASE + ' 22%, transparent)'
         },
         children: [
-          jsx('div', {
-            className: 'text-(--ui-text-secondary)',
-            children: '🧩 План по главам · ' + (chapterPlan.target_exists
+          jsx('div', Ell(
+            '🧩 План по главам · ' + (chapterPlan.target_exists
               ? 'долив в ' + chapterPlan.category + '/' + chapterPlan.name +
                 ' · порог ' + chapterPlan.threshold
-              : 'новая папка — сливать не с чем')
-          }),
+              : 'новая папка — сливать не с чем'),
+            'text-(--ui-text-secondary)'
+          )),
           ...chapterRowsList.map((line, i) =>
-            jsx('div', { className: 'break-all', children: line }, 'chap-' + i)),
+            jsx('div', Ell(line), 'chap-' + i)),
           jsx('div', {
             className: 'flex flex-wrap gap-1 pt-1',
             children: [
@@ -999,7 +1029,8 @@ function B2SPane({ ctx }) {
                 disabled: chapterBusy,
                 onClick: () => sendIntent('plan'),
                 className: 'h-6 text-[0.625rem]',
-                children: '↗ Отправить агенту: решить, что слить'
+                style: CHIP_FIT,
+                children: fitLabel('↗ Отправить агенту: решить, что слить')
               })
             ]
           }),
@@ -1300,8 +1331,8 @@ function B2SPane({ ctx }) {
               disabled: busy === 'review',
               onClick: () => sendIntent('review'),
               className: 'h-7 justify-start text-xs',
-              style: { backgroundColor: REVIEW_BG },
-              children: 'Критика и список правок'
+              style: Object.assign({ backgroundColor: REVIEW_BG }, CHIP_FIT),
+              children: fitLabel('Критика и список правок')
             })
           })
         ]
@@ -1313,8 +1344,8 @@ function B2SPane({ ctx }) {
       jsxs('div', {
         className: 'flex flex-col gap-0.5 pt-1 text-[0.625rem] text-(--ui-text-tertiary)',
         children: [
-          jsx('span', { className: 'break-all', children: 'REST: /rerun · /install · /plan · /skills · /categories · /text' }),
-          jsx('span', { children: 'сессия (для чат-шагов): ' + (focusedId || '—') })
+          jsx('span', Ell('REST: /rerun · /install · /plan · /skills · /categories · /text')),
+          jsx('span', Ell('сессия (для чат-шагов): ' + (focusedId || '—')))
         ]
       })
     ]
