@@ -668,23 +668,33 @@ function B2SPane({ ctx }) {
   /* Состояние описания = цвет блока и знак перед ним. Служебной прозы больше нет:
      что это за блок, говорит подпись; читает ли его Hermes — показывает знак. */
   const catState = !catInfo ? 'no-file' : (catInfo.desc_state || 'ok')
-  const catTone = catState === 'ok'
-    ? { backgroundColor: CHIP_BG, border: CHIP_LINE }
-    : catState === 'no-frontmatter'
-      ? {
-          backgroundColor: 'color-mix(in srgb, ' + WARN_YELLOW + ' 16%, ' + CHIP_BG + ')',
-          border: '1px solid color-mix(in srgb, ' + WARN_YELLOW + ' 55%, transparent)'
-        }
-      : {
-          backgroundColor: 'color-mix(in srgb, ' + STOP_RED + ' 14%, ' + CHIP_BG + ')',
-          border: '1px solid color-mix(in srgb, ' + STOP_RED + ' 60%, transparent)'
-        }
+  /* Фон блока описания — ФОН ПЛАГИНА, а не своя вуаль, и цвет состояния живёт в РАМКЕ.
+     На желтоватой вуали (теплая тема) зелёные кнопки «починить» читались грязно —
+     владелец: «выглядит убого», и это верно: два цветных слоя (заливка блока + кнопка)
+     спорили друг с другом. Теперь проза категории лежит на привычном фоне панели,
+     а состояние видно рамкой, как знак: зелёная — формат верный (Hermes описание
+     читает), жёлтая — предупреждение (текст есть, но без frontmatter), красная —
+     ошибка (файла нет). Зелёный — темо-зависимый --ui-diff-add-border, жёлтый и
+     красный — константы знаков (WARN_YELLOW / STOP_RED): смысл состояния не должен
+     уезжать за темой, иначе warning и error станут неотличимы в чужой палитре. */
+  const catTone = {
+    backgroundColor: PANEL_BG,
+    border: catState === 'ok'
+      ? '1px solid var(--ui-diff-add-border, ' + FIX_GREEN + ')'
+      : catState === 'no-frontmatter'
+        ? '1px solid ' + WARN_YELLOW
+        : '1px solid ' + STOP_RED
+  }
   const catChip = jsxs('div', {
     className: 'space-y-1',
     children: [
       jsx('div', { className: CHIP_LABEL, children: 'Содержимое DESCRIPTION.md' }),
       jsxs('div', {
         className: CHIP_BOX,
+        /* Фон под стеклом (translucency, mode=glass) тема обнуляет в transparent —
+           тогда блок стал бы прозрачным. data-glass-raised возвращает заливку
+           от --ui-bg-chrome, как у карточек и поля очищенного текста. */
+        'data-glass-raised': '',
         style: catTone,
         children: catState === 'ok'
           ? [
