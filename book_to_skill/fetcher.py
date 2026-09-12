@@ -63,9 +63,14 @@ class Fetcher:
             if score <= 0:
                 continue
             # A forced strategy narrows the field instead of overriding the run.
-            if self.force == "raw-md" and plugin.NAME != "raw-markdown":
+            # local-file rides along with both families: a local .md is "raw", a
+            # local .html goes through the cleaning cascade (see plugin_local_file).
+            if self.force == "raw-md" and plugin.NAME not in ("raw-markdown", "local-file"):
                 continue
-            if self.force in ("trafilatura", "bs4", "stdlib") and plugin.NAME != "html-cascade":
+            if self.force in ("trafilatura", "bs4", "stdlib") and plugin.NAME not in (
+                "html-cascade",
+                "local-file",
+            ):
                 continue
             candidates.append((score, plugin))
 
@@ -87,6 +92,7 @@ class Fetcher:
                         "score": score,
                         "ok": False,
                         "note": f"{type(exc).__name__}: {exc}",
+                        "error": f"{type(exc).__name__}: {exc}",
                     }
                 )
                 continue
@@ -96,6 +102,10 @@ class Fetcher:
                     "score": score,
                     "ok": bool(result.ok),
                     "note": "; ".join(result.notes),
+                    # The plugin's own wording beats a generic message: "файл не
+                    # найден: D:\..." is actionable, "no strategy produced text"
+                    # is what made the dashboard look broken ("болт").
+                    "error": result.error or "",
                 }
             )
             if result.ok:
@@ -109,7 +119,12 @@ class Fetcher:
         report = {"url": url, "attempts": attempts, "force": self.force}
         if result is None:
             report["ok"] = False
-            report["error"] = "no strategy produced text"
+            # Never swallow the reason: the first attempt is usually the most
+            # specific one (local-file says "file not found" straight away).
+            report["error"] = next(
+                (a.get("error") for a in attempts if a.get("error")),
+                next((a.get("note") for a in attempts if a.get("note")), ""),
+            ) or "no strategy produced text"
             return report
 
         out_dir = Path(out_dir)

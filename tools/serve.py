@@ -138,6 +138,10 @@ def run_fetch(st: dict) -> dict:
     if force == "auto":
         force = None
     started = time.time()
+    # The pane's engine switch (technical | text) belongs to the source, not to
+    # the strategy: the local-file plugin hands it to the upstream extractor,
+    # which picks docling vs pdftotext for PDFs.
+    os.environ["B2S_EXTRACTION_MODE"] = (st.get("mode") or "technical").strip().lower()
     report = Fetcher(force=force).fetch_to_dir(src, str(REPO / "b2s_fetched"))
     report["_seconds"] = round(time.time() - started, 2)
     st["history"] = ([{

@@ -15,6 +15,7 @@ from book_to_skill.plugins.base import (
     Plugin,
     decode,
     http_get,
+    looks_like_path,
     page_title,
 )
 
@@ -92,6 +93,11 @@ class RawMarkdownPlugin(Plugin):
     PRIORITY = 90
 
     def matches(self, url: str) -> float:
+        # A local path is never a network source: claiming it here is exactly how
+        # "D:\...\HERMES.md" ended up in urlopen ("unknown url type: d"). The
+        # local-file plugin owns disk paths.
+        if looks_like_path(url):
+            return 0.0
         if GITHUB_BLOB.match(url):
             return 1.0
         if _without_query(url).lower().endswith(MD_SUFFIXES):
@@ -127,6 +133,9 @@ class HtmlCascadePlugin(Plugin):
     PRIORITY = 50
 
     def matches(self, url: str) -> float:
+        # Same rule as raw-markdown: a path on disk is local-file's business.
+        if looks_like_path(url):
+            return 0.0
         return 0.5 if url.lower().startswith(("http://", "https://")) else 0.0
 
     def run(self, url: str, force: str | None = None) -> FetchResult:

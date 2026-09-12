@@ -74,6 +74,31 @@ def decode(body: bytes, headers: dict) -> str:
         return body.decode("utf-8", errors="replace")
 
 
+URL_PREFIXES = ("http://", "https://", "ftp://", "file://")
+
+
+def looks_like_path(src: str) -> bool:
+    """Is *src* a filesystem path rather than a URL?
+
+    Lives here, in the shared contract, because BOTH sides need it: the local
+    source plugin claims paths, and the network plugins must refuse them. Without
+    that refusal a local path fell through to ``urlopen`` and the dashboard showed
+    ``unknown url type: d`` (a network error for a file sitting on disk).
+    """
+    if not src or src.startswith(URL_PREFIXES):
+        return False
+    if len(src) > 1 and src[1] == ":":  # D:\... (Windows drive)
+        return True
+    if "\\" in src or "/" in src:
+        return True
+    from pathlib import Path as _Path
+
+    return _Path(src).suffix.lower() in (
+        ".md", ".markdown", ".mdx", ".mkd", ".txt", ".rst", ".org",
+        ".adoc", ".asciidoc", ".html", ".htm", ".xhtml", ".pdf",
+    )
+
+
 def page_title(markup: str) -> str:
     """Best-effort <title> extraction, used for the report and the file header."""
     import html as _html
