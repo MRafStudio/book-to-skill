@@ -203,6 +203,12 @@ def suggest_skill_name(url: str, title: str = "", source_file: str = "") -> str:
 
     The widget shows this pre-filled and editable; an empty value means the
     agent picks the name itself.
+
+    Length is capped at three hyphen-words (site + up to two topic words): the
+    name is the trigger line Hermes matches on, and a slug like
+    ``rkeeper-rekomendatsii-po-polucheniyu-spravochnik`` triggers nothing well.
+    Service words (prepositions, articles) and long numeric tails (page ids)
+    do not survive the cap -- they carry no topic and eat the budget.
     """
     def slugify(text: str) -> str:
         return re.sub(r"[^a-zA-Z0-9]+", "-", text or "").strip("-").lower()
@@ -213,6 +219,7 @@ def suggest_skill_name(url: str, title: str = "", source_file: str = "") -> str:
     # slugifies into noise. Title and source file are fallbacks.
     generic = {"index", "readme", "home", "default", "overview", "introduction", "intro"}
     topic = ""
+    from_slug = False
     m = re.match(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://([^/?#]+)([^?#]*)", url or "")
     if m:
         segments = [s for s in m.group(2).strip("/").split("/") if s]
@@ -220,6 +227,7 @@ def suggest_skill_name(url: str, title: str = "", source_file: str = "") -> str:
             last = re.sub(r"\.(html?|php|aspx?|md|txt|rst)$", "", segments[-1], flags=re.I)
             if slugify(last) not in generic and not last.isdigit():
                 topic = slugify(last)
+                from_slug = True
                 break
             segments.pop()
     if not topic and title:
@@ -235,6 +243,35 @@ def suggest_skill_name(url: str, title: str = "", source_file: str = "") -> str:
         drop = {"www", "docs", "doc", "com", "org", "net", "io", "dev", "ru", "en", "3"}
         keep = [p for p in labels if p.lower() not in drop]
         site = slugify(keep[-1] if keep else (labels[0] if labels else ""))
+
+    # Длина имени — ТРИ слова, не больше. Имя скилла работает триггером: по нему
+    # Hermes решает, когда скилл подгрузить, и `rkeeper-rekomendatsii-po-polucheniyu-
+    # spravochnik` в этой роли бесполезен (владелец: «слишком длинное название —
+    # максимум 3 слова»). Сайт занимает слово, теме остаётся два. Служебные слова
+    # (предлоги, союзы, артикли) выбрасываем: темы в них нет, а лимит они съедают;
+    # длинный числовой хвост (`...-186253740`) — идентификатор страницы, не тема.
+    stop = {"a", "an", "and", "as", "at", "be", "by", "de", "for", "from", "how",
+            "in", "into", "is", "it", "of", "on", "or", "the", "to", "with", "your",
+            "bez", "chto", "dlja", "dlya", "do", "i", "iz", "k", "kak", "ko", "na",
+            "ne", "no", "o", "ob", "ot", "po", "pri", "pro", "s", "so", "u", "v",
+            "vo", "za"}
+    words = [w for w in (topic.split("-") if topic else [])
+             if w not in stop and not (w.isdigit() and len(w) > 4)]
+    if words:
+        # Из значимых слов берём ГОЛОВУ темы (первое) и её смысловой токен (самое
+        # длинное из ОСТАЛЬНЫХ, не «следующее по порядку»: в слаге порядок слов не
+        # фраза, и «два первых подряд» ловят прозу - `make-very` вместо `make-article`,
+        # `po-polucheniyu` вместо `rekomendatsii-spravochnikov`). Но только когда тема
+        # вынута из СЛАГА; заголовок - это фраза, в нём порядок значим, берём начало.
+        # Версия в теме (`csharp-13`) при этом не теряется: короткое слово остаётся
+        # единственным, кроме головы.
+        limit = 3 if not site else 2
+        if from_slug and site:
+            rest = words[1:]
+            picked = [words[0]] + ([max(rest, key=len)] if rest else [])
+        else:
+            picked = words[:limit]
+        topic = "-".join(picked[:limit])
 
     name = "-".join(p for p in (site, topic) if p)
     return name[:48].strip("-") or slugify(Path(source_file).stem)[:48]
