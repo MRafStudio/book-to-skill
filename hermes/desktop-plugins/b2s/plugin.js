@@ -1245,25 +1245,19 @@ function B2SPane({ ctx }) {
      строки СПЛЮЩИВАЮТСЯ — замер стендом: 12 строк по 2.5 px, scrollHeight = clientHeight
      (окно врало, что переполнения нет, а строки были нечитаемы). Блочная зона отдаёт
      строки как есть, скролл честный; отступы между ними держит `space-y-1` в className. */
-  const ZONE_CAP = { ...GROUP_CAP, display: 'block' }
-  /* Внутреннее окно списка файлов в плане установки — НЕ короткий GROUP_CAP: файлы
-     читают глазами, по строке на файл (владелец: «слишком маленький… минимум до
-     размеров как в блоке 2»). Высота как у полей текста в блоках 2/3 (max-h-72 = 288 px), плюс
-     `resize: vertical` — браузер сам рисует грип в правом нижнем углу, за который
-     зону тянут вниз. Потолок не мешает росту: его снимает сам ресайз. */
-  const PREVIEW_CAP = {
-    minHeight: '7em',
-    maxHeight: 288,
-    /* `display: block` — не вкусовщина: зона flex-колонкой СЖИМАЛА строки плана
-       вместо прокрутки (замер стендом на 45 строках: каждая сплющивалась до 4.2 px,
-       scrollHeight = clientHeight, то есть окно врало о переполнении). Блочная зона
-       отдаёт строки как есть, а лишнее уезжает под скролл. */
+  const ZONE_CAP = {
+    ...GROUP_CAP,
     display: 'block',
-    overflowY: 'auto',
-    overflowX: 'hidden',
-    resize: 'vertical',
-    overscrollBehavior: 'contain'
+    /* Единый стандарт «окна» панели (блоки 3 и 4): потолок как у поля текста в блоке 2
+       и грип в правом нижнем углу — тянешь, окно растёт. */
+    maxHeight: 288,
+    minHeight: '7em',
+    resize: 'vertical'
   }
+  /* Внутреннее окно списка файлов в плане установки — тот же стандарт «окна», что у
+     зон блока 3 (ZONE_CAP): потолок 288 px, блочная раскладка, грип. Фон плагина и
+     рамка поля даются на месте вызова, здесь — только раскладка. */
+  const PREVIEW_CAP = { ...ZONE_CAP, overflowX: 'hidden' }
   /* Раскладка зоны текста внутри группы: строки друг под другом. */
   const GROUP_LEAD = 'flex min-w-0 flex-col gap-1'
   const FIELD_LINE = '1px solid color-mix(in oklab, ' + BASE + ' 22%, transparent)'
@@ -1686,6 +1680,7 @@ function B2SPane({ ctx }) {
               'data-glass-raised': '',
               className: 'min-w-0 space-y-1 rounded px-1.5 py-1',
               style: Object.assign({}, ZONE_CAP, { border: FIELD_LINE, backgroundColor: PANEL_BG }),
+              title: 'Тяни за угол в правом нижнем углу, чтобы растянуть список файлов',
               children: draftRowsList.map((r) => jsx(Button, {
                 size: 'sm',
                 variant: 'ghost',
@@ -1870,6 +1865,7 @@ function B2SPane({ ctx }) {
             'data-glass-raised': '',
             className: 'min-w-0 space-y-1 rounded px-1.5 py-1',
             style: Object.assign({}, ZONE_CAP, { border: FIELD_LINE, backgroundColor: PANEL_BG }),
+            title: 'Тяни за угол в правом нижнем углу, чтобы растянуть раскладку по главам',
             children:
               chapterRowsList.map((line, i) => jsx('div', Ell(line), 'chap-' + i))
           }),

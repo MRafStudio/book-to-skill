@@ -129,6 +129,8 @@ def main() -> int:
 
     # ── 1) живой код: потолок окна + подпись кнопки ─────────────────────────
     try:
+        group_cap_src = "const GROUP_CAP = " + cut_braces(src, "const GROUP_CAP =")
+        zone_cap_src = "const ZONE_CAP = " + cut_braces(src, "const ZONE_CAP =")
         cap_src = "const PREVIEW_CAP = " + cut_braces(src, "const PREVIEW_CAP =")
         i = src.index("label: preview")
         j = src.index("onClick: () => runInstall", i)
@@ -137,7 +139,7 @@ def main() -> int:
         check("PREVIEW_CAP и подпись кнопки извлекаются из plugin.js", False, str(exc))
         return 1
     check("PREVIEW_CAP и подпись кнопки извлекаются из plugin.js",
-          len(cap_src) > 120 and "preview" in label_expr,
+          len(group_cap_src + zone_cap_src + cap_src) > 120 and "preview" in label_expr,
           f"cap={len(cap_src)} симв, label={len(label_expr)} симв",
           note=f"подпись: {len(label_expr)} символов живого выражения")
 
@@ -147,7 +149,8 @@ def main() -> int:
     except ValueError as exc:
         check("planFileRows/planTotalRows извлекаются из plugin.js", False, str(exc))
         return 1
-    body = (cap_src + "\n" + plan_files_fn + "\n" + plan_totals_fn +
+    body = (group_cap_src + "\n" + zone_cap_src + "\n" + cap_src + "\n" +
+            plan_files_fn + "\n" + plan_totals_fn +
             "\nconst labelOf = (preview) => (" + label_expr + ")\n")
     with tempfile.TemporaryDirectory(prefix="b2s-pane-b4-") as tmp:
         tmpd = Path(tmp)
