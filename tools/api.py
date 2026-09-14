@@ -394,7 +394,39 @@ def do_rerun(src: str = "", strat: str = "", mode: str = "",
     # ляжет черновик, и передаёт его в /draft и /install. Имя скилла в ключе не
     # участвует: его правят свободно, и черновик от этого не должен пропадать.
     result["draft_key"] = _draft_key(st.get("src") or "", st)
+    # Имя скилла панель предлагает ПОСЛЕ разбора: в строке url тема часто не названа
+    # («.../186253740.html»), а в заголовке страницы — названа. Это ПРЕДЛОЖЕНИЕ:
+    # поле имени остаётся редактируемым, и ручной ввод оно не затирает.
+    result["suggested_name"] = dash.suggest_skill_name(
+        st.get("src") or "", report.get("title") or "", report.get("source_file") or "")
     return result
+
+
+def do_resolve(src: str = "") -> dict:
+    """Ключ черновика и предложенное имя — по ОДНОЙ строке источника, без сети.
+
+    Панель зовёт это при вводе источника, ещё до разбора: ключ черновика обязан
+    следовать за ПОЛЕМ, а не за прошлым прогоном ядра. Иначе после смены url блок
+    «Черновик скилла» показывал файлы прежней работы (владелец: «ввёл новый url, а
+    в блоке 3 содержимое предыдущего скилла»): ключ брался из ``/state``, где лежит
+    последний прогон, и панель искала черновик не там, где смотрит человек.
+
+    Заголовок страницы подставляем, только если этот источник уже разбирали (он
+    лежит в отчёте): из одной строки url тема часто не читается. Имя здесь —
+    догадка для поля, а не решение: его видно и правится руками.
+    """
+    asked = (src or "").strip()
+    if not asked:
+        return {"ok": True, "key": "", "suggested_name": ""}
+    st = load_state()
+    same = asked == str(st.get("src") or "").strip()
+    rep = st.get("report") or {}
+    return {
+        "ok": True,
+        "key": _draft_key(asked, st),
+        "suggested_name": dash.suggest_skill_name(
+            asked, (rep.get("title") or "") if same else "", ""),
+    }
 
 
 def _fetched_file(path: str = "") -> Path:
@@ -1585,6 +1617,9 @@ def main(argv: list[str] | None = None) -> int:
     p_rerun.add_argument("--depth", default="")
     p_rerun.add_argument("--lang", default="")
 
+    p_resolve = sub.add_parser("resolve", help="ключ черновика (слаг) + имя по строке источника, без сети")
+    p_resolve.add_argument("--src", required=True)
+
     p_text = sub.add_parser("text", help="очищенный текст источника (то, что видно в панели)")
     p_text.add_argument("--path", default="", help="файл; по умолчанию - последний прогон")
     p_text.add_argument("--offset", type=int, default=0)
@@ -1669,6 +1704,8 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "rerun":
         out = do_rerun(args.src, args.strat, args.mode, args.name, args.cat,
                        args.depth, args.lang)
+    elif args.cmd == "resolve":
+        out = do_resolve(args.src)
     elif args.cmd == "text":
         out = do_text(args.path, args.offset, args.limit)
     elif args.cmd == "draft":

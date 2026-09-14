@@ -190,8 +190,9 @@ def main() -> int:
           src[src.index("const nameListBlock"):src.index("const namePickRow")])
     check("список открывается кнопкой и перечитывается с диска при открытии",
           "loadSkills(); setNameOpen((v) => !v)" in src)
-    check("ввод имени остался свободным (Input не превратился в Select)",
-          "onChange: (e) => setName(e.target.value)" in src)
+    check("ввод имени остался свободным (Input не превратился в Select), "
+          "а ручная правка помечает ввод: подстановка больше не тронет поле",
+          "onChange: (e) => { setName(e.target.value); nameTouched.current = true; setNameAuto(false) }" in src)
 
     # 1d) «Имя скилла» — обязательный вход, и панель это ПОКАЗЫВАЕТ, а не молчит
     # (владелец: «по умолчанию либо предыдущее, либо пустое, но никак не
@@ -251,8 +252,8 @@ def main() -> int:
     # 1d) черновик принадлежит ИСТОЧНИКУ, а не имени скилла: правка имени или
     # категории не смеет ни терять черновик, ни гасить план блока 4, ни сбрасывать
     # раскладку глав. Ключ черновика - слаг источника, он же едет агенту в интенте.
-    check("черновик читается по источнику (src едет в /draft)",
-          "body: { name: (name || '').trim(), src: (src || '').trim() }" in src)
+    check("черновик читается по источнику (src едет в /draft, из ref - не из замыкания)",
+          "body: { name: nameRef.current, src: srcRef.current }" in src)
     _src = "src: (src || '').trim()"
     check("план и установка знают источник (src едет в /plan и /install)",
           src.count(_src) >= 4, "вхождений: " + str(src.count(_src)))

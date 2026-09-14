@@ -22,6 +22,7 @@ LLM остаётся только там, где без него нельзя: �
     GET  /draft?name=…        сводка черновика в staging: файлы, главы, объём, шапка
     POST /draft_text {…}      текст файла черновика (по клику внутри блока черновика)
     POST /rerun   {src,…}     каскад: загрузка + очистка + отчёт
+    POST /resolve {src}       ключ черновика (слаг источника) + предложенное имя — до разбора
     POST /text    {limit,…}   очищенный текст источника — то, что видно в панели
     POST /install {name,…}    план (added/overwrite/keep); пишет ТОЛЬКО при confirm=true,
                               режим: auto | create | append (долив) | replace (с бэкапом)
@@ -144,6 +145,11 @@ class RerunBody(BaseModel):
     lang: str = ""
 
 
+class ResolveBody(BaseModel):
+    """Строка источника: панель спрашивает ключ черновика и имя ЕЩЁ ДО разбора."""
+    src: str = ""
+
+
 class InstallBody(BaseModel):
     name: str = ""
     cat: str = ""
@@ -256,6 +262,18 @@ def rerun(body: RerunBody) -> Dict[str, Any]:
     """Шаг 1 панели: загрузить источник и очистить текст. Без LLM."""
     return core().do_rerun(body.src, body.strat, body.mode, body.name,
                            body.cat, body.depth, body.lang)
+
+
+@router.post("/resolve")
+def resolve(body: ResolveBody) -> Dict[str, Any]:
+    """Ключ черновика и предложенное имя по строке источника — без сети и LLM.
+
+    Панель зовёт это при вводе источника, до всякого разбора: ключ черновика
+    следует за ПОЛЕМ, а не за прошлым прогоном ядра. Иначе после смены url в блоке
+    «Черновик скилла» оставались файлы прежней работы, и панель говорила о чужом
+    черновике как о своём.
+    """
+    return core().do_resolve(body.src)
 
 
 @router.post("/text")
