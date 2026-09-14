@@ -1753,9 +1753,17 @@ function B2SPane({ ctx }) {
             'text-(--ui-text-secondary)'
           )),
           /* Скроллится только список глав: кнопка «отправить агенту» обязана
-             оставаться на виду (та же раскладка, что у блока описания). */
-          jsx('div', { className: GROUP_LEAD, style: GROUP_CAP, children:
-            chapterRowsList.map((line, i) => jsx('div', Ell(line), 'chap-' + i)) }),
+             оставаться на виду (та же раскладка, что у блока описания).
+             Зона — такое же «окно» панели, как список файлов черновика: на вуали
+             блока строки раскладки читались как её же текст, а под стеклом токен
+             обнуляется в transparent (владелец: «дать ей такое же окно»). */
+          jsx('div', {
+            'data-glass-raised': '',
+            className: GROUP_LEAD + ' rounded px-1.5 py-1',
+            style: Object.assign({}, GROUP_CAP, { border: FIELD_LINE, backgroundColor: PANEL_BG }),
+            children:
+              chapterRowsList.map((line, i) => jsx('div', Ell(line), 'chap-' + i))
+          }),
           jsx('div', {
             className: 'flex flex-wrap gap-1 pt-1',
             children: [

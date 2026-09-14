@@ -252,6 +252,19 @@ def main() -> int:
     check("потолок и прокрутка сохранены (группа не растёт в сосиску)",
           "Object.assign({}, GROUP_CAP" in listzone and "rounded px-1.5 py-1" in listzone,
           f"{listzone[-200:]!r}")
+
+    # 5a-bis) Зона списка ГЛАВ («План по главам») — тоже «окно», решение владельца:
+    # «согласен, надо дать ей такое же окно, как списку файлов». Та же болезнь: строки
+    # раскладки лежали на вуали блока и читались как её текст.
+    i_chap = src.find("chapterRowsList.map((line, i) =>")
+    chapzone = src[max(0, i_chap - 600):i_chap] if i_chap > 0 else ""
+    check("зона списка глав найдена (план по главам рисует строки)",
+          i_chap > 0, f"chapterRowsList@{i_chap}")
+    check("список глав — такое же окно панели, как список файлов",
+          all(k in chapzone for k in ("backgroundColor: PANEL_BG", "border: FIELD_LINE",
+                                      "'data-glass-raised': ''", "Object.assign({}, GROUP_CAP",
+                                      "rounded px-1.5 py-1")),
+          f"зона глав осталась вуалью блока: {chapzone[-160:]!r}")
     check("сводку можно перечитать, не раскрывая блок (кнопка «проверить staging»)",
           "проверить staging" in src)
     check("пока блок раскрыт, сводка перечитывается сама (таймер по draftOpen)",
