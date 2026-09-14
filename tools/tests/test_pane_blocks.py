@@ -199,8 +199,10 @@ def main() -> int:
     # (владелец: «по умолчанию либо предыдущее, либо пустое, но никак не
     # "python-pathlib"»; «окантовка поля жёлтым, а кнопка ДАЛЕЕ недоступна»).
     check("имя скилла по умолчанию пустое или прошлое, а не чужой пример",
-          "useState(stored.name || '')" in src and "stored.name || 'python-pathlib'" not in src,
-          "панель подставит своё имя, и скилл уедет под чужим")
+          "useState(stored.name ? String(stored.name).toLowerCase() : '')" in src and
+          "stored.name || 'python-pathlib'" not in src,
+          "панель подставит своё имя, и скилл уедет под чужим (восстановленное из storage "
+          "имя нормализуем - подробности и сторож в test_pane_name.py)")
     check("пустое имя подсвечено жёлтым (окантовка поля + та же краска у подписи)",
           "const nameWarn = !wanted" in src and
           "border: '1px solid ' + WARN_YELLOW" in src and
