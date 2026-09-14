@@ -1807,7 +1807,7 @@ function B2SPane({ ctx }) {
           style: BTN_FIT,
           children: [
             jsx('span', { 'aria-hidden': true, style: { flexShrink: 0 }, children: '🧩' }),
-            cutSpan('3. План по главам: что слить, что переписать')
+            cutSpan('План по главам: что слить, что переписать')
           ]
         })
       }),
@@ -2274,7 +2274,11 @@ function B2SPane({ ctx }) {
                 variant: 'ghost',
                 disabled: !!busy,
                 onClick: () => sendIntent('review'),
-                className: 'h-7 justify-start text-[0.625rem]',
+                /* Кегль и цвет — как у соседей по ряду («Перегенерировать», «План по
+                   главам»): свой 0.625rem читался «другим центрированием», хотя
+                   flex-центр совпадал (замер: 0.00 px у обоих) — мелкая строка в
+                   28 px кнопке просто выглядит иначе. Один кегль в ряду — одно лицо. */
+                className: 'h-7 justify-start text-xs text-(--ui-text-primary)',
                 style: Object.assign({ backgroundColor: REVIEW_BG }, BTN_FIT),
                 children: cutSpan('Критика и список правок')
               })

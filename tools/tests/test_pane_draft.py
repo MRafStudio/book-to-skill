@@ -307,9 +307,18 @@ def main() -> int:
           "alignSelf: 'flex-start'" in chap_slot and "maxWidth: '100%'" in chap_slot
           and "backgroundColor: STEP_BG" in chap_slot,
           "обёртка снова stretch: фон будет шире кликабельной кнопки")
-    check("подпись кнопки плана: «3. План по главам: что слить, что переписать»",
-          "3. План по главам: что слить, что переписать" in src and "3′." not in src,
-          "подпись не переименована или остался штрих «3′.»")
+    check("подпись кнопки плана — «План по главам: что слить, что переписать» (без номера)",
+          "cutSpan('План по главам: что слить, что переписать')" in src
+          and "3. План по главам" not in src,
+          "номер у кнопки плана вернулся или подпись переименована")
+    # «Критика и список правок» — рядовой кнопкой того же ряда: свой кегль 0.625rem
+    # читался владельцем как «другое центрирование» (замер: flex-центр совпадал, 0.00 px,
+    # отличался только размер шрифта). В ряду — один кегль и один цветовой токен.
+    i_rev = src.find("sendIntent('review')")
+    rev_btn = src[i_rev:i_rev + 700] if i_rev > 0 else ""
+    check("«Критика и список правок» — тот же кегль и цвет, что у соседей по ряду",
+          "text-xs text-(--ui-text-primary)" in rev_btn and "text-[0.625rem]" not in rev_btn,
+          f"свой кегль у кнопки критики: {rev_btn[:220]!r}")
     bg_wraps = [l.strip()[:80] for l in src.splitlines() if "backgroundColor: STEP_BG" in l]
     check("плашки STEP_BG — у трёх кнопок-шагов (1, 2, 3)",
           len(bg_wraps) == 3, f"нашлось {len(bg_wraps)}: {bg_wraps}")
