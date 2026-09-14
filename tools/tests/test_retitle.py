@@ -13,7 +13,12 @@
 4. нет SKILL.md / пустое имя - «не изменено», без исключений;
 5. ПРЕДПРОСМОТР не пишет на диск: `do_install(confirm=False)` оставляет шапку как
    была (иначе первый клик «Предпросмотр» тихо правил бы staging);
-6. подтверждённая установка кладёт в профиль уже ИСПРАВЛЕННУЮ шапку.
+6. подтверждённая установка кладёт в профиль уже ИСПРАВЛЕННУЮ шапку;
+7. служебная метка плагина (`creator` / `created` / `updated`) ставится ВНУТРЬ
+   `metadata.hermes` (верхний уровень линза считает чужим ключом и даёт WARN),
+   `created` при повторной установке не перезаписывается - иначе по метке не
+   отличить «свежий скилл» от «перезалитого»;
+8. служебные файлы ядра (`merge-plan.json`) остаются в staging и в скилл не едут.
 
 Профиль - временный (`HERMES_HOME` на песочницу), реальные скиллы не читаются.
 """
@@ -121,9 +126,50 @@ check("черновик помечен как установленный",
 check("архивный черновик помечен установленным в своём metadata.json",
       (json.loads((d / "metadata.json").read_text(encoding="utf-8")).get("installed") or {}).get("skill") == "zz-retitle-6")
 
+# 7. Служебная метка плагина: creator / created / updated
+d = draft("zz-stamp", HEAD)
+inst = api.do_install("zz-stamp", "zz-probe", confirm=True)
+sfile = Path(inst["target"]) / "SKILL.md"
+stext = sfile.read_text(encoding="utf-8")
+check("метка плагина легла в шапку установленного скилла",
+      "creator: BookToSkill" in stext and "created: " in stext and "updated: " in stext,
+      stext.split("---")[1].strip().replace("\n", " | "))
+check("метка стоит ВНУТРИ metadata.hermes, а не ключами верхнего уровня",
+      "  hermes:\n    creator: BookToSkill" in stext,
+      "сверху линза даёт WARN: not a recognized Hermes Agent key")
+check("ядро отчиталось о метке", (inst.get("stamped") or {}).get("creator") == "BookToSkill")
+
+d = draft("zz-stamp2", HEAD)
+api._stamp_hermes_meta(d, now="2026-01-02 03:04")
+again = api._stamp_hermes_meta(d, now="2026-09-15 16:45")
+t2 = (d / "SKILL.md").read_text(encoding="utf-8")
+check("повторная метка сохраняет created и обновляет updated",
+      "created: 2026-01-02 03:04" in t2 and "updated: 2026-09-15 16:45" in t2
+      and again.get("created") == "2026-01-02 03:04",
+      t2.split("---")[1].strip().replace("\n", " | "))
+
+# 8. Служебный файл ядра в скилл не уезжает
+d = draft("zz-stamp3", HEAD)
+(d / "merge-plan.json").write_text('{"chapters": []}', encoding="utf-8")
+inst3 = api.do_install("zz-stamp3", "zz-probe", confirm=True)
+check("служебный merge-plan.json в скилл не скопирован, в staging остался",
+      (d / "merge-plan.json").is_file() and not (Path(inst3["target"]) / "merge-plan.json").exists(),
+      str(inst3["target"]))
+check("служебный файл не попал в список записанного",
+      "merge-plan.json" not in (inst3.get("wrote") or []), str(inst3.get("wrote")))
+
+# 9. Шапку с inline-metadata не калечим
+d = draft("zz-stamp4", "---\nname: x\ndescription: Use when probing.\nmetadata: {}\n---\n\n# t\n")
+bad = api._stamp_hermes_meta(d)
+check("inline `metadata: {}` не портится: метка не ставится, причина названа",
+      bad.get("changed") is False and bool(bad.get("error"))
+      and "metadata: {}" in (d / "SKILL.md").read_text(encoding="utf-8"),
+      str(bad))
+
 # Уборка за собой: песочницы и поставленный скилл
 for key in ("zz-retitle", "zz-retitle2", "zz-retitle3", "zz-retitle4",
-            "zz-retitle5", "zz-retitle6", "zz-retitle-6"):
+            "zz-retitle5", "zz-retitle6", "zz-retitle-6",
+            "zz-stamp", "zz-stamp2", "zz-stamp3", "zz-stamp4"):
     p = api.STAGING / key
     if p.exists():
         shutil.rmtree(p, ignore_errors=True)
@@ -134,4 +180,4 @@ if not all(ok for _, ok in checks):
     print(f"\nпроверок: {len(checks)}, провалов: {sum(1 for _, ok in checks if not ok)}")
     sys.exit(1)
 print(f"\nпроверок: {len(checks)}, провалов: 0")
-print("ВСЁ ЗЕЛЁНОЕ: имя из блока записи доезжает до шапки скилла")
+print("ВСЁ ЗЕЛЁНОЕ: имя из блока записи и метка плагина доезжают до шапки скилла")

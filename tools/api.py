@@ -670,6 +670,90 @@ def _retitle_skill_md(staging: Path, skill: str) -> dict:
     return {"changed": True, "name": skill}
 
 
+# ── служебные файлы черновика и метка плагина ────────────────────────────────
+# Каталог черновика - рабочая тетрадь, а не скилл: план раскладки по главам
+# (`merge-plan.json`) пишет ядро, и в профиль ему ехать незачем. Прежний
+# `copytree` копировал каталог целиком, поэтому служебный план лежал у всех
+# установленных скиллов. В staging он остаётся (панель его читает), в скилл - нет.
+_SERVICE_FILES = frozenset({"merge-plan.json"})
+
+_STAMP_CREATOR = "BookToSkill"       # подпись плагина в шапке скилла
+_STAMP_KEYS = ("creator", "created", "updated")
+
+
+def _is_service_file(rel: str) -> bool:
+    """Файл ядра внутри каталога черновика: в скилл не копируется."""
+    return Path(rel).name in _SERVICE_FILES
+
+
+def _stamp_hermes_meta(staging: Path, *, now: str = "") -> dict:
+    """Пометить шапку SKILL.md служебной меткой: creator / created / updated.
+
+    Зачем: по файлу видно, что скилл собран нашим плагином и когда он создан и
+    последний раз перезалит. В контекст агента это НЕ идёт: Hermes кладёт в
+    системный промпт только `name` и `description` (`agent/prompt_builder.py`,
+    строка вида `- {name}: {desc}`), остальные ключи шапки читаются только при
+    `skill_view`. Линза Hermes эти поля пропускает молча, но лишь внутри
+    `metadata`: ключи ВЕРХНЕГО уровня она считает чужими и выдаёт WARN
+    (замерено: `creator` сверху = 3 warning, в `metadata.hermes` = 0).
+
+    `created` пишется один раз: повторная установка его не перезаписывает, иначе
+    «когда скилл появился» теряется и остаётся только последнее обновление.
+    """
+    md = staging / "SKILL.md"
+    if not md.is_file():
+        return {"changed": False}
+    try:
+        text = md.read_text(encoding="utf-8")
+    except OSError:
+        return {"changed": False}
+    m = re.match(r"^---\r?\n(.*?)\r?\n---", text, re.S)
+    if not m:
+        return {"changed": False}
+    head = m.group(1)
+    nl = "\r\n" if "\r\n" in text else "\n"
+    lines = head.splitlines()
+    when = now or time.strftime("%Y-%m-%d %H:%M")
+    stamp = {"creator": _STAMP_CREATOR, "created": when, "updated": when}
+
+    herm = next((i for i, l in enumerate(lines) if re.match(r"^\s+hermes:\s*$", l)), -1)
+    if herm >= 0:
+        base = re.match(r"^(\s+)", lines[herm]).group(1)
+        inner = base + "  "
+        end = len(lines)
+        for j in range(herm + 1, len(lines)):
+            if lines[j].strip() and not lines[j].startswith(inner):
+                end = j
+                break
+        block = lines[herm + 1:end]
+        for key, val in stamp.items():
+            at = next((k for k, l in enumerate(block)
+                       if re.match(r"^" + re.escape(inner) + key + r":", l)), -1)
+            if at < 0:
+                block.append(f"{inner}{key}: {val}")
+            elif key != "created":          # дату создания не переписываем
+                block[at] = f"{inner}{key}: {val}"
+        new_lines = lines[:herm + 1] + block + lines[end:]
+    else:
+        mi = next((i for i, l in enumerate(lines) if re.match(r"^metadata:\s*$", l)), -1)
+        if mi < 0 and any(re.match(r"^metadata:\s*\S", l) for l in lines):
+            # `metadata:` записан inline - текстовой правкой его не расширить,
+            # а второй такой ключ YAML не примет. Лучше не трогать, чем испортить.
+            return {"changed": False, "error": "metadata записан не блоком"}
+        fresh = ["metadata:", "  hermes:"] + [f"    {k}: {v}" for k, v in stamp.items()]
+        new_lines = lines[:mi] + fresh + lines[mi + 1:] if mi >= 0 else lines + fresh
+
+    new_head = nl.join(new_lines)
+    if new_head == head:
+        return {"changed": False}
+    md.write_text(text[:m.start(1)] + new_head + text[m.end(1):], encoding="utf-8")
+    # Отчитываемся ФАКТИЧЕСКИМ содержимым шапки, а не тем, что собирались записать:
+    # `created` при повторной установке остаётся прежним, и врать про «только что
+    # поставили дату создания» нельзя - по этой метке судят о возрасте скилла.
+    got = dict(re.findall(r"^\s+(creator|created|updated):\s*(.+?)\s*$", new_head, re.M))
+    return {"changed": True, **{k: got.get(k, v) for k, v in stamp.items()}}
+
+
 def _draft_age_days(info: dict) -> float:
     """Сколько дней черновик лежит без дела.
 
@@ -1013,6 +1097,8 @@ def _plan_of(staging: Path, target: Path) -> dict:
     added, overwrite, same = [], [], []
     for src in sorted(p for p in staging.rglob("*") if p.is_file()):
         rel = src.relative_to(staging).as_posix()
+        if _is_service_file(rel):       # рабочая тетрадь ядра, а не файл скилла
+            continue
         dst = target / rel
         if not dst.is_file():
             added.append(rel)
@@ -1441,7 +1527,8 @@ def do_install(name: str, cat: str = "", confirm: bool = False,
     if wanted == "create" and target_exists:
         wanted = "append"
 
-    files = sorted(p for p in staging.rglob("*") if p.is_file())
+    files = sorted(p for p in staging.rglob("*") if p.is_file()
+                   and not _is_service_file(p.relative_to(staging).as_posix()))
     total = sum(p.stat().st_size for p in files)
     skill_md = staging / "SKILL.md"
     plan = _plan_of(staging, target)
@@ -1502,12 +1589,14 @@ def do_install(name: str, cat: str = "", confirm: bool = False,
     # skills/<категория>/<имя>/ разъезжается с `name:` внутри, и Hermes зовёт скилл
     # чужим именем (в списке одно, в промпте другое).
     retitle = _retitle_skill_md(staging, skill)
+    stamp = _stamp_hermes_meta(staging)
 
+    skip = shutil.ignore_patterns(*sorted(_SERVICE_FILES))
     wrote: list[str] = []
     if wanted == "replace":
         if target.exists():
             shutil.rmtree(target)
-        shutil.copytree(staging, target, dirs_exist_ok=True)
+        shutil.copytree(staging, target, dirs_exist_ok=True, ignore=skip)
         wrote = sorted(p.relative_to(staging).as_posix() for p in files)
     elif wanted == "append":
         for rel in plan["added"]:
@@ -1522,7 +1611,7 @@ def do_install(name: str, cat: str = "", confirm: bool = False,
                 shutil.copy2(staging / rel, dst)
                 wrote.append(rel)
     else:                                             # create
-        shutil.copytree(staging, target, dirs_exist_ok=True)
+        shutil.copytree(staging, target, dirs_exist_ok=True, ignore=skip)
         wrote = sorted(p.relative_to(staging).as_posix() for p in files)
 
     # Описание категории пишем только там, где его ещё нет: чужой текст не
@@ -1551,6 +1640,7 @@ def do_install(name: str, cat: str = "", confirm: bool = False,
             "journal": journal,
             "installed_mark": installed_mark,
             "retitled": retitle,
+            "stamped": stamp,
             "validation": validation,
             "category_desc_written": desc_written,
             "category_desc": read_category_desc(skills_root(), category),

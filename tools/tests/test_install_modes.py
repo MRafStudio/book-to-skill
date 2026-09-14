@@ -125,8 +125,39 @@ if latest:
 print("\n=== 8. auto на существующей цели — должен выбрать append, не create ===")
 show("auto", api.do_install("_probe", "software-development"))
 
-print("\n=== 9. чистка песочницы ===")
+print("\n=== 9. служебный файл ядра и метка плагина ===")
+fails: list[str] = []
+(probe / "merge-plan.json").write_text('{"chapters": []}', encoding="utf-8")
+# Сценарий 6 намеренно стёр шапку черновика (проверяли --no-overwrite): возвращаем её,
+# иначе метить нечего и проверка метки ничего не значит.
+(probe / "SKILL.md").write_text(
+    '---\nname: _probe\ndescription: "Use when testing b2s install modes."\n---\n\n'
+    "# _probe\n\nновая версия индекса\n", encoding="utf-8")
+
+def ok(name, cond, detail=""):
+    if not cond:
+        fails.append(name)
+    print(("  OK   " if cond else "  FAIL ") + name + (f" - {detail}" if detail else ""))
+
+out = api.do_install("_probe", "software-development", confirm=True, mode="replace")
+ok("служебный merge-plan.json в профиль не уехал",
+   (probe / "merge-plan.json").is_file() and not (target / "merge-plan.json").exists(),
+   str(target))
+ok("служебный файл не в списке записанного",
+   "merge-plan.json" not in (out.get("wrote") or []))
+head = (target / "SKILL.md").read_text(encoding="utf-8")
+ok("в шапке скилла стоит метка плагина",
+   "creator: BookToSkill" in head and "created: " in head and "updated: " in head,
+   head[:240].replace(chr(13), "").replace("\n", " | "))
+ok("метка внутри metadata.hermes",
+   "  hermes:" in head and "    creator: BookToSkill" in head, head[:240].replace("\n", " | "))
+
+print("\n=== 10. чистка песочницы ===")
 shutil.rmtree(probe, ignore_errors=True)
 shutil.rmtree(FAKE, ignore_errors=True)
 shutil.rmtree(REPO / "backups", ignore_errors=True)
 print("убрано:", probe, FAKE, REPO / "backups")
+if fails:
+    print(f"\nпровалов: {len(fails)} - {fails}")
+    sys.exit(1)
+print("\nпровалов: 0")
