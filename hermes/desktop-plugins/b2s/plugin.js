@@ -158,14 +158,18 @@ const CUT = {
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap'
 }
-const Ell = (text, cls) => ({
+const Ell = (text, cls, tip) => ({
   className: cls ? 'truncate ' + cls : 'truncate',
   style: CUT,
-  title: String(text),
+  /* `tip` — что сказать в нативном тултипе. По умолчанию это сам текст (у прозы и
+     подписей название и есть смысл), а у КНОПОК подставляется действие: наведение
+     обязано отвечать «что будет, если нажму», а не перечитывать саму подпись. */
+  title: String(tip == null ? text : tip),
   children: text
 })
-/* Готовая обрезаемая подпись — для мест, где нужен элемент (внутри кнопок). */
-const cutSpan = (text, cls) => jsx('span', Ell(text, cls))
+/* Готовая обрезаемая подпись — для мест, где нужен элемент (внутри кнопок).
+   Третий аргумент — тултип: подпись кнопки и её описание — разные вещи. */
+const cutSpan = (text, cls, tip) => jsx('span', Ell(text, cls, tip))
 
 /* Кнопка SDK изнутри — `inline-flex shrink-0 whitespace-nowrap`, и `shrink-0`
    из её базового класса не перебить классовым `min-w-0`: оба класса живут в
@@ -1237,6 +1241,30 @@ function B2SPane({ ctx }) {
      бледно-жёлтой, чтобы её не путали с зелёными шагами, которые меняют файлы. */
   const REVIEW_YELLOW = '#facc15'
   const REVIEW_BG = 'color-mix(in srgb, ' + REVIEW_YELLOW + ' 22%, color-mix(in srgb, ' + BASE + ' 4%, transparent))'
+  /* Тултипы кнопок: при наведении панель рассказывает, ЧТО СДЕЛАЕТ кнопка, а не
+     повторяет её подпись (владелец: «выдавать краткое описание того, что кнопки
+     будут делать, вместо названия кнопок»). Формулировка — от лица действия, с
+     честной ценой там, где шаг платный, и с «без записи / только чтение» там,
+     где это неочевидно. */
+  const TIP = {
+    srcAnalyze: 'Скачать источник, вычистить мусор и посчитать метрики — прямо в ядро, без чата и без LLM',
+    srcRerun: 'Разобрать источник заново: файлы скилла не пишутся, в профиль ничего не уходит',
+    srcAnyway: 'Разобрать как страницу, даже если имя файла похоже на markdown',
+    retry: 'Повторить разбор источника в том же режиме и с той же стратегией',
+    showText: 'Показать очищенный текст источника целиком — только чтение, ничего не пишет',
+    draft: 'Задание агенту в чате: написать черновик скилла в staging. В профиль ничего не пишется',
+    redraft: 'Перегенерировать черновик с учётом твоих замечаний — шаг платный, счёт растёт с каждой итерацией',
+    review: 'Разобрать черновик и выписать правки списком: файлы не меняются, платит только LLM в чате',
+    reviewOff: 'Сначала сделай черновик — разбирать пока нечего',
+    plan: 'Сравнить главы черновика с соседними скиллами: что слить, что переписать — без записи и без LLM',
+    planSend: 'Отдать раскладку агенту в чат: пусть решит, что слить и что переписать',
+    draftRefresh: 'Перечитать staging с диска: список файлов и их объём',
+    stagingCheck: 'Проверить, не появились ли файлы в staging — только чтение',
+    skillMd: 'Показать текст SKILL.md из черновика',
+    openFile: 'Показать текст файла черновика: ',
+    catDesc: 'Задание агенту в чате: написать description категории — файл скилла не трогается',
+    catDescFix: 'Задание агенту в чате: обернуть готовый текст категории в frontmatter, тело сохранится'
+  }
   /* Чипса категории — «суть категории», а не служебная подпись. Описание берём
      ровно то, что читает Hermes: `description` из DESCRIPTION.md уезжает в промпт
      рядом с именем категории (agent/prompt_builder.py:_read_category_descriptions).
@@ -1298,8 +1326,9 @@ function B2SPane({ ctx }) {
   /* Подпись в кнопке живёт в своём span.truncate: многоточие умеет только блочный
      бокс, а у flex-контейнера (какова кнопка) `text-overflow` не срабатывает.
      Общее правило подписей — у `Ell` выше. */
-  const fitLabel = (label) => cutSpan(label)
-  const chipAction = (label, onClick, disabled, tone) => {
+  /* Подпись кнопки вместе с её тултипом: fitLabel(label, TIP.key). */
+  const fitLabel = (label, tip) => cutSpan(label, undefined, tip)
+  const chipAction = (label, onClick, disabled, tone, tip) => {
     const fix = tone === 'fix'
     return jsx('div', {
       'data-glass-raised': '',
@@ -1312,7 +1341,7 @@ function B2SPane({ ctx }) {
         onClick,
         className: CHIP_LINK + (fix ? ' font-medium' : ''),
         style: fix ? Object.assign({}, FIX_TEXT, CHIP_FIT) : CHIP_FIT,
-        children: fitLabel(label)
+        children: fitLabel(label, tip)
       })
     })
   }
@@ -1394,7 +1423,7 @@ function B2SPane({ ctx }) {
                 ] }),
                 jsx('div', { className: 'pt-1', children:
                   chipAction('🩹 Починить файл — обернуть текст в frontmatter',
-                    () => sendDesc('desc-fix'), busy === 'desc-fix', 'fix') })
+                    () => sendDesc('desc-fix'), busy === 'desc-fix', 'fix', TIP.catDescFix) })
               ]
             : catIsNew
               ? [
@@ -1407,7 +1436,7 @@ function B2SPane({ ctx }) {
                   ] }),
                   jsx('div', { className: 'pt-1', children:
                     chipAction('✍ Написать описание категории',
-                      () => sendDesc('desc'), busy === 'desc', 'fix') })
+                      () => sendDesc('desc'), busy === 'desc', 'fix', TIP.catDesc) })
                 ]
               : [
                   jsx('div', { className: GROUP_LEAD, style: GROUP_CAP, children: [
@@ -1423,7 +1452,7 @@ function B2SPane({ ctx }) {
                   ] }),
                   jsx('div', { className: 'pt-1', children:
                     chipAction('✍ Написать описание категории',
-                      () => sendDesc('desc'), busy === 'desc', 'fix') })
+                      () => sendDesc('desc'), busy === 'desc', 'fix', TIP.catDesc) })
                 ]
       })
     ]
@@ -1522,7 +1551,7 @@ function B2SPane({ ctx }) {
               onClick: () => loadText(0),
               className: 'h-6 justify-start text-[0.625rem]',
               style: CHIP_FIT,
-              children: fitLabel('показать весь текст')
+              children: fitLabel('показать весь текст', TIP.showText)
             })
           })
         : null,
@@ -1603,8 +1632,8 @@ function B2SPane({ ctx }) {
                 onClick: () => loadDraftText(r.rel),
                 className: 'h-6 justify-start text-[0.625rem]',
                 style: CHIP_FIT,
-                title: r.label,
-                children: cutSpan((draftFile === r.rel ? '▸ ' : '') + r.label)
+                title: TIP.openFile + r.label,
+                children: cutSpan((draftFile === r.rel ? '▸ ' : '') + r.label, undefined, TIP.openFile + r.label)
               }, r.rel))
             }),
             jsx('div', {
@@ -1617,7 +1646,7 @@ function B2SPane({ ctx }) {
                   onClick: () => loadDraft(),
                   className: 'h-6 text-[0.625rem]',
                   style: CHIP_FIT,
-                  children: fitLabel(draftBusy ? '⟳ читаю staging…' : '⟳ обновить с диска')
+                  children: fitLabel(draftBusy ? '⟳ читаю staging…' : '⟳ обновить с диска', TIP.draftRefresh)
                 }),
                 jsx(Button, {
                   size: 'sm',
@@ -1626,7 +1655,7 @@ function B2SPane({ ctx }) {
                   onClick: () => loadDraftText(draftFile || 'SKILL.md'),
                   className: 'h-6 text-[0.625rem]',
                   style: CHIP_FIT,
-                  children: fitLabel('📄 SKILL.md')
+                  children: fitLabel('📄 SKILL.md', TIP.skillMd)
                 })
               ]
             }),
@@ -1667,7 +1696,7 @@ function B2SPane({ ctx }) {
                 onClick: () => loadDraft(),
                 className: 'h-6 text-[0.625rem]',
                 style: CHIP_FIT,
-                children: fitLabel(draftBusy ? '⟳ читаю staging…' : '⟳ проверить staging')
+                children: fitLabel(draftBusy ? '⟳ читаю staging…' : '⟳ проверить staging', TIP.stagingCheck)
               })
             }),
             jsx('div', {
@@ -1774,7 +1803,7 @@ function B2SPane({ ctx }) {
                 onClick: () => sendIntent('plan'),
                 className: 'h-6 text-[0.625rem]',
                 style: CHIP_FIT,
-                children: fitLabel('↗ Отправить агенту: решить, что слить')
+                children: fitLabel('↗ Отправить агенту: решить, что слить', TIP.planSend)
               })
             ]
           }),
@@ -1803,11 +1832,12 @@ function B2SPane({ ctx }) {
           variant: 'ghost',
           disabled: chapterBusy,
           onClick: runPlan,
+          title: TIP.plan,
           className: 'h-7 justify-start text-xs text-(--ui-text-primary)',
           style: BTN_FIT,
           children: [
             jsx('span', { 'aria-hidden': true, style: { flexShrink: 0 }, children: '🧩' }),
-            cutSpan('План по главам: что слить, что переписать')
+            cutSpan('План по главам: что слить, что переписать', undefined, TIP.plan)
           ]
         })
       }),
@@ -2195,11 +2225,14 @@ function B2SPane({ ctx }) {
                   variant: 'ghost',
                   disabled: !!busy,
                   onClick: runRerun,
+                  title: mdSrc ? TIP.srcAnyway : (analyzed ? TIP.srcRerun : TIP.srcAnalyze),
                   className: 'h-7 justify-start text-xs text-(--ui-text-primary)',
                   style: BTN_FIT,
                   children: [
                     jsx('span', { 'aria-hidden': true, style: { flexShrink: 0 }, children: '🔎' }),
-                    cutSpan(mdSrc ? 'Прогнать всё равно' : (analyzed ? 'Прогнать заново' : 'Анализ источника и очистка'))
+                    cutSpan(mdSrc ? 'Прогнать всё равно' : (analyzed ? 'Прогнать заново' : 'Анализ источника и очистка'),
+                      undefined,
+                      mdSrc ? TIP.srcAnyway : (analyzed ? TIP.srcRerun : TIP.srcAnalyze))
                   ]
                 })
               }),
@@ -2211,7 +2244,7 @@ function B2SPane({ ctx }) {
                     onClick: runRerun,
                     className: 'h-7 text-[0.625rem]',
                     style: Object.assign({ backgroundColor: REVIEW_BG }, BTN_FIT),
-                    children: cutSpan('⟳ Повторить')
+                    children: cutSpan('⟳ Повторить', undefined, TIP.retry)
                   })
                 : null
             ]
@@ -2261,30 +2294,41 @@ function B2SPane({ ctx }) {
                   variant: 'ghost',
                   disabled: !!busy,
                   onClick: () => sendIntent('draft'),
+                  title: hasDraft ? TIP.redraft : TIP.draft,
                   className: 'h-7 justify-start text-xs text-(--ui-text-primary)',
                   style: BTN_FIT,
                   children: [
                     jsx('span', { 'aria-hidden': true, style: { flexShrink: 0 }, children: '✎' }),
-                    cutSpan(hasDraft ? 'Перегенерировать с учётом замечаний' : 'Сделать черновик')
+                    cutSpan(hasDraft ? 'Перегенерировать с учётом замечаний' : 'Сделать черновик',
+                      undefined,
+                      hasDraft ? TIP.redraft : TIP.draft)
                   ]
                 })
               }),
               jsx(Button, {
                 size: 'sm',
                 variant: 'ghost',
-                disabled: !!busy,
+                /* Без черновика гаснет: критиковать нечего, а задание в чат — платное.
+                   Причина не молчит — она в тултипе и в подписи под рядом кнопок. */
+                disabled: !!busy || !hasDraft,
                 onClick: () => sendIntent('review'),
+                title: hasDraft ? TIP.review : TIP.reviewOff,
                 /* Кегль и цвет — как у соседей по ряду («Перегенерировать», «План по
                    главам»): свой 0.625rem читался «другим центрированием», хотя
                    flex-центр совпадал (замер: 0.00 px у обоих) — мелкая строка в
                    28 px кнопке просто выглядит иначе. Один кегль в ряду — одно лицо. */
                 className: 'h-7 justify-start text-xs text-(--ui-text-primary)',
                 style: Object.assign({ backgroundColor: REVIEW_BG }, BTN_FIT),
-                children: cutSpan('Критика и список правок')
+                children: [
+                  jsx('span', { 'aria-hidden': true, style: { flexShrink: 0 }, children: '🔍' }),
+                  cutSpan('Критика и список правок', undefined, hasDraft ? TIP.review : TIP.reviewOff)
+                ]
               })
             ]
           }),
-          jsx('span', Ell('Правки к черновику и повторный прогон считаются заново: счёт растёт с числом итераций.',
+          jsx('span', Ell(hasDraft
+            ? 'Правки к черновику и повторный прогон считаются заново: счёт растёт с числом итераций.'
+            : '«Критика» включится, когда в staging появится черновик — его делает кнопка «✎» выше (она не гаснет).',
             'pl-1 text-[0.625rem] leading-snug text-(--ui-text-tertiary)')),
           mdSrc && !hasDraft
             ? jsx('span', Ell('источник — готовый markdown: текст уже добыт шагом 1, анализ (блок 2) не нужен, черновик можно делать сразу.',
