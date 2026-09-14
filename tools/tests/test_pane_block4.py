@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -112,10 +113,12 @@ const out = {
   totals: planTotalRows(planOut),
   files_empty: planFileRows({ plan: {} }),
   cap: PREVIEW_CAP,
-  none: labelOf(null),
-  create: labelOf({ mode: 'create' }),
-  append: labelOf({ mode: 'append' }),
-  replace: labelOf({ mode: 'replace' })
+  none: labelOf(null, null),
+  create: labelOf(null, { mode: 'create' }),
+  append: labelOf(null, { mode: 'append' }),
+  replace: labelOf(null, { mode: 'replace' }),
+  installed_only: labelOf({ target: 'skills/rk7xml-interface/introduction' }, null),
+  installed_with_plan: labelOf({ target: 'skills/rk7xml-interface/introduction' }, { mode: 'replace' })
 }
 console.log(JSON.stringify(out))
 """
@@ -132,7 +135,10 @@ def main() -> int:
         group_cap_src = "const GROUP_CAP = " + cut_braces(src, "const GROUP_CAP =")
         zone_cap_src = "const ZONE_CAP = " + cut_braces(src, "const ZONE_CAP =")
         cap_src = "const PREVIEW_CAP = " + cut_braces(src, "const PREVIEW_CAP =")
-        i = src.index("label: preview")
+        m = re.search(r"label: (?:installed|preview)", src)
+        if m is None:
+            raise ValueError("не найдена подпись кнопки блока 4")
+        i = m.start()
         j = src.index("onClick: () => runInstall", i)
         label_expr = src[i + len("label: "):j].strip().rstrip(",").strip()
     except ValueError as exc:
@@ -151,7 +157,7 @@ def main() -> int:
         return 1
     body = (group_cap_src + "\n" + zone_cap_src + "\n" + cap_src + "\n" +
             plan_files_fn + "\n" + plan_totals_fn +
-            "\nconst labelOf = (preview) => (" + label_expr + ")\n")
+            "\nconst labelOf = (installed, preview) => (" + label_expr + ")\n")
     with tempfile.TemporaryDirectory(prefix="b2s-pane-b4-") as tmp:
         tmpd = Path(tmp)
         (tmpd / "b4.js").write_text(body, encoding="utf-8")
@@ -178,6 +184,33 @@ def main() -> int:
           out["replace"] == "Подтвердить ЗАМЕНУ", f"{out['replace']!r}")
     check("прежних подписей «Дополнить скилл» / «Заменить скилл» в панели нет",
           "Дополнить скилл" not in src and "Заменить скилл" not in src)
+
+    # ── 2b) успешная установка гасит кнопку и говорит об этом словами ───────
+    # Владелец: «после того, как в 4 блоке нажал установить и скилл успешно
+    # установился, кнопка "Установить" остаётся активной - надо бы сделать
+    # кнопку неактивной и написать на ней "Успешно установлен"».
+    check("после успешной установки кнопка говорит «Успешно установлен»",
+          out["installed_only"] == "Успешно установлен", f"{out['installed_only']!r}")
+    check("оставшийся план не перебивает «Успешно установлен»",
+          out["installed_with_plan"] == "Успешно установлен",
+          f"{out['installed_with_plan']!r} - иначе второй клик предложит снести каталог заново")
+    check("кнопка гаснет, пока цель установлена (disabled: … || !!installed)",
+          re.search(r"disabled:\s*!!busy \|\| !hasDraft \|\| !!installed", src) is not None,
+          "иначе повторный клик пишет в skills/… ещё раз")
+    check("факт установки ставится только в ветке успеха /install",
+          "setInstalled({ target: out.target" in src and "} else if (out.ok) {" in src)
+    check("шапка блока 4 называет каталог установки, а не «подтверди запись»",
+          "установлен в ' + installed.target" in src and
+          "state: installed" in src)
+    check("под кнопкой сказано, что второй клик не нужен",
+          "второй клик не нужен" in src)
+    check("dropPreview сбрасывает и план, и факт установки (правка входов возвращает кнопку)",
+          re.search(r"const dropPreview = \(\) => \{ setPreview\(null\); setInstalled\(null\) \}", src) is not None,
+          "иначе кнопка «Успешно установлен» залипнет на новый скилл")
+    check("установка сбрасывает ожидание черновика (watchDraft не тянет старое)",
+          "setInstalled(null)" in src)
+    check("тултип установленной кнопки называет цель",
+          "'скилл уже записан в ' + installed.target" in src)
 
     # ── 3) окно плана: размер блока 2 + грип ───────────────────────────────
     cap = out["cap"]
@@ -279,7 +312,7 @@ def main() -> int:
     check("тултип «Установить» говорит, куда пишет второй клик",
           "'второй клик пишет в skills/<категория>/<имя>/'" in src)
     check("dropPreview определён",
-          "const dropPreview = () => setPreview(null)" in src)
+          "const dropPreview = () => { setPreview(null); setInstalled(null) }" in src)
     actions = {
         "sendIntent (черновик, критика, описание категории)": "const sendIntent = async (kind)",
         "runRerun (разбор источника)": "const runRerun = async ()",

@@ -57,8 +57,8 @@ RUNNER = r"""
 const jsx = (t, p) => ({ type: t, props: p || {} })
 const jsxs = (t, p) => ({ type: t, props: p || {} })
 const api = new Function('jsx', 'jsxs', process.env.MD_SRC +
-  '\n; return { MD_EXT, stripQuery, isRemoteSrc, srcIsMarkdown, skillsInCat }')(jsx, jsxs)
-const { isRemoteSrc, srcIsMarkdown, skillsInCat } = api
+  '\n; return { MD_EXT, stripQuery, isRemoteSrc, srcIsMarkdown, skillsInCat, analysisSigOf }')(jsx, jsxs)
+const { isRemoteSrc, srcIsMarkdown, skillsInCat, analysisSigOf } = api
 const skillFixtures = [
   { name: 'swift-notes', category: 'apple', chapters: 3, files: 9 },
   { name: 'ios-hig', category: 'apple', chapters: 5, files: 14 },
@@ -95,7 +95,22 @@ console.log(JSON.stringify({
   cat_none: skillsInCat(skillFixtures, 'nope').map((s) => s.name),
   cat_loose: skillsInCat(skillFixtures, '').map((s) => s.name),
   cat_empty: skillsInCat(null, 'apple').length,
-  cat_sorted: skillsInCat(skillFixtures, 'apple').map((s) => s.name).join(',')
+  cat_sorted: skillsInCat(skillFixtures, 'apple').map((s) => s.name).join(','),
+  sig_same: analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical', name: 'a', cat: 'c' }) ===
+            analysisSigOf({ src: ' u ', strat: 'auto', mode: 'technical', name: 'a', cat: 'c' }),
+  sig_src: analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical', name: 'a', cat: 'c' }) !==
+           analysisSigOf({ src: 'v', strat: 'auto', mode: 'technical', name: 'a', cat: 'c' }),
+  sig_name: analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical', name: 'a', cat: 'c' }) !==
+            analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical', name: 'b', cat: 'c' }),
+  sig_mode: analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical', name: 'a', cat: 'c' }) !==
+            analysisSigOf({ src: 'u', strat: 'auto', mode: 'study', name: 'a', cat: 'c' }),
+  sig_cat: analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical', name: 'a', cat: 'c' }) !==
+           analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical', name: 'a', cat: 'd' }),
+  sig_strat: analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical', name: 'a', cat: 'c' }) !==
+             analysisSigOf({ src: 'u', strat: 'html-cascade', mode: 'technical', name: 'a', cat: 'c' }),
+  sig_empty: analysisSigOf({}) === analysisSigOf({ src: '', strat: '', mode: '', name: '', cat: '' }),
+  sig_glue: analysisSigOf({ src: 'a', strat: 'b', mode: 'c', name: 'd', cat: 'e' }) !==
+            analysisSigOf({ src: 'a\u0001b', strat: 'c', mode: 'd', name: 'e', cat: '' })
 }))
 """
 
@@ -109,6 +124,7 @@ def main() -> int:
     # 1) живые функции детекта — в node
     try:
         md_src = (src[src.index("const MD_EXT"):src.index("const fmtInt")] +
+                  src[src.index("/** Отпечаток ВХОДОВ разбора"):src.index("/** Скиллы ВЫБРАННОЙ категории")] +
                   src[src.index("function skillsInCat"):src.index("/** Заголовок свёрнутого спойлера")])
     except ValueError as exc:
         check("детект markdown извлекается из plugin.js", False, str(exc))
@@ -173,6 +189,34 @@ def main() -> int:
           "loadSkills(); setNameOpen((v) => !v)" in src)
     check("ввод имени остался свободным (Input не превратился в Select)",
           "onChange: (e) => setName(e.target.value)" in src)
+
+    # 1c) отпечаток ВХОДОВ разбора: смена имени/режима/категории обесценивает отчёт
+    # (владелец: «в блоке 3 параметры кнопок сбрасываются при изменениях в блоке 1 —
+    # схожее надо выполнить и в блоке 2»). Отчёт про другой набор входов не свежий.
+    check("отпечаток входов разбора устойчив к пробелам (u == ' u ')",
+          out["sig_same"] is True, f"{out['sig_same']!r}")
+    check("смена источника меняет отпечаток (отчёт прошлого прогона не свежий)",
+          out["sig_src"] is True, f"{out['sig_src']!r}")
+    check("смена имени скилла меняет отпечаток",
+          out["sig_name"] is True, f"{out['sig_name']!r}")
+    check("смена режима и стратегии меняет отпечаток",
+          out["sig_mode"] is True and out["sig_strat"] is True,
+          f"mode={out['sig_mode']!r}, strat={out['sig_strat']!r}")
+    check("смена категории меняет отпечаток",
+          out["sig_cat"] is True, f"{out['sig_cat']!r}")
+    check("пустые входы дают один и тот же отпечаток (нет «вечного» отчёта)",
+          out["sig_empty"] is True, f"{out['sig_empty']!r}")
+    check("разделитель не даёт склейки двух наборов в один отпечаток",
+          out["sig_glue"] is True, f"{out['sig_glue']!r}")
+    check("analyzed требует совпадения отпечатка (fetchedSig === curSig)",
+          "fetchedSig !== '' && fetchedSig === curSig" in src and
+          "setFetchedSig(analysisSigOf({ src, strat, mode, name, cat }))" in src,
+          "шаг 2 может пустить к черновику по отчёту от других входов")
+    check("устаревший отчёт назван словами и в шапке блока, и в спойлере",
+          "staleReport" in src and "от прежних входов" in src and
+          "отчёт ниже - от прежних входов, а не от этих" in src)
+    check("кнопка шага 1 при работе говорит «Идёт разбор…», а не обещает результат",
+          "busy === 'rerun' ? 'Идёт разбор…'" in src and "busy === 'rerun' ? '⏳'" in src)
 
     # 2) четыре блока и футер «ДАЛЕЕ» в каждом
     blocks = re.findall(r"jsx\(PaneBlock, \{\n\s+n: (\d)", src)

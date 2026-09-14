@@ -137,6 +137,18 @@ function chapterRows(out) {
   return rows
 }
 
+/** Отпечаток ВХОДОВ разбора источника. Разбор зависит не только от URL: стратегия,
+ *  режим, имя и категория едут в ядро тем же запросом, поэтому «отчёт свежий» - это
+ *  совпадение ВСЕГО набора. Чистая функция: проверяется в node без React.
+ *  Разделитель \u0001: имена файлов/URL его не содержат, склеить два разных набора
+ *  в один отпечаток нельзя. */
+function analysisSigOf(f) {
+  const o = f || {}
+  return [o.src, o.strat, o.mode, o.name, o.cat]
+    .map((v) => String(v == null ? '' : v).trim())
+    .join('\u0001')
+}
+
 /** Скиллы ВЫБРАННОЙ категории — по алфавиту.
  *
  * Список имён обязан подчиняться категории: иначе панель подсказывает имена из чужих
@@ -532,6 +544,11 @@ function B2SPane({ ctx }) {
   const [coreInfo, setCoreInfo] = useState(null) // тело /health: staging, python, черновики — в подсказке бейджа
   const [report, setReport] = useState(null)     // последний прогон из /state
   const [preview, setPreview] = useState(null)   // предпросмотр установки (без записи)
+  /* Успешная запись: кнопка гаснет и говорит об этом словами. Владелец: «по успешному
+     завершению установки кнопка должна быть неактивна и говорить "Успешно установлен"»,
+     иначе она предлагает второй клик по уже выполненному действию. Сбрасывается тем же
+     `dropPreview`, что и план: правка входов или черновика снова делает запись осмысленной. */
+  const [installed, setInstalled] = useState(null)
   const [chapterPlan, setChapterPlan] = useState(null) // раскладка по главам (ответ /plan)
   const [chapterBusy, setChapterBusy] = useState(false)
   const [text, setText] = useState('')           // очищенный текст источника — первый экран панели
@@ -585,9 +602,8 @@ function B2SPane({ ctx }) {
      обновится позже повторного клика в том же тике, а ref держит запрет сразу. */
   const busyRef = useRef(false)
   const [rerunErr, setRerunErr] = useState('')
-  /* Какой источник ядро УЖЕ разобрало. Отчёт про другой источник свежим не
-     считается — иначе черновик собрался бы по метрикам прошлого прогона. */
-  const [fetchedSrc, setFetchedSrc] = useState('')
+  /* Какой набор входов ядро УЖЕ разобрало (отпечаток, не только URL). */
+  const [fetchedSig, setFetchedSig] = useState('')
   const onlyB = (n) => setOpenB({ 1: n === 1, 2: n === 2, 3: n === 3, 4: n === 4 })
   const toggleB = (n) => setOpenB((cur) => Object.assign({}, cur, { [n]: !cur[n] }))
 
@@ -1074,7 +1090,7 @@ function B2SPane({ ctx }) {
       if (out.fetch_ok) {
         setTone('done')
         setStatus('источник разобран: ' + summaryOf(out))
-        setFetchedSrc(src)
+        setFetchedSig(analysisSigOf({ src, strat, mode, name, cat }))
         // Текст показываем сразу, из самого отчёта: он пришёл вместе с метриками.
         if (out.report && out.report.preview) {
           setText(out.report.preview)
@@ -1149,6 +1165,8 @@ function B2SPane({ ctx }) {
           'установлено: ' + out.target + (out.backup ? ' · бэкап: ' + out.backup : ' · бэкап не нужен (новая цель)') +
           (out.category_desc_written ? ' · описание категории записано' : '')
         )
+        /* Запись состоялась: кнопка гаснет и называет факт, а не предлагает второй клик. */
+        setInstalled({ target: out.target, name: String(name || '').trim(), cat })
         /* Профиль изменился прямо сейчас: перечитываем скиллы и категории, иначе
            свежепоставленный скилл и созданная категория видны только после
            переоткрытия панели (та же болезнь, что и с пропавшей `networking`). */
@@ -1171,7 +1189,7 @@ function B2SPane({ ctx }) {
      меняет. Владелец: «любое нажатие кнопок в блоках 1,2,3 — должны сбрасывать флаг
      этой кнопки в блоке 4 и скрывать поле предпросмотра». Иначе панель предлагает
      «Установить» по устаревшему плану. */
-  const dropPreview = () => setPreview(null)
+  const dropPreview = () => { setPreview(null); setInstalled(null) }
 
   /* План долива по главам. Файловый план (planBlock) говорит, ЧТО ляжет, но не
      отвечает, что слить со старыми главами, а что писать заново — для этого
@@ -1252,6 +1270,18 @@ function B2SPane({ ctx }) {
      иначе клик по кнопке выглядел бы как «ничего не происходит» (эту граблю
      ловили, когда статус жил под спойлером). */
   const headBits = headBitsOf({ report, src, tone, busy })
+
+  /* Отпечаток входов и «свежесть» отчёта. Считается здесь, а не рядом с кнопкой шага 1:
+     от этого зависит и подпись спойлера «Результат разбора» (он объявлен ниже), и переход
+     к черновику. Отчёт свежий только для ТОГО ЖЕ набора входов: правка в блоке 1 (источник,
+     стратегия, режим, имя, категория) обесценивает разбор, как `dropPreview`
+     обесценивает план в блоке 4. Иначе кнопка обещала бы «Прогнать заново» по отчёту
+     от другого источника, а черновик собрался бы по чужим метрикам. */
+  const trimSrc = (src || '').trim()
+  const mdSrc = srcIsMarkdown(trimSrc)
+  const curSig = analysisSigOf({ src: trimSrc, strat, mode, name, cat })
+  const analyzed = !!report && report.chars != null && fetchedSig !== '' && fetchedSig === curSig
+  const staleReport = !!report && !analyzed
 
   /* Контраст от темы без угадывания имени фонового токена: вуаль берём
      от ЦВЕТА ТЕКСТА темы. В тёмной теме текст светлый — блок выходит
@@ -1624,7 +1654,8 @@ function B2SPane({ ctx }) {
     children: [
       jsx('summary', {
         className: 'cursor-pointer select-none text-(--ui-text-secondary)',
-        children: jsx('span', Ell('📊 Результат разбора' + (headBits.length ? ' · ' + headBits.join(' · ') : ' - пока пусто')))
+        children: jsx('span', Ell('📊 Результат разбора' + (headBits.length ? ' · ' + headBits.join(' · ') : ' - пока пусто') +
+          (staleReport ? ' · от прежних входов' : '')))
       }),
 
       /* 2) сводка последнего прогона: стратегия-победитель, объём, путь к файлу */
@@ -2019,9 +2050,6 @@ function B2SPane({ ctx }) {
      Проверка дешёвая и на месте: не пускаем дальше, когда дальше нечего делать,
      и говорим причину подписью у кнопки (hint), а не молчанием. Никакого REST в
      самих проверках — только состояние панели. */
-  const trimSrc = (src || '').trim()
-  const mdSrc = srcIsMarkdown(trimSrc)
-  const analyzed = !!report && report.chars != null && fetchedSrc === trimSrc
   const hasDraft = !!(draft && draft.has_draft)
 
   /* Шаг 1 → 2 (или сразу 3, если источник — готовый markdown). Разбор запускаем
@@ -2356,20 +2384,28 @@ function B2SPane({ ctx }) {
         title: mdSrc ? 'Анализ MD файла' : 'Анализ источника',
         state: mdSrc
           ? 'пропущен: файл уже markdown'
-          : (analyzed ? 'готов - ' + (report && report.chars ? fmtInt(report.chars) + ' симв.' : 'отчёт есть') : (rerunErr ? 'сорвался' : 'ещё не запускался')),
-        tone: mdSrc ? 'skip' : (analyzed ? 'done' : (rerunErr ? 'bad' : null)),
+          : (busy === 'rerun'
+            ? 'разбираю прямо сейчас'
+            : (analyzed
+              ? 'готов - ' + (report && report.chars ? fmtInt(report.chars) + ' симв.' : 'отчёт есть')
+              : (staleReport ? 'отчёт от прежних входов - прогони снова' : (rerunErr ? 'сорвался' : 'ещё не запускался')))),
+        tone: mdSrc ? 'skip' : (busy === 'rerun' ? null : (analyzed ? 'done' : (rerunErr ? 'bad' : null))),
         open: !!openB[2],
         onToggle: () => toggleB(2),
         style: { backgroundColor: openB[2] ? BLOCK_BG : 'transparent' },
         hint: mdSrc
           ? 'markdown - уже текст: чистить нечего, метрики посмотреть можно'
-          : (analyzed ? 'источник разобран - можно к черновику' : 'скачать и вычистить текст: мимо чата, прямо в ядро'),
+          : (busy === 'rerun'
+            ? 'ядро читает источник прямо сейчас - мимо чата'
+            : (analyzed ? 'источник разобран - можно к черновику'
+              : (staleReport ? 'отчёт ниже - от прежних входов, а не от этих' : 'скачать и вычистить текст: мимо чата, прямо в ядро'))),
         foot: jsx(NextBtn, {
           label: 'ДАЛЕЕ →',
           onClick: next2,
           disabled: !!busy || !analyzed,
           fill: STEP_BG,
-          title: analyzed ? 'открыть черновик' : 'сначала прогони анализ источника'
+          title: analyzed ? 'открыть черновик'
+            : (staleReport ? 'входы изменились - прогони разбор заново' : 'сначала прогони анализ источника')
         }),
         children: [
           mdSrc
@@ -2387,14 +2423,20 @@ function B2SPane({ ctx }) {
                   variant: 'ghost',
                   disabled: !!busy,
                   onClick: runRerun,
-                  title: mdSrc ? TIP.srcAnyway : (analyzed ? TIP.srcRerun : TIP.srcAnalyze),
+                  title: mdSrc ? TIP.srcAnyway
+                    : (busy === 'rerun' ? 'ядро читает источник прямо сейчас - это python, мимо чата и без расхода LLM'
+                      : (analyzed ? TIP.srcRerun : TIP.srcAnalyze)),
                   className: 'h-7 justify-start text-xs text-(--ui-text-primary)',
                   style: BTN_FIT,
                   children: [
-                    jsx('span', { 'aria-hidden': true, style: { flexShrink: 0 }, children: '🔎' }),
-                    cutSpan(mdSrc ? 'Прогнать всё равно' : (analyzed ? 'Прогнать заново' : 'Анализ источника и очистка'),
+                    jsx('span', { 'aria-hidden': true, style: { flexShrink: 0 }, children: busy === 'rerun' ? '⏳' : '🔎' }),
+                    cutSpan(mdSrc ? 'Прогнать всё равно'
+                      : (busy === 'rerun' ? 'Идёт разбор…'
+                        : (analyzed ? 'Прогнать заново' : 'Анализ источника и очистка')),
                       undefined,
-                      mdSrc ? TIP.srcAnyway : (analyzed ? TIP.srcRerun : TIP.srcAnalyze))
+                      mdSrc ? TIP.srcAnyway
+                        : (busy === 'rerun' ? 'ядро читает источник прямо сейчас'
+                          : (analyzed ? TIP.srcRerun : TIP.srcAnalyze)))
                   ]
                 })
               }),
@@ -2505,10 +2547,12 @@ function B2SPane({ ctx }) {
       jsx(PaneBlock, {
         n: 4,
         title: 'Запись в профиль',
-        state: preview
-          ? (preview.mode === 'replace' ? 'подтверди ЗАМЕНУ' : 'подтверди запись')
-          : (existing ? 'долив в ' + (existing.category || 'без категории') : 'новый скилл'),
-        tone: preview ? 'done' : null,
+        state: installed
+          ? 'установлен в ' + installed.target
+          : (preview
+            ? (preview.mode === 'replace' ? 'подтверди ЗАМЕНУ' : 'подтверди запись')
+            : (existing ? 'долив в ' + (existing.category || 'без категории') : 'новый скилл')),
+        tone: (preview || installed) ? 'done' : null,
         open: !!openB[4],
         onToggle: () => toggleB(4),
         style: { backgroundColor: openB[4] ? BLOCK_BG : 'transparent' },
@@ -2521,26 +2565,32 @@ function B2SPane({ ctx }) {
              (ноль риска), и только после него — «Установить». Владелец: «до первого
              клика должна быть надпись "Предпросмотр", и только после его выполнения
              надпись меняется на "Установить"». Замена сносит каталог — у неё своя подпись. */
-          label: preview
-            ? (preview.mode === 'replace' ? 'Подтвердить ЗАМЕНУ' : 'Установить')
-            : 'Предпросмотр',
-          onClick: () => runInstall(!!preview),
-          disabled: !!busy || !hasDraft,
-          fill: hasDraft ? STEP_BG : undefined,
-          title: !hasDraft
-            ? 'сначала сделай черновик - записывать нечего'
+          label: installed
+            ? 'Успешно установлен'
             : (preview
+              ? (preview.mode === 'replace' ? 'Подтвердить ЗАМЕНУ' : 'Установить')
+              : 'Предпросмотр'),
+          onClick: () => runInstall(!!preview),
+          disabled: !!busy || !hasDraft || !!installed,
+          fill: hasDraft ? STEP_BG : undefined,
+          title: installed
+            ? 'скилл уже записан в ' + installed.target + ' - чтобы поставить заново, измени черновик или входы'
+            : (!hasDraft
+              ? 'сначала сделай черновик - записывать нечего'
+              : (preview
                 ? 'второй клик пишет в skills/<категория>/<имя>/'
-                : '«Предпросмотр» соберёт план и ничего не запишет - пишет только «Установить»')
+                : '«Предпросмотр» соберёт план и ничего не запишет - пишет только «Установить»'))
         }),
         children: [
-          jsx('span', Ell(preview
-            ? (preview.mode === 'replace'
-                ? 'второй клик = снести каталог и залить черновик целиком; бэкап снимается до записи'
-                : 'второй клик = записать план в skills/<категория>/<имя>/')
-            : (existing
-                ? 'имя занято → долив: новые главы лягут рядом, старое не тронем. План соберёт «Предпросмотр»'
-                : 'перенос в skills/ - сначала «Предпросмотр» без записи, пишет только «Установить». Любое действие в блоках 1-3 сбрасывает план'),
+          jsx('span', Ell(installed
+            ? 'записан в ' + installed.target + ' - второй клик не нужен: кнопка гаснет до правки черновика или входов'
+            : (preview
+                ? (preview.mode === 'replace'
+                  ? 'второй клик = снести каталог и залить черновик целиком; бэкап снимается до записи'
+                  : 'второй клик = записать план в skills/<категория>/<имя>/')
+                : (existing
+                  ? 'имя занято → долив: новые главы лягут рядом, старое не тронем. План соберёт «Предпросмотр»'
+                  : 'перенос в skills/ - сначала «Предпросмотр» без записи, пишет только «Установить». Любое действие в блоках 1-3 сбрасывает план')),
             'text-[0.625rem] leading-snug text-(--ui-text-tertiary)')),
           planBlock
         ]
