@@ -338,8 +338,13 @@ def main() -> int:
           "dropPreview()" in near,
           "dropPreview стоит вне ветки !silent — вотчер (раз в 4 с) стирал бы план сам")
 
-    check("смена входов руками (источник/имя/категория/режим/язык) сбрасывает план",
-          "useEffect(() => { setPreview(null) }, [src, name, cat, act, mode, lang, strat])" in src)
+    check("смена входов РАЗБОРА (источник/режим/язык) сбрасывает план",
+          "useEffect(() => { setPreview(null) }, [src, act, mode, lang, strat])" in src)
+    check("правка имени/категории план НЕ сбрасывает, а пересобирает его (тихо, через дебаунс)",
+          "setInstalled(null)" in src and "previewInstall(false) }, 700)" in src,
+          "один чих в имени - и план пропадал")
+    check("правка имени/категории НЕ трогает раскладку по главам",
+          "setChapterPlan(null) }, [name, cat, act])" not in src)
     check("в блоке 4 нет children: Ell( (ловушка React #31)", "children: Ell(" not in src)
 
     failed = [n for n, ok in checks if not ok]

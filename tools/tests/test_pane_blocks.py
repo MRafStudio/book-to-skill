@@ -96,21 +96,24 @@ console.log(JSON.stringify({
   cat_loose: skillsInCat(skillFixtures, '').map((s) => s.name),
   cat_empty: skillsInCat(null, 'apple').length,
   cat_sorted: skillsInCat(skillFixtures, 'apple').map((s) => s.name).join(','),
-  sig_same: analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical', name: 'a', cat: 'c' }) ===
-            analysisSigOf({ src: ' u ', strat: 'auto', mode: 'technical', name: 'a', cat: 'c' }),
-  sig_src: analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical', name: 'a', cat: 'c' }) !==
-           analysisSigOf({ src: 'v', strat: 'auto', mode: 'technical', name: 'a', cat: 'c' }),
-  sig_name: analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical', name: 'a', cat: 'c' }) !==
-            analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical', name: 'b', cat: 'c' }),
-  sig_mode: analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical', name: 'a', cat: 'c' }) !==
-            analysisSigOf({ src: 'u', strat: 'auto', mode: 'study', name: 'a', cat: 'c' }),
-  sig_cat: analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical', name: 'a', cat: 'c' }) !==
-           analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical', name: 'a', cat: 'd' }),
-  sig_strat: analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical', name: 'a', cat: 'c' }) !==
-             analysisSigOf({ src: 'u', strat: 'html-cascade', mode: 'technical', name: 'a', cat: 'c' }),
-  sig_empty: analysisSigOf({}) === analysisSigOf({ src: '', strat: '', mode: '', name: '', cat: '' }),
-  sig_glue: analysisSigOf({ src: 'a', strat: 'b', mode: 'c', name: 'd', cat: 'e' }) !==
-            analysisSigOf({ src: 'a\u0001b', strat: 'c', mode: 'd', name: 'e', cat: '' })
+  sig_same: analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical' }) ===
+            analysisSigOf({ src: ' u ', strat: 'auto', mode: 'technical' }),
+  sig_src: analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical' }) !==
+           analysisSigOf({ src: 'v', strat: 'auto', mode: 'technical' }),
+  /* Имя скилла и категория - реквизиты ЗАПИСИ, а не входы разбора: их правка не
+     имеет права объявлять живой отчёт устаревшим (владелец: «один чих - и заново
+     делай черновик»). */
+  sig_name_same: analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical', name: 'a', cat: 'c' }) ===
+                 analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical', name: 'b', cat: 'c' }),
+  sig_cat_same: analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical', name: 'a', cat: 'c' }) ===
+                analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical', name: 'a', cat: 'd' }),
+  sig_mode: analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical' }) !==
+            analysisSigOf({ src: 'u', strat: 'auto', mode: 'study' }),
+  sig_strat: analysisSigOf({ src: 'u', strat: 'auto', mode: 'technical' }) !==
+             analysisSigOf({ src: 'u', strat: 'html-cascade', mode: 'technical' }),
+  sig_empty: analysisSigOf({}) === analysisSigOf({ src: '', strat: '', mode: '' }),
+  sig_glue: analysisSigOf({ src: 'a', strat: 'b', mode: 'c' }) !==
+            analysisSigOf({ src: 'a\\u0001b', strat: 'c', mode: 'd' })
 }))
 """
 
@@ -218,28 +221,49 @@ def main() -> int:
           "if (nameWarn)" in src and
           "setStatus('блок 1 · имя скилла не может быть пустым!')" in src)
 
-    # 1c) отпечаток ВХОДОВ разбора: смена имени/режима/категории обесценивает отчёт
-    # (владелец: «в блоке 3 параметры кнопок сбрасываются при изменениях в блоке 1 —
-    # схожее надо выполнить и в блоке 2»). Отчёт про другой набор входов не свежий.
+    # 1c) отпечаток ВХОДОВ разбора: его меняют только входы РАЗБОРА - источник,
+    # стратегия, режим. Имя скилла и категория сюда НЕ входят: это реквизиты записи,
+    # и их правка не имеет права обесценивать живой отчёт (владелец: «один чих - и
+    # заново делай черновик»). Отчёт про другой набор входов не свежий.
     check("отпечаток входов разбора устойчив к пробелам (u == ' u ')",
           out["sig_same"] is True, f"{out['sig_same']!r}")
     check("смена источника меняет отпечаток (отчёт прошлого прогона не свежий)",
           out["sig_src"] is True, f"{out['sig_src']!r}")
-    check("смена имени скилла меняет отпечаток",
-          out["sig_name"] is True, f"{out['sig_name']!r}")
+    check("смена имени скилла отпечаток НЕ меняет (имя - реквизит записи)",
+          out["sig_name_same"] is True, f"{out['sig_name_same']!r}")
     check("смена режима и стратегии меняет отпечаток",
           out["sig_mode"] is True and out["sig_strat"] is True,
           f"mode={out['sig_mode']!r}, strat={out['sig_strat']!r}")
-    check("смена категории меняет отпечаток",
-          out["sig_cat"] is True, f"{out['sig_cat']!r}")
+    check("смена категории отпечаток НЕ меняет (категория - реквизит записи)",
+          out["sig_cat_same"] is True, f"{out['sig_cat_same']!r}")
     check("пустые входы дают один и тот же отпечаток (нет «вечного» отчёта)",
           out["sig_empty"] is True, f"{out['sig_empty']!r}")
     check("разделитель не даёт склейки двух наборов в один отпечаток",
           out["sig_glue"] is True, f"{out['sig_glue']!r}")
     check("analyzed требует совпадения отпечатка (fetchedSig === curSig)",
           "fetchedSig !== '' && fetchedSig === curSig" in src and
-          "setFetchedSig(analysisSigOf({ src, strat, mode, name, cat }))" in src,
+          "setFetchedSig(analysisSigOf({ src, strat, mode }))" in src,
           "шаг 2 может пустить к черновику по отчёту от других входов")
+
+    # 1d) черновик принадлежит ИСТОЧНИКУ, а не имени скилла: правка имени или
+    # категории не смеет ни терять черновик, ни гасить план блока 4, ни сбрасывать
+    # раскладку глав. Ключ черновика - слаг источника, он же едет агенту в интенте.
+    check("черновик читается по источнику (src едет в /draft)",
+          "body: { name: (name || '').trim(), src: (src || '').trim() }" in src)
+    _src = "src: (src || '').trim()"
+    check("план и установка знают источник (src едет в /plan и /install)",
+          src.count(_src) >= 4, "вхождений: " + str(src.count(_src)))
+    check("вотчер черновика ищет по источнику, а не по имени",
+          "watchDraft((name || '').trim(), (src || '').trim())" in src)
+    check("ключ черновика (слаг) едет в интенте агенту",
+          "push('slug', f.slug)" in src and "slug: draftKey" in src)
+    check("правка имени/категории НЕ гасит план блока 4, а пересобирает его",
+          "setInstalled(null)" in src and "previewInstall(false) }, 700)" in src)
+    check("правка имени/категории НЕ сбрасывает раскладку по главам",
+          "setChapterPlan(null) }, [name, cat, act])" not in src)
+    check("имя и категория убраны из входа, гасящего план",
+          "[src, act, mode, lang, strat]" in src and
+          "[src, name, cat, act, mode, lang, strat]" not in src)
     check("устаревший отчёт назван словами и в шапке блока, и в спойлере",
           "staleReport" in src and "от прежних входов" in src and
           "отчёт ниже - от прежних входов, а не от этих" in src)

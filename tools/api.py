@@ -62,6 +62,10 @@ from serve import (  # noqa: E402  — логику прогона переис�
     save_state,
     summary_line,
 )
+# Слаг источника = ключ черновика в staging. Ядро уже зовёт его, когда называет
+# файл очищенного текста (`b2s_fetched/<слаг>.md`) — берём ту же функцию, чтобы
+# ключ каталога и имя файла не разъехались.
+from book_to_skill.fetcher import slug_for_url  # noqa: E402
 
 # Машинно-специфичных путей здесь нет: профиль ищет hermes_paths.detect_hermes_home
 # по HERMES_HOME и типовым местам установки — иначе плагин не перенести на другую
@@ -165,7 +169,10 @@ def do_state() -> dict:
         # Сводка черновика — сразу в состоянии: блок «Черновик скилла» стоит
         # свёрнутым, и его заголовок обязан быть фактом уже при открытии панели,
         # как у «Результата разбора» (панель не должна ждать клика).
-        "draft": do_draft(st.get("name") or ""),
+        "draft": do_draft(st.get("name") or "", st.get("src") or ""),
+        # Ключ черновика = слаг источника. Панель по нему понимает, что черновик
+        # принадлежит ИСТОЧНИКУ, а не имени скилла: правка имени его не теряет.
+        "draft_key": _draft_key(st.get("src") or "", st),
     }
 
 
@@ -379,6 +386,10 @@ def do_rerun(src: str = "", strat: str = "", mode: str = "",
     }
     result["headings"] = report.get("headings")
     result["coverage"] = report.get("coverage")
+    # Ключ черновика этого источника (слаг) — по нему панель показывает, куда
+    # ляжет черновик, и передаёт его в /draft и /install. Имя скилла в ключе не
+    # участвует: его правят свободно, и черновик от этого не должен пропадать.
+    result["draft_key"] = _draft_key(st.get("src") or "", st)
     return result
 
 
@@ -448,25 +459,97 @@ def _draft_dirs() -> list[Path]:
     return sorted(out, key=lambda p: p.stat().st_mtime, reverse=True)
 
 
-def _draft_dir(name: str = "") -> Path:
-    """Каталог черновика: по имени скилла либо самый свежий.
+def _draft_key(src: str = "", st: dict | None = None) -> str:
+    """Ключ черновика — слаг ИСТОЧНИКА, а не имя скилла.
 
-    Имя приходит из панели (поле «Имя скилла»), и то же имя лежит в ``state``
-    последнего прогона — поэтому сводка всегда про тот черновик, который видит
-    владелец, а не про случайный каталог в staging.
+    Имя скилла человек правит свободно: оно про то, как скилл назовётся в
+    профиле. Черновик же принадлежит ИСТОЧНИКУ — пока источник тот же, черновик
+    тот же. Поэтому каталог в ``staging`` называется слагом источника: тем же,
+    которым ядро уже назвало файл в ``b2s_fetched`` (``<слаг>.md``). Иначе одно
+    движение в поле «Имя скилла» уводило панель в несуществующий каталог, и на
+    живом черновике показывалось «черновика нет» (владелец: «один чих - и заново
+    делай черновик»).
+    """
+    state = st if st is not None else load_state()
+    asked = (src or "").strip()
+    rep = state.get("report") or {}
+    # Источник тот же, что разбирали последним, — берём слаг, которым уже назван
+    # файл источника: он гарантированно совпадает с `b2s_fetched`, даже если
+    # правило слаг-ификации когда-нибудь поменяется.
+    if asked and asked == str(state.get("src") or "").strip():
+        stem = Path(str(rep.get("source_file") or "")).stem
+        if stem:
+            return stem
+    if asked:
+        return slug_for_url(asked)
+    return Path(str(rep.get("source_file") or "")).stem
+
+
+def _draft_meta_src(d: Path) -> str:
+    """Источник черновика по его ``metadata.json`` ('' — если не записан).
+
+    Именно по этому полю черновик опознаётся как «снят с того же источника»,
+    когда каталог назван не слагом (наследие: каталог по имени скилла).
+    """
+    try:
+        meta = json.loads((d / "metadata.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    src = meta.get("source")
+    if isinstance(src, dict):
+        src = src.get("url") or src.get("path") or ""
+    return str(src or "").strip()
+
+
+def _draft_lookup(name: str = "", src: str = "") -> tuple[Path, str]:
+    """Каталог черновика и как его нашли: ``slug`` | ``name`` | ``newest``.
+
+    Порядок не случаен: сперва источник (штатная связка), потом имя скилла
+    (совместимость — черновики, снятые до перехода на слаги, лежат каталогом по
+    имени), и лишь когда не задано ничего — самый свежий.
+
+    Признак ``how`` возвращается, чтобы панель могла назвать вслух, почему
+    показан именно этот каталог: искать черновик по имени — уже исключение.
     """
     dirs = _draft_dirs()
+    # Ключ источника берём ТОЛЬКО из явного src: без него поведение прежнее (по имени
+    # скилла или самый свежий), и чужое имя не подменяется черновиком последнего прогона.
+    key = _draft_key(src) if (src or "").strip() else ""
     wanted = (name or "").strip()
-    if wanted:
+    # 1. Каталог назван слагом источника - штатная связка. Смотрим ПУТЬ, а не список
+    #    каталогов: _draft_dirs() намеренно прячет служебные (_probe*), но план и
+    #    установка обязаны работать и с ними - на них стоят тесты ядра.
+    if key and (STAGING / key).is_dir():
+        return STAGING / key, "slug"
+    # 2. Каталог назван иначе, но metadata.json говорит: черновик снят с ЭТОГО
+    #    источника. Так находятся черновики, снятые до перехода на слаги
+    #    (каталог по имени скилла): имя человек правит, а источник - нет.
+    if key:
         for p in dirs:
-            if p.name == wanted:
-                return p
-        # Имя задано явно — чужие цифры не подставляем: панель скажет «для этого
-        # имени черновика нет», а не покажет объём другого скилла.
+            meta_src = _draft_meta_src(p)
+            if meta_src and slug_for_url(meta_src) == key:
+                return p, "meta"
+    # 3. Наследие: каталог по имени скилла (и источник неизвестен, и метаданных нет).
+    if wanted and (STAGING / wanted).is_dir():
+        return STAGING / wanted, "name"
+    for p in dirs:
+        if wanted and p.name == wanted:
+            return p, "name"
+    # Ничего не нашли. Если известен источник — чужие цифры не подставляем:
+    # панель скажет «для этого источника черновика нет», а не покажет объём
+    # другого скилла.
+    if key:
+        raise ValueError("черновика для этого источника в staging нет - его пишет шаг 2")
+    if wanted:
         raise ValueError(f"черновика «{wanted}» в staging нет - его пишет шаг 2")
     if not dirs:
         raise ValueError("в staging нет черновиков - черновик пишет шаг 2 (это работа LLM)")
-    return dirs[0]
+    return dirs[0], "newest"
+
+
+def _draft_dir(name: str = "", src: str = "") -> Path:
+    """Каталог черновика — обёртка над ``_draft_lookup`` для старых вызовов."""
+    return _draft_lookup(name, src)[0]
 
 
 def _draft_file(dir_path: Path, rel: str = "") -> Path:
@@ -499,7 +582,7 @@ def _md_stat(path: Path) -> dict:
     }
 
 
-def do_draft(name: str = "") -> dict:
+def do_draft(name: str = "", src: str = "") -> dict:
     """Сводка черновика скилла из ``staging`` — по ней панель пишет заголовок блока.
 
     Блок черновика устроен как «Результат разбора»: свёрнут, а в заголовке —
@@ -510,13 +593,17 @@ def do_draft(name: str = "") -> dict:
     Ничего не пишет: только читает staging. Пустой staging — не ошибка, а
     состояние ``has_draft: False`` («черновика ещё нет»), иначе панель показала
     бы красную аварию там, где всё нормально.
+
+    Каталог ищется по СЛАГУ ИСТОЧНИКА (``src``), а имя скилла — лишь запасной
+    ключ для черновиков, снятых до перехода на слаги. Поэтому правка имени в
+    панели не «теряет» готовый черновик: он принадлежит источнику.
     """
     dirs = _draft_dirs()
     try:
-        d = _draft_dir(name)
+        d, matched = _draft_lookup(name, src)
     except ValueError as exc:
         return {"ok": True, "has_draft": False, "error": str(exc),
-                "drafts": [p.name for p in dirs]}
+                "drafts": [p.name for p in dirs], "key": _draft_key(src)}
 
     files: list[dict] = []
     for p in sorted(d.rglob("*")):
@@ -551,6 +638,8 @@ def do_draft(name: str = "") -> dict:
         "ok": True,
         "has_draft": True,
         "name": d.name,
+        "key": d.name,
+        "matched": matched,
         "dir": str(d),
         "at": (datetime.fromtimestamp(newest).strftime("%H:%M:%S") if newest else ""),
         "mtime": newest,
@@ -569,14 +658,15 @@ def do_draft(name: str = "") -> dict:
     }
 
 
-def do_draft_text(name: str = "", path: str = "", offset: int = 0, limit: int = 0) -> dict:
+def do_draft_text(name: str = "", path: str = "", offset: int = 0, limit: int = 0,
+                  src: str = "") -> dict:
     """Текст файла черновика — то, что панель показывает по клику внутри блока.
 
     ``limit=0`` — файл целиком; иначе окно ``offset…offset+limit``: панель берёт
     первый экран и догружает остаток, а не тянет 60 КБ на каждый рендер.
     """
     try:
-        d = _draft_dir(name)
+        d = _draft_dir(name, src)
         target = _draft_file(d, path)
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
@@ -830,21 +920,23 @@ def _chapter_prompt(name: str, mode: str, plan: dict) -> str:
 
 
 def do_chapter_plan(name: str, cat: str = "", mode: str = "auto",
-                    save: bool = False, threshold: float = 0.35) -> dict:
+                    save: bool = False, threshold: float = 0.35,
+                    src: str = "") -> dict:
     """План долива по главам: раскладка + причина + постановка для LLM.
 
     Ничего не пишет в скилл. ``save`` кладёт план рядом с черновиком
-    (``staging/<имя>/merge-plan.json``), чтобы агент читал его файлом, а не из
-    вывода команды.
+    (``staging/<слаг источника>/merge-plan.json``), чтобы агент читал его файлом,
+    а не из вывода команды.
+
+    Каталог черновика ищется по источнику (``src``): имя скилла здесь — только
+    цель записи. Так план не рассыпается от правки имени в панели.
     """
     try:
         skill = _safe_segment(name, "имя скилла")
         category = _safe_category(cat) if cat else dash.DEFAULT_CATEGORY
+        staging, matched = _draft_lookup(skill, src)
     except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
-    staging = STAGING / skill
-    if not staging.is_dir():
-        return {"ok": False, "error": f"нет черновика: {staging}",
+        return {"ok": False, "error": str(exc),
                 "hint": "сначала шаг 2 - «Сделать черновик»"}
     target = hermes_home() / "skills" / category / skill
     target_exists = target.is_dir() and any(target.iterdir())
@@ -854,7 +946,8 @@ def do_chapter_plan(name: str, cat: str = "", mode: str = "auto",
     plan = _chapter_plan(staging, target, threshold)
     info = {
         "ok": True, "name": skill, "category": category, "mode": wanted,
-        "staging": str(staging), "target": str(target), "target_exists": target_exists,
+        "staging": str(staging), "staging_key": staging.name, "matched": matched,
+        "target": str(target), "target_exists": target_exists,
         "threshold": threshold, **plan,
         "prompt": _chapter_prompt(skill, wanted, plan),
         "saved": "",
@@ -1025,7 +1118,8 @@ def _record_sources(target: Path, skill: str, mode: str, plan: dict,
 
 def do_install(name: str, cat: str = "", confirm: bool = False,
                force: bool = False, mode: str = "auto",
-               allow_overwrite: bool = True, cat_desc: str = "") -> dict:
+               allow_overwrite: bool = True, cat_desc: str = "",
+               src: str = "") -> dict:
     """Перенос черновика в ``skills/<категория>/<имя>/`` — с планом и бэкапом.
 
     Режим — не удобство, а предохранитель, поэтому он выбирается по состоянию цели:
@@ -1058,7 +1152,11 @@ def do_install(name: str, cat: str = "", confirm: bool = False,
     if force and wanted == "auto":
         wanted = "replace"
 
-    staging = STAGING / skill
+    try:
+        staging, matched = _draft_lookup(skill, src)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc),
+                "hint": "сначала шаг 2 - «Сделать черновик» (это уже LLM, идёт в чате)"}
     if not staging.is_dir():
         return {"ok": False, "error": f"нет черновика: {staging}",
                 "hint": "сначала шаг 2 - «Сделать черновик» (это уже LLM, идёт в чате)"}
@@ -1085,6 +1183,8 @@ def do_install(name: str, cat: str = "", confirm: bool = False,
         "category": category,
         "mode": wanted,
         "staging": str(staging),
+        "staging_key": staging.name,
+        "matched": matched,
         "target": str(target),
         "files": len(files),
         "bytes": total,
@@ -1238,9 +1338,11 @@ def main(argv: list[str] | None = None) -> int:
 
     p_draft = sub.add_parser("draft", help="сводка черновика в staging (заголовок блока панели)")
     p_draft.add_argument("--name", default="", help="имя скилла; по умолчанию - самый свежий черновик")
+    p_draft.add_argument("--src", default="", help="источник: по нему ищется черновик (слаг), имя скилла - запасной ключ")
 
     p_dtext = sub.add_parser("draft-text", help="текст файла черновика (то, что видно в панели)")
     p_dtext.add_argument("--name", default="", help="имя скилла; по умолчанию - самый свежий черновик")
+    p_dtext.add_argument("--src", default="", help="источник: по нему ищется черновик (слаг)")
     p_dtext.add_argument("--file", dest="rel", default="", help="файл внутри черновика; по умолчанию SKILL.md")
     p_dtext.add_argument("--offset", type=int, default=0)
     p_dtext.add_argument("--limit", type=int, default=0, help="0 = весь файл")
@@ -1259,6 +1361,8 @@ def main(argv: list[str] | None = None) -> int:
     p_inst.add_argument("--no-overwrite", dest="allow_overwrite", action="store_false",
                         help="долив строго «только новое»: существующие файлы не трогать")
     p_inst.set_defaults(allow_overwrite=True)
+    p_inst.add_argument("--src", default="",
+                        help="источник: по нему ищется черновик (слаг), имя скилла - запасной ключ")
 
     sub.add_parser("skills", help="существующие скиллы профиля (имя + категория + главы)")
 
@@ -1269,7 +1373,9 @@ def main(argv: list[str] | None = None) -> int:
     p_plan.add_argument("--threshold", type=float, default=0.35,
                         help="порог близости, с которого предлагается слияние")
     p_plan.add_argument("--save", action="store_true",
-                        help="положить план в staging/<имя>/merge-plan.json")
+                        help="положить план в staging/<слаг источника>/merge-plan.json")
+    p_plan.add_argument("--src", default="",
+                        help="источник: по нему ищется черновик (слаг), имя скилла - запасной ключ")
 
     p_desc = sub.add_parser("desc", help="описание категории: что Hermes скажет агенту (DESCRIPTION.md)")
     p_desc.add_argument("--cat", required=True)
@@ -1294,16 +1400,16 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "text":
         out = do_text(args.path, args.offset, args.limit)
     elif args.cmd == "draft":
-        out = do_draft(args.name)
+        out = do_draft(args.name, args.src)
     elif args.cmd == "draft-text":
-        out = do_draft_text(args.name, args.rel, args.offset, args.limit)
+        out = do_draft_text(args.name, args.rel, args.offset, args.limit, args.src)
     elif args.cmd == "plan":
-        out = do_chapter_plan(args.name, args.cat, args.mode, args.save, args.threshold)
+        out = do_chapter_plan(args.name, args.cat, args.mode, args.save, args.threshold, args.src)
     elif args.cmd == "desc":
         out = do_write_category_desc(args.cat, args.text, args.mode, args.force)
     else:
         out = do_install(args.name, args.cat, args.confirm, args.force,
-                         args.mode, args.allow_overwrite, args.cat_desc)
+                         args.mode, args.allow_overwrite, args.cat_desc, args.src)
     print(json.dumps(out, ensure_ascii=False, indent=1))
     return 0 if out.get("ok") else 1
 

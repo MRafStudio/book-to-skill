@@ -142,9 +142,13 @@ function chapterRows(out) {
  *  совпадение ВСЕГО набора. Чистая функция: проверяется в node без React.
  *  Разделитель \u0001: имена файлов/URL его не содержат, склеить два разных набора
  *  в один отпечаток нельзя. */
+/** Отпечаток входов РАЗБОРА источника: по нему панель понимает, что отчёт в блоке 2
+ *  снят именно с этих входов, а не с прежних. Имя скилла и категория сюда НЕ входят:
+ *  это реквизиты записи, на разбор страницы они не влияют. Их правка не имеет права
+ *  объявлять живой отчёт устаревшим - иначе «один чих, и заново делай черновик». */
 function analysisSigOf(f) {
   const o = f || {}
-  return [o.src, o.strat, o.mode, o.name, o.cat]
+  return [o.src, o.strat, o.mode]
     .map((v) => String(v == null ? '' : v).trim())
     .join('\u0001')
 }
@@ -496,6 +500,10 @@ function intentOf(kind, f) {
     return parts.join(' | ')
   }
   if (kind !== 'install' && kind !== 'review' && kind !== 'plan') push('src', f.src)
+  /* Ключ черновика - слаг ИСТОЧНИКА. Агент по нему кладёт черновик в staging/<слаг>,
+     и тот же ключ панель шлёт в /draft и /install: имя скилла правится свободно и
+     ключом быть не может. */
+  push('slug', f.slug)
   push('name', f.name)
   push('strat', f.strat)
   push('mode', f.mode)
@@ -590,7 +598,10 @@ function B2SPane({ ctx }) {
      план записи уже не про них — предлагать «Установить» по устаревшему плану нельзя.
      Явные вызовы dropPreview стоят в действиях, этот эффект ловит всё остальное,
      включая правку полей клавиатурой. */
-  useEffect(() => { setPreview(null) }, [src, name, cat, act, mode, lang, strat])
+  /* Гасим план только на ВХОДАХ РАЗБОРА и режиме записи: другой источник, другая
+     стратегия/режим/язык. Имя скилла и категорию отсюда убрал намеренно: это
+     реквизиты записи, и их правка не имеет права трогать ни план, ни черновик. */
+  useEffect(() => { setPreview(null) }, [src, act, mode, lang, strat])
 
   /* Мастер из четырёх блоков: источник → анализ → черновик → запись. Открыт ровно
      один блок (владелец: «запускаем плагин — виден только первый»), шапка блока
@@ -607,6 +618,10 @@ function B2SPane({ ctx }) {
   const [rerunErr, setRerunErr] = useState('')
   /* Какой набор входов ядро УЖЕ разобрало (отпечаток, не только URL). */
   const [fetchedSig, setFetchedSig] = useState('')
+  /* Ключ черновика = слаг ИСТОЧНИКА (не имя скилла): его отдаёт ядро в /state и
+     /rerun. По нему панель читает черновик и собирает план - правка имени скилла
+     ключ не меняет, поэтому черновик при переименовании не теряется. */
+  const [draftKey, setDraftKey] = useState('')
   const onlyB = (n) => setOpenB({ 1: n === 1, 2: n === 2, 3: n === 3, 4: n === 4 })
   const toggleB = (n) => setOpenB((cur) => Object.assign({}, cur, { [n]: !cur[n] }))
 
@@ -654,9 +669,19 @@ function B2SPane({ ctx }) {
     setAct((cur) => (cur === 'replace' ? 'replace' : 'auto'))
   }, [existing && existing.name])
 
-  // План считался для конкретных имени, категории и режима. Поменяли что-то —
-  // старый план уже не про этот случай, а «второй клик» подтвердил бы не то.
-  useEffect(() => { setPreview(null); setChapterPlan(null) }, [name, cat, act])
+  /* Имя скилла и категория - реквизиты ЗАПИСИ, а не входы разбора и не ключ
+     черновика. Поэтому их правка НЕ гасит план блока 4: план собирается локально
+     и мгновенно, так что мы его ПЕРЕСОБИРАЕМ под новые реквизиты, а не выбрасываем
+     (владелец: «один чих - и заново делай черновик»). Гасим только статус установки:
+     он говорил про прежнее имя и категорию, значит к новым не относится. Раскладку
+     по главам не трогаем вообще: она про главы черновика, реквизиты ей безразличны.
+     Дебаунс 700 мс - чтобы набор имени по буквам не гонял пересборку на каждый символ. */
+  useEffect(() => {
+    setInstalled(null)
+    if (!preview) return
+    const t = setTimeout(() => { previewInstall(false) }, 700)
+    return () => clearTimeout(t)
+  }, [name, cat])
 
   useEffect(() => {
     ctx.storage.set('fields', { src, name, strat, mode, lang, cat, act, catDesc })
@@ -820,7 +845,10 @@ function B2SPane({ ctx }) {
     try {
       const out = await ctx.rest('/draft', {
         method: 'POST',
-        body: { name: (name || '').trim() },
+        /* Источник едет вместе с именем: черновик принадлежит ИСТОЧНИКУ, а имя
+           скилла правится свободно и ключом быть не может. Ядро по src найдёт
+           черновик даже после переименования. */
+        body: { name: (name || '').trim(), src: (src || '').trim() },
         timeoutMs: 8000
       })
       if (out) setDraft(out)
@@ -840,7 +868,7 @@ function B2SPane({ ctx }) {
     try {
       const out = await ctx.rest('/draft_text', {
         method: 'POST',
-        body: { name: (name || '').trim(), file: rel || '', limit: 0 },
+        body: { name: (name || '').trim(), file: rel || '', limit: 0, src: (src || '').trim() },
         timeoutMs: 15000
       })
       setDraftText(out && out.ok ? out : { ok: false, error: (out && out.error) || 'файл не прочитан' })
@@ -876,6 +904,7 @@ function B2SPane({ ctx }) {
              заголовок обязан быть фактом уже при открытии панели — иначе владелец
              не поймёт, есть черновик или нет, не раскрыв блок. */
           if (alive && s && s.draft) setDraft(s.draft)
+          if (alive && s && s.draft_key) setDraftKey(s.draft_key)
           if (alive && s && s.last_error) {
             setTone('error')
             setStatus('последний прогон провалился (' + (s.last_error.at || '') + '): ' +
@@ -963,7 +992,7 @@ function B2SPane({ ctx }) {
       return false
     }
     dropPreview()   // черновик/критика/описание категории — шаги блоков 2–3: план записи устарел
-    const intentText = intentOf(kind, { src, name, strat, mode, lang, cat, act, desc: catDesc })
+    const intentText = intentOf(kind, { src, name, strat, mode, lang, cat, act, desc: catDesc, slug: draftKey })
     busyRef.current = true
     setBusy(kind)
     try {
@@ -981,7 +1010,7 @@ function B2SPane({ ctx }) {
          Теперь после отправки задания панель сама следит за staging. */
       if (kind === 'draft') {
         setDraftWait(true)
-        watchDraft((name || '').trim())
+        watchDraft((name || '').trim(), (src || '').trim())
       }
       return true
     } catch (err) {
@@ -1044,10 +1073,10 @@ function B2SPane({ ctx }) {
   /** Черновик пишет агент в чате — панель о готовности не узнаёт ниоткуда, и раньше
       после «Сделать черновик» она молчала: человек читал «черновика нет» и решал,
       что кнопка сломана. Теперь панель сама читает staging, пока файлы не появятся
-      (тот же приём, что у описания категории). Следим по ИМЕНИ из поля: пока агент
-      пишет прозу, имя в поле могли поправить. */
-  const watchDraft = (targetName) => {
-    if (!targetName) return
+      (тот же приём, что у описания категории). Следим по ИСТОЧНИКУ (src): имя скилла
+      могли поправить, пока агент писал главы, а черновик принадлежит источнику. */
+  const watchDraft = (targetName, targetSrc) => {
+    if (!targetName && !targetSrc) return
     const deadline = Date.now() + 900000     // проза глав идёт минутами — пятнадцати хватит
     let inFlight = false
     const id = setInterval(async () => {
@@ -1057,7 +1086,9 @@ function B2SPane({ ctx }) {
       try {
         const out = await ctx.rest('/draft', {
           method: 'POST',
-          body: { name: targetName },
+          /* Ищем черновик ИСТОЧНИКА: имя скилла человек мог поправить, пока агент
+             писал главы, и по одному имени панель черновик бы не нашла. */
+          body: { name: targetName, src: targetSrc },
           timeoutMs: 8000
         })
         if (out && out.has_draft) {
@@ -1066,7 +1097,7 @@ function B2SPane({ ctx }) {
           setDraftWait(false)
           setTone('done')
           const c = out.counts || {}
-          setStatus('черновик «' + (out.name || targetName) + '» приехал в staging' +
+          setStatus('черновик приехал в staging: ' + (out.name || targetName || targetSrc) +
             (c.files ? ' - ' + c.files + ' ' + plural(c.files, 'файл', 'файла', 'файлов') : '') +
             ': можно к блоку 4')
         }
@@ -1079,7 +1110,7 @@ function B2SPane({ ctx }) {
           if (!done && late) {
             setDraftWait(false)
             setTone('error')
-            setStatus('черновик «' + targetName + '» за 15 минут не появился в staging - смотри ответ агента в чате')
+            setStatus('черновик за 15 минут не появился в staging - смотри ответ агента в чате')
           }
         }
       }
@@ -1112,7 +1143,10 @@ function B2SPane({ ctx }) {
       if (out.fetch_ok) {
         setTone('done')
         setStatus('источник разобран: ' + summaryOf(out))
-        setFetchedSig(analysisSigOf({ src, strat, mode, name, cat }))
+        setFetchedSig(analysisSigOf({ src, strat, mode }))
+        // Ключ черновика этого источника: по нему панель ищет черновик и собирает план,
+        // и он НЕ меняется от правки имени скилла.
+        if (out.draft_key) setDraftKey(out.draft_key)
         // Текст показываем сразу, из самого отчёта: он пришёл вместе с метриками.
         if (out.report && out.report.preview) {
           setText(out.report.preview)
@@ -1162,7 +1196,7 @@ function B2SPane({ ctx }) {
     try {
       const out = await ctx.rest('/install', {
         method: 'POST',
-        body: { name, cat, confirm, mode: act, allow_overwrite: true, cat_desc: catDesc },
+        body: { name: (name || '').trim(), cat, confirm: !!confirm, mode: act, allow_overwrite: true, cat_desc: catDesc, src: (src || '').trim() },
         timeoutMs: 180000
       })
       setPreview(out)
@@ -1173,7 +1207,7 @@ function B2SPane({ ctx }) {
       if (!confirm) {
         if (!out.has_skill_md) {
           setTone('error')
-          setStatus('в staging/' + name + ' нет SKILL.md - сначала черновик')
+          setStatus((out.error || 'черновика в staging нет') + ' - сначала черновик в блоке 3')
         } else {
           setTone(out.risk ? 'error' : 'done')
           setStatus(
@@ -1225,7 +1259,7 @@ function B2SPane({ ctx }) {
     try {
       const out = await ctx.rest('/plan', {
         method: 'POST',
-        body: { name, cat, mode: act, save: true },
+        body: { name, cat, mode: act, save: true, src: (src || '').trim() },
         timeoutMs: 60000
       })
       setChapterPlan(out)
@@ -1301,7 +1335,7 @@ function B2SPane({ ctx }) {
      от другого источника, а черновик собрался бы по чужим метрикам. */
   const trimSrc = (src || '').trim()
   const mdSrc = srcIsMarkdown(trimSrc)
-  const curSig = analysisSigOf({ src: trimSrc, strat, mode, name, cat })
+  const curSig = analysisSigOf({ src: trimSrc, strat, mode })
   const analyzed = !!report && report.chars != null && fetchedSig !== '' && fetchedSig === curSig
   const staleReport = !!report && !analyzed
 

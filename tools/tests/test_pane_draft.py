@@ -346,8 +346,11 @@ def main() -> int:
           "вотчер будет ждать вечно или промолчит")
     check("интент draft запускает вотчер и поднимает «жду staging»",
           "if (kind === 'draft')" in src and "setDraftWait(true)" in src
-          and "watchDraft((name || '').trim())" in src,
+          and "watchDraft((name || '').trim(), (src || '').trim())" in src,
           "после «Сделать черновик» панель снова останется молчать")
+    check("вотчер ищет черновик по ИСТОЧНИКУ, а не по имени из поля",
+          "body: { name: targetName, src: targetSrc }" in watch_body,
+          "имя скилла правится, пока агент пишет главы — по имени черновик не найти")
     check("ожидание видно в шапке блока 3, а не только в строке статуса",
           "draftWait ? 'задание в чате - жду staging'" in src,
           "шапка блока 3 не знает про ожидание")
@@ -480,6 +483,35 @@ def main() -> int:
               f"do_draft вернул чужой черновик: {got.get('name')}")
         check("при отсутствии черновика названы те, что есть (панель не гадает)",
               "drafts" in got, f"ключи: {sorted(got)}")
+
+        # Черновик принадлежит ИСТОЧНИКУ: с чужим именем в поле он находится по
+        # metadata.json черновика. Это и есть починка «правка имени теряла черновик».
+        meta_src = ""
+        if live.get("has_draft"):
+            try:
+                meta = json.loads((REPO / "staging" / live["name"] / "metadata.json")
+                                  .read_text(encoding="utf-8"))
+                meta_src = str((meta.get("source") or {}).get("url") or "")
+            except Exception:
+                meta_src = ""
+        if meta_src:
+            by_src = api.do_draft("совсем-другое-имя", meta_src)
+            check("черновик находится по ИСТОЧНИКУ, даже если имя скилла в поле другое",
+                  by_src.get("has_draft") is True and by_src.get("matched") in ("slug", "meta"),
+                  f"matched={by_src.get('matched')!r}, has_draft={by_src.get('has_draft')!r}")
+            check("ядро называет ключ черновика (слаг источника) для панели и интента",
+                  bool(by_src.get("key")), f"ключи: {sorted(by_src)}")
+            other = api.do_draft("совсем-другое-имя", "https://example.com/чужой-источник")
+            check("чужой источник НЕ получает черновик этого источника",
+                  other.get("has_draft") is False,
+                  f"ядро отдало: {other.get('name')!r}")
+        else:
+            check("черновик находится по ИСТОЧНИКУ, даже если имя скилла в поле другое",
+                  True, note="у живого черновика нет metadata.json с источником")
+            check("ядро называет ключ черновика (слаг источника) для панели и интента",
+                  True, note="у живого черновика нет metadata.json с источником")
+            check("чужой источник НЕ получает черновик этого источника",
+                  True, note="у живого черновика нет metadata.json с источником")
 
         bad = api.do_draft_text("", "../../SKILL.md", 0, 100)
         check("выход за каталог черновика закрыт (../ отвергнут)",

@@ -147,6 +147,7 @@ class InstallBody(BaseModel):
     mode: str = "auto"            # auto | create | append | replace
     allow_overwrite: bool = True  # долив: можно ли трогать существующие файлы скилла
     cat_desc: str = ""            # описание новой категории → DESCRIPTION.md
+    src: str = ""                 # источник: по нему ищется черновик (слаг), имя - запасной ключ
 
 
 class PlanBody(BaseModel):
@@ -155,7 +156,8 @@ class PlanBody(BaseModel):
     cat: str = ""
     mode: str = "auto"           # auto | create | append | replace
     threshold: float = 0.35      # с какой близости предлагать слияние
-    save: bool = False           # положить план в staging/<имя>/merge-plan.json
+    save: bool = False           # положить план в staging/<слаг источника>/merge-plan.json
+    src: str = ""                # источник: по нему ищется черновик (слаг)
 
 
 class DescBody(BaseModel):
@@ -179,10 +181,12 @@ class DraftTextBody(BaseModel):
     file: str = ""
     offset: int = 0
     limit: int = 0
+    src: str = ""    # источник: по нему находится черновик (слаг); имя - запасной ключ
 
 class DraftBody(BaseModel):
     """Сводка черновика: пустое имя = самый свежий черновик в staging."""
     name: str = ""
+    src: str = ""    # источник черновика: имя скилла правится свободно, источник - нет
 
 
 @router.get("/health")
@@ -236,7 +240,7 @@ def text(body: TextBody) -> Dict[str, Any]:
 
 
 @router.get("/draft")
-def draft(name: str = "") -> Dict[str, Any]:
+def draft(name: str = "", src: str = "") -> Dict[str, Any]:
     """Сводка черновика в staging — заголовок блока «Черновик скилла».
 
     Блок стоит свёрнутым, поэтому заголовок обязан быть ФАКТОМ: файлов, глав,
@@ -247,7 +251,7 @@ def draft(name: str = "") -> Dict[str, Any]:
     пишет LLM в чате: панель обновляет сводку по кнопке и при раскрытии блока,
     не перезапуская всю панель.
     """
-    return core().do_draft(name)
+    return core().do_draft(name, src)
 
 
 @router.post("/draft")
@@ -258,7 +262,7 @@ def draft_post(body: DraftBody) -> Dict[str, Any]:
     POST — для панели, которой иначе пришлось бы клеить query-строку к пути
     маршрута (в ``ctx.rest`` это лишний риск, а поведение одинаково).
     """
-    return core().do_draft(body.name)
+    return core().do_draft(body.name, body.src)
 
 
 @router.post("/draft_text")
@@ -269,7 +273,7 @@ def draft_text(body: DraftTextBody) -> Dict[str, Any]:
     и умеет отдавать окно ``offset…offset+limit``: панель берёт первый экран,
     а остаток догружает, а не тянет весь скилл на каждый рендер.
     """
-    return core().do_draft_text(body.name, body.file, body.offset, body.limit)
+    return core().do_draft_text(body.name, body.file, body.offset, body.limit, body.src)
 
 
 @router.post("/plan")
@@ -282,7 +286,8 @@ def plan(body: PlanBody) -> Dict[str, Any]:
     """
     if not body.name.strip():
         raise HTTPException(status_code=400, detail="нужно имя скилла")
-    return core().do_chapter_plan(body.name, body.cat, body.mode, body.save, body.threshold)
+    return core().do_chapter_plan(body.name, body.cat, body.mode, body.save, body.threshold,
+                                  body.src)
 
 
 @router.post("/desc")
@@ -310,4 +315,4 @@ def install(body: InstallBody) -> Dict[str, Any]:
     if not body.name.strip():
         raise HTTPException(status_code=400, detail="нужно имя скилла")
     return core().do_install(body.name, body.cat, body.confirm, body.force,
-                             body.mode, body.allow_overwrite, body.cat_desc)
+                             body.mode, body.allow_overwrite, body.cat_desc, body.src)
