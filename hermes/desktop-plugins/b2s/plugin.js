@@ -1784,8 +1784,12 @@ function B2SPane({ ctx }) {
     className: 'flex flex-col gap-1',
     children: [
       jsx('div', {
+        /* Фон обёртки = размеру кнопки. В колонке (flex-col) `align-items: stretch`
+           тянул обёртку на всю ширину панели, и зелёная плашка висела пустой полосой
+           (кнопка кликабельна только по тексту). `align-self: flex-start` возвращает
+           фону ширину содержимого, `max-width: 100%` не даёт ей вылезти за рейл. */
         className: 'flex min-w-0 rounded',
-        style: { backgroundColor: STEP_BG },
+        style: { backgroundColor: STEP_BG, alignSelf: 'flex-start', maxWidth: '100%' },
         children: jsxs(Button, {
           size: 'sm',
           variant: 'ghost',
@@ -1795,7 +1799,7 @@ function B2SPane({ ctx }) {
           style: BTN_FIT,
           children: [
             jsx('span', { 'aria-hidden': true, style: { flexShrink: 0 }, children: '🧩' }),
-            cutSpan('3′. План по главам: что слить, что переписать')
+            cutSpan('3. План по главам: что слить, что переписать')
           ]
         })
       }),

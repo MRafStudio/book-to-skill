@@ -284,6 +284,26 @@ def main() -> int:
     check("в подписях панели нет ссылок на «шаг 2» (блок 2 при markdown пропускается)",
           not ui_step2, f"осталось: {[l.strip()[:70] for l in ui_step2[:3]]}")
 
+    # 5.1) фон кнопки-шага обязан совпадать с кликабельной зоной.
+    # В колонке (`flex-col`) `align-items: stretch` тянул обёртку с фоном на всю ширину
+    # панели, а кнопка внутри оставалась по тексту: владелец видел пустую плашку
+    # («фон вытянут на всю ширину плагина, а активна только часть с надписью»).
+    # Замер стендом: 380 px — фон 368 против кнопки 297 (дырка 71); с фиксом — 297 = 297.
+    chap_slot = src[src.index("const chapterSlot"):src.index("/* --- переходы «ДАЛЕЕ»")]
+    check("плашка кнопки плана не тянется на всю панель (align-self + max-width)",
+          "alignSelf: 'flex-start'" in chap_slot and "maxWidth: '100%'" in chap_slot
+          and "backgroundColor: STEP_BG" in chap_slot,
+          "обёртка снова stretch: фон будет шире кликабельной кнопки")
+    check("подпись кнопки плана: «3. План по главам: что слить, что переписать»",
+          "3. План по главам: что слить, что переписать" in src and "3′." not in src,
+          "подпись не переименована или остался штрих «3′.»")
+    bg_wraps = [l.strip()[:80] for l in src.splitlines() if "backgroundColor: STEP_BG" in l]
+    check("плашки STEP_BG — у трёх кнопок-шагов (1, 2, 3)",
+          len(bg_wraps) == 3, f"нашлось {len(bg_wraps)}: {bg_wraps}")
+    check("кнопки в РЯДУ (шаг 1, черновик) не требуют фикса: родитель — items-center",
+          src.count("'flex min-w-0 flex-wrap items-center gap-1'") >= 2,
+          "рядок с items-center стало меньше двух — проверь, не растянулись ли их плашки")
+
     # 6) ядро
     sys.path.insert(0, str(REPO / "tools"))
     try:
