@@ -631,6 +631,20 @@ function B2SPane({ ctx }) {
   const nameWarn = !wanted
   const existing = (skills || []).find((s) => s.name === wanted) || null
 
+  /* Подпись под полем «Имя скилла» - единственное место, где сказано, свободно имя или
+     занято, и что не так с пустым. Цвет ставим inline (NAME_WARN), а не tailwind-классом:
+     палитра Tailwind в панели не подключена, класс молча ничего не
+     покрасит. Жёлтым - только про пустое имя: это не ошибка ядра, а незаполненный
+     обязательный вход, поэтому «внимание», а не «авария». */
+  const nameNote = nameWarn
+    ? 'имя скилла не может быть пустым!'
+    : (existing
+      ? 'уже стоит: ' + (existing.category || 'без категории') + ' · глав ' + existing.chapters +
+        ' · файлов ' + existing.files + ' - новые главы допишутся к нему'
+      : (skills === null
+        ? 'список скиллов грузится…'
+        : (skillsErr ? 'списка нет - имя соберётся как новый скилл' : 'такого скилла нет - будет создан новый')))
+
   // Имя занято → категорию берём у самого скилла (он лежит в своей категории),
   // а «замену» сбрасываем на долив: по умолчанию ничего не сносим.
   useEffect(() => {
@@ -2315,7 +2329,7 @@ function B2SPane({ ctx }) {
                     /* Пустое имя - не «просто пустое поле», а причина, по которой кнопка
                        «ДАЛЕЕ» не работает: жёлтая окантовка (и тот же цвет у подписи под
                        полем) называет это раньше, чем клик. */
-                    className: 'h-7 text-xs' + (nameWarn ? ' border-amber-400' : ''),
+                    className: 'h-7 text-xs',
                     style: nameWarn ? { borderColor: NAME_WARN, boxShadow: 'inset 0 0 0 1px ' + NAME_WARN } : undefined
                   }),
                   /* Подсказка имён — свой список ТОЛЬКО по выбранной категории
@@ -2323,22 +2337,13 @@ function B2SPane({ ctx }) {
                      весь профиль и не давал прокрутки. */
                   namePickRow,
                   nameOpen ? nameListBlock : null,
-                  jsx('div', Ell(
-                    nameWarn
-                      ? 'имя скилла не может быть пустым!'
-                      : (existing
-                        ? 'уже стоит: ' + (existing.category || 'без категории') + ' · глав ' +
-                          existing.chapters + ' · файлов ' + existing.files +
-                          ' - новые главы допишутся к нему'
-                        : skills === null
-                          ? 'список скиллов грузится…'
-                          : skillsErr
-                            ? 'списка нет - имя соберётся как новый скилл'
-                            : 'такого скилла нет - будет создан новый'),
-                    nameWarn
-                      ? 'text-[10px] leading-tight text-amber-400'
-                      : 'text-[10px] leading-tight text-(--ui-text-tertiary, #8a8a8a)'
-                  )),
+                  jsx('div', {
+                    className: 'truncate text-[10px] leading-tight' +
+                      (nameWarn ? '' : ' text-(--ui-text-tertiary, #8a8a8a)'),
+                    style: nameWarn ? { color: NAME_WARN } : null,
+                    title: nameNote,
+                    children: nameNote
+                  }),
                   existing
                     ? jsxs(Select, {
                         value: act,

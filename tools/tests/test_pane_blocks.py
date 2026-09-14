@@ -199,7 +199,9 @@ def main() -> int:
     check("пустое имя подсвечено жёлтым (окантовка поля + та же краска у подписи)",
           "const nameWarn = !wanted" in src and
           "borderColor: NAME_WARN, boxShadow: 'inset 0 0 0 1px ' + NAME_WARN" in src and
-          "nameWarn ? ' border-amber-400' : ''" in src)
+          "style: nameWarn ? { color: NAME_WARN } : null" in src and
+          "text-amber-400" not in src,
+          "палитра Tailwind в панели не подключена - цвет классом не появится")
     check("пустое имя названо словами, а не только цветом",
           "имя скилла не может быть пустым!" in src and
           "nameWarn ? 'обязательное: пустым не поставим'" in src)
