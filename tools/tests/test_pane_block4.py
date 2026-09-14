@@ -243,6 +243,41 @@ def main() -> int:
           "поле плана рисуется всегда — сброс флага ничего не скрывает")
 
     # ── 5) сброс плана в действиях блоков 1–3 ──────────────────────────────
+    # ── 4b) подписи ушли в тултип кнопки, а не висят рядом ──────────────────
+    i4 = src.index("title: 'Запись в профиль'")
+    seg4 = src[i4:src.index("foot: jsx(NextBtn", i4)]
+    check("подписи-состояния рядом с кнопкой блока 4 нет (обе фразы — в тултипе)",
+          "hint:" not in seg4, "подпись всё ещё висит рядом с кнопкой")
+
+    # ── 4c) «не пахнет AI»: в ВЫВОДИМЫХ строках нет длинного тире ───────────
+    def literals(s: str) -> str:
+        """Только содержимое строковых литералов — комментарии не в счёт."""
+        out, i, q = [], 0, None
+        while i < len(s):
+            c = s[i]
+            if q is None:
+                if c in "'\"`":
+                    q = c; i += 1; continue
+                if c == "/" and i + 1 < len(s) and s[i + 1] == "/":
+                    j = s.find("\n", i); i = len(s) if j < 0 else j; continue
+                if c == "/" and i + 1 < len(s) and s[i + 1] == "*":
+                    j = s.find("*/", i); i = len(s) if j < 0 else j + 2; continue
+                i += 1; continue
+            if c == "\\":
+                i += 2; continue
+            if c == q:
+                q = None; i += 1; continue
+            out.append(c); i += 1
+        return "".join(out)
+
+    ui_text = literals(src)
+    found = [hex(ord(ch)) for ch in ("\u2014", "\u2013") if ch in ui_text]
+    check("в выводимых текстах нет длинного тире (U+2014/U+2013)", not found,
+          f"осталось в строках: {found}")
+    check("тултип «Предпросмотр» говорит, что план ничего не запишет",
+          "«Предпросмотр» соберёт план и ничего не запишет - пишет только «Установить»" in src)
+    check("тултип «Установить» говорит, куда пишет второй клик",
+          "'второй клик пишет в skills/<категория>/<имя>/'" in src)
     check("dropPreview определён",
           "const dropPreview = () => setPreview(null)" in src)
     actions = {

@@ -36,16 +36,16 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 import { useEffect, useRef, useState } from 'react'
 
 const STRATEGIES = [
-  { value: 'auto', label: 'auto — каскад стратегий' },
-  { value: 'raw-md', label: 'raw-md — источник уже markdown' },
-  { value: 'trafilatura-html', label: 'trafilatura — основная очистка' },
-  { value: 'bs4-html', label: 'bs4 — добор хвоста и таблиц' },
-  { value: 'stdlib-html', label: 'stdlib — крайний случай' }
+  { value: 'auto', label: 'auto - каскад стратегий' },
+  { value: 'raw-md', label: 'raw-md - источник уже markdown' },
+  { value: 'trafilatura-html', label: 'trafilatura - основная очистка' },
+  { value: 'bs4-html', label: 'bs4 - добор хвоста и таблиц' },
+  { value: 'stdlib-html', label: 'stdlib - крайний случай' }
 ]
 
 const MODES = [
-  { value: 'technical', label: 'technical — таблицы и код' },
-  { value: 'text', label: 'text — проза' }
+  { value: 'technical', label: 'technical - таблицы и код' },
+  { value: 'text', label: 'text - проза' }
 ]
 
 const LANGS = [
@@ -58,8 +58,8 @@ const LANGS = [
    здесь была бы лишней: режим — следствие состояния (имя занято), а не тумблера,
    который при первом заходе всё равно ничего не значит. */
 const ACTS = [
-  { value: 'auto', label: 'долив — дополнить существующий' },
-  { value: 'replace', label: 'замена — снести и залить заново (бэкап)' }
+  { value: 'auto', label: 'долив - дополнить существующий' },
+  { value: 'replace', label: 'замена - снести и залить заново (бэкап)' }
 ]
 
 /** Файлы плана установки — ПО СТРОКЕ НА ФАЙЛ, а не склейкой в одну строку.
@@ -103,7 +103,7 @@ function planTotalRows(out) {
   const jr = (out && out.journal) || null
   if (jr && jr.file) {
     rows.push((jr.new_source ? '✚ журнал: источник записан впервые'
-      : '⟳ журнал: источник уже был — обновлён') +
+      : '⟳ журнал: источник уже был - обновлён') +
       ' · всего источников: ' + jr.sources + ' · установок этого: ' + jr.installs)
   }
   return rows
@@ -151,7 +151,7 @@ function chapterBitsOf(out) {
   if (cnt.add) bits.push('＋ новых ' + cnt.add)
   bits.push(out.target_exists
     ? 'долив в ' + out.category + '/' + out.name
-    : 'новая папка — сливать не с чем')
+    : 'новая папка - сливать не с чем')
   if (out.threshold != null) bits.push('порог ' + out.threshold)
   return bits
 }
@@ -294,7 +294,7 @@ const headBitsOf = ({ report, src, tone, busy }) => {
   if (tone === 'error') bits.push('⚠ ошибка')
   else if (busy) bits.push('⏳ ' + busy)
   else if (!report) bits.push('разбор не производился')
-  else if (stale) bits.push('отчёт по другому источнику — прогони источник заново')
+  else if (stale) bits.push('отчёт по другому источнику - прогони источник заново')
   else bits.push('разбор готов')
   if (report && !busy && tone !== 'error') {
     if (report.chars != null) bits.push(fmtInt(report.chars) + ' симв')
@@ -336,7 +336,7 @@ const plural = (n, one, few, many) => {
 function draftBitsOf({ draft, want, busy }) {
   const bits = []
   if (busy === 'draft') {
-    bits.push('⏳ пишется — прозу пишет LLM в чате')
+    bits.push('⏳ пишется - прозу пишет LLM в чате')
     return bits
   }
   if (!draft) {
@@ -631,11 +631,11 @@ function B2SPane({ ctx }) {
       }
       const path = picked[0] || ''
       if (!path) {
-        host.notify({ kind: 'info', message: 'Диалог закрыт без выбора — источник не менялся.' })
+        host.notify({ kind: 'info', message: 'Диалог закрыт без выбора - источник не менялся.' })
         return
       }
       setSrc(path)
-      host.notify({ kind: 'success', message: 'Источник — файл: ' + baseNameOf(path), detail: path })
+      host.notify({ kind: 'success', message: 'Источник - файл: ' + baseNameOf(path), detail: path })
       return
     }
     pickFileFallback()
@@ -669,13 +669,13 @@ function B2SPane({ ctx }) {
       }
       if (looksLikePath(full)) {
         setSrc(full)
-        host.notify({ kind: 'success', message: 'Источник — файл: ' + (f.name || full), detail: full })
+        host.notify({ kind: 'success', message: 'Источник - файл: ' + (f.name || full), detail: full })
       } else {
         setSrc(f.name || '')
         host.notify({
           kind: 'info',
           message: 'Выбран файл: ' + (f.name || ''),
-          detail: 'Полный путь диалог не отдал — возьми его кнопкой «Вставить из буфера обмена» или вставь в поле (Ctrl+V).'
+          detail: 'Полный путь диалог не отдал - возьми его кнопкой «Вставить из буфера обмена» или вставь в поле (Ctrl+V).'
         })
       }
       drop()
@@ -712,13 +712,13 @@ function B2SPane({ ctx }) {
       host.notify({
         kind: 'warning',
         message: 'Буфер обмена не прочитался',
-        detail: 'Поле «Источник» в фокусе — нажми Ctrl+V. (' + String(err && err.message ? err.message : err) + ')'
+        detail: 'Поле «Источник» в фокусе - нажми Ctrl+V. (' + String(err && err.message ? err.message : err) + ')'
       })
       return
     }
     const val = String(raw || '').trim()
     if (!val) {
-      host.notify({ kind: 'info', message: 'Буфер обмена пуст — скопируй URL или путь к файлу.' })
+      host.notify({ kind: 'info', message: 'Буфер обмена пуст - скопируй URL или путь к файлу.' })
       return
     }
     setSrc(val)
@@ -804,7 +804,7 @@ function B2SPane({ ctx }) {
         if (!alive) return
         setCore(true)
         setCoreInfo(h || null)
-        setStatus('ядро на связи — шаги 1 и 3 идут мимо чата')
+        setStatus('ядро на связи - шаги 1 и 3 идут мимо чата')
         try {
           const s = await ctx.rest('/state', { timeoutMs: 8000 })
           /* Отчёт берём из /state (ядро отдаёт его целиком, кроме preview), а НЕ
@@ -829,7 +829,7 @@ function B2SPane({ ctx }) {
       } catch (err) {
         if (!alive) return
         setCore(false)
-        setStatus('ядро не ответило: маршруты /api/plugins/b2s/ ещё не смонтированы — перезапусти dashboard-службу')
+        setStatus('ядро не ответило: маршруты /api/plugins/b2s/ ещё не смонтированы - перезапусти dashboard-службу')
       }
     }
     load()
@@ -903,7 +903,7 @@ function B2SPane({ ctx }) {
     const sid = host.state.focusedSessionId.get()
     if (!sid) {
       setTone('error')
-      setStatus('нет активной сессии — открой чат и повтори')
+      setStatus('нет активной сессии - открой чат и повтори')
       return false
     }
     dropPreview()   // черновик/критика/описание категории — шаги блоков 2–3: план записи устарел
@@ -967,11 +967,11 @@ function B2SPane({ ctx }) {
           setCatLoose((out && out.loose) || [])
           setTone('done')
           setStatus('описание категории «' + targetCat + '» ' +
-            (now === 'ok' ? 'записано — Hermes его читает' : 'обновлено: ' + now))
+            (now === 'ok' ? 'записано - Hermes его читает' : 'обновлено: ' + now))
         } else if (Date.now() > deadline) {
           clearInterval(id)
           setTone('error')
-          setStatus('описание «' + targetCat + '» не изменилось за 3 минуты — смотри ответ агента в чате')
+          setStatus('описание «' + targetCat + '» не изменилось за 3 минуты - смотри ответ агента в чате')
         }
       } catch (err) {
         if (Date.now() > deadline) {
@@ -1011,7 +1011,7 @@ function B2SPane({ ctx }) {
           setTone('done')
           const c = out.counts || {}
           setStatus('черновик «' + (out.name || targetName) + '» приехал в staging' +
-            (c.files ? ' — ' + c.files + ' ' + plural(c.files, 'файл', 'файла', 'файлов') : '') +
+            (c.files ? ' - ' + c.files + ' ' + plural(c.files, 'файл', 'файла', 'файлов') : '') +
             ': можно к блоку 4')
         }
       } catch (err) { /* ещё не готов — ждём дальше, молча */ }
@@ -1023,7 +1023,7 @@ function B2SPane({ ctx }) {
           if (!done && late) {
             setDraftWait(false)
             setTone('error')
-            setStatus('черновик «' + targetName + '» за 15 минут не появился в staging — смотри ответ агента в чате')
+            setStatus('черновик «' + targetName + '» за 15 минут не появился в staging - смотри ответ агента в чате')
           }
         }
       }
@@ -1085,7 +1085,7 @@ function B2SPane({ ctx }) {
       setCore(false)
       setTone('error')
       const why = 'REST-ядро недоступно (' + note(err) + ')'
-      setStatus(why + ' — источник ещё не прогнан')
+      setStatus(why + ' - источник ещё не прогнан')
       setRerunErr(why)
       return { ok: false, why }
     } finally {
@@ -1117,7 +1117,7 @@ function B2SPane({ ctx }) {
       if (!confirm) {
         if (!out.has_skill_md) {
           setTone('error')
-          setStatus('в staging/' + name + ' нет SKILL.md — сначала черновик')
+          setStatus('в staging/' + name + ' нет SKILL.md - сначала черновик')
         } else {
           setTone(out.risk ? 'error' : 'done')
           setStatus(
@@ -1178,7 +1178,7 @@ function B2SPane({ ctx }) {
         setStatus('план по главам не построен: ' + ((out && out.error) || 'ядро не ответило'))
       } else if (!out.target_exists) {
         setTone('done')
-        setStatus('скилла «' + name + '» ещё нет — все ' + ((out.chapters || []).length) +
+        setStatus('скилла «' + name + '» ещё нет - все ' + ((out.chapters || []).length) +
           ' файлов лягут новыми, сливать не с чем' + saved)
       } else {
         setTone('done')
@@ -1211,7 +1211,7 @@ function B2SPane({ ctx }) {
      где staging, какой Python, какие черновики наготове. */
   const coreTip = coreInfo
     ? [
-        'Прямой режим: шаги 1 и 3 идут мимо чата — локальный Python ядра (без LLM).',
+        'Прямой режим: шаги 1 и 3 идут мимо чата - локальный Python ядра (без LLM).',
         coreInfo.layer ? 'слой: ' + coreInfo.layer : '',
         coreInfo.repo ? 'репо: ' + coreInfo.repo : '',
         coreInfo.staging ? 'staging: ' + coreInfo.staging : '',
@@ -1325,22 +1325,22 @@ function B2SPane({ ctx }) {
      честной ценой там, где шаг платный, и с «без записи / только чтение» там,
      где это неочевидно. */
   const TIP = {
-    srcAnalyze: 'Скачать источник, вычистить мусор и посчитать метрики — прямо в ядро, без чата и без LLM',
+    srcAnalyze: 'Скачать источник, вычистить мусор и посчитать метрики - прямо в ядро, без чата и без LLM',
     srcRerun: 'Разобрать источник заново: файлы скилла не пишутся, в профиль ничего не уходит',
     srcAnyway: 'Разобрать как страницу, даже если имя файла похоже на markdown',
     retry: 'Повторить разбор источника в том же режиме и с той же стратегией',
-    showText: 'Показать очищенный текст источника целиком — только чтение, ничего не пишет',
+    showText: 'Показать очищенный текст источника целиком - только чтение, ничего не пишет',
     draft: 'Задание агенту в чате: написать черновик скилла в staging. В профиль ничего не пишется',
-    redraft: 'Перегенерировать черновик с учётом твоих замечаний — шаг платный, счёт растёт с каждой итерацией',
+    redraft: 'Перегенерировать черновик с учётом твоих замечаний - шаг платный, счёт растёт с каждой итерацией',
     review: 'Разобрать черновик и выписать правки списком: файлы не меняются, платит только LLM в чате',
-    reviewOff: 'Сначала сделай черновик — разбирать пока нечего',
-    plan: 'Сравнить главы черновика с соседними скиллами: что слить, что переписать — без записи и без LLM',
+    reviewOff: 'Сначала сделай черновик - разбирать пока нечего',
+    plan: 'Сравнить главы черновика с соседними скиллами: что слить, что переписать - без записи и без LLM',
     planSend: 'Отдать раскладку агенту в чат: пусть решит, что слить и что переписать',
     draftRefresh: 'Перечитать staging с диска: список файлов и их объём',
-    stagingCheck: 'Проверить, не появились ли файлы в staging — только чтение',
+    stagingCheck: 'Проверить, не появились ли файлы в staging - только чтение',
     skillMd: 'Показать текст SKILL.md из черновика',
     openFile: 'Показать текст файла черновика: ',
-    catDesc: 'Задание агенту в чате: написать description категории — файл скилла не трогается',
+    catDesc: 'Задание агенту в чате: написать description категории - файл скилла не трогается',
     catDescFix: 'Задание агенту в чате: обернуть готовый текст категории в frontmatter, тело сохранится'
   }
   /* Чипса категории — «суть категории», а не служебная подпись. Описание берём
@@ -1492,15 +1492,15 @@ function B2SPane({ ctx }) {
                 jsx('div', { className: GROUP_LEAD, style: GROUP_CAP, children: [
                   jsx('div', {
                     className: CHIP_CHIEF,
-                    children: '⚠ файл без frontmatter — Hermes его не читает, в промпт уйдёт голое имя категории.'
+                    children: '⚠ файл без frontmatter - Hermes его не читает, в промпт уйдёт голое имя категории.'
                   }),
                   jsx('div', {
                     className: CHIP_MUTED,
-                    children: 'сейчас в файле: ' + ((catInfo.desc_raw || '').slice(0, 240) || '—')
+                    children: 'сейчас в файле: ' + ((catInfo.desc_raw || '').slice(0, 240) || '-')
                   })
                 ] }),
                 jsx('div', { className: 'pt-1', children:
-                  chipAction('🩹 Починить файл — обернуть текст в frontmatter',
+                  chipAction('🩹 Починить файл - обернуть текст в frontmatter',
                     () => sendDesc('desc-fix'), busy === 'desc-fix', 'fix', TIP.catDescFix) })
               ]
             : catIsNew
@@ -1508,7 +1508,7 @@ function B2SPane({ ctx }) {
                   jsx('div', { className: GROUP_LEAD, style: GROUP_CAP, children: [
                     jsx('div', {
                       className: CHIP_CHIEF,
-                      children: 'описания категории нет — категория новая и пустая: агент увидит только имя группы.'
+                      children: 'описания категории нет - категория новая и пустая: агент увидит только имя группы.'
                     }),
                     jsx('div', { className: CHIP_MUTED, children: 'каталог пока пуст: в нём ни одного скилла' })
                   ] }),
@@ -1520,11 +1520,11 @@ function B2SPane({ ctx }) {
                   jsx('div', { className: GROUP_LEAD, style: GROUP_CAP, children: [
                     jsx('div', {
                       className: CHIP_CHIEF,
-                      children: 'описания категории нет — агент увидит только имя группы.'
+                      children: 'описания категории нет - агент увидит только имя группы.'
                     }),
                     jsx('div', {
                       className: CHIP_MUTED,
-                      children: 'скиллов внутри: ' + catSkills + ' — они видны и грузятся как обычно; ' +
+                      children: 'скиллов внутри: ' + catSkills + ' - они видны и грузятся как обычно; ' +
                         'описание лишь подсказывает агенту, что это за группа и куда класть новое.'
                     })
                   ] }),
@@ -1559,7 +1559,7 @@ function B2SPane({ ctx }) {
     children: [
       jsx('summary', {
         className: 'cursor-pointer select-none text-(--ui-text-secondary)',
-        children: jsx('span', Ell('📊 Результат разбора' + (headBits.length ? ' · ' + headBits.join(' · ') : ' — пока пусто')))
+        children: jsx('span', Ell('📊 Результат разбора' + (headBits.length ? ' · ' + headBits.join(' · ') : ' - пока пусто')))
       }),
 
       /* 2) сводка последнего прогона: стратегия-победитель, объём, путь к файлу */
@@ -1608,7 +1608,7 @@ function B2SPane({ ctx }) {
           })
         : jsx('div', {
             className: 'mt-1 opacity-70',
-            children: 'нажми «Прогнать источник заново» в блоке 1 — вычищенный текст появится здесь'
+            children: 'нажми «Прогнать источник заново» в блоке 1 - вычищенный текст появится здесь'
           }),
       textInfo && textInfo.path
         ? jsx('div', Ell(textInfo.path, 'pt-1 opacity-70'))
@@ -1672,10 +1672,10 @@ function B2SPane({ ctx }) {
               className: 'mt-1 flex flex-col gap-0.5 text-(--ui-text-secondary)',
               children: [
                 jsx('div', Ell('лежит в ' + (draft.dir || 'staging/' + (draft.name || '')) +
-                  ' — в постоянные скиллы ничего не ушло')),
+                  ' - в постоянные скиллы ничего не ушло')),
                 jsx('div', { className: 'break-words', children:
-                  'SKILL.md: ' + ((draft.skill && draft.skill.name) || draft.name || '—') +
-                  (draft.skill && draft.skill.description ? ' — ' + draft.skill.description : '') }),
+                  'SKILL.md: ' + ((draft.skill && draft.skill.name) || draft.name || '-') +
+                  (draft.skill && draft.skill.description ? ' - ' + draft.skill.description : '') }),
                 draft.skill && draft.skill.frontmatter === false
                   ? jsx('div', {
                       className: 'text-(--ui-text-primary)',
@@ -1690,7 +1690,7 @@ function B2SPane({ ctx }) {
             }),
 
             jsx('div', { className: 'mt-2 text-(--ui-text-secondary)',
-              children: 'состав черновика — нажми файл, чтобы прочитать' }),
+              children: 'состав черновика - нажми файл, чтобы прочитать' }),
             /* Скроллится ТОЛЬКО список файлов: управление под ним обязано остаться
                на виду (грабля: кнопка внутри зоны с потолком уезжает под скроллбар).
                Зона — то же «окно», что поле очищенного текста в блоке разбора: фон
@@ -1754,17 +1754,17 @@ function B2SPane({ ctx }) {
                 })
               : jsx('div', {
                   className: 'mt-1 opacity-70',
-                  children: 'нажми файл в списке — текст покажется здесь (SKILL.md — кнопкой ниже)'
+                  children: 'нажми файл в списке - текст покажется здесь (SKILL.md - кнопкой ниже)'
                 }),
             jsx('div', {
               className: 'pt-1 opacity-70',
-              children: 'черновик правят в чате; перегенерация — кнопка «✎» в блоке 3, а в skills/ переносит блок 4'
+              children: 'черновик правят в чате; перегенерация - кнопка «✎» в блоке 3, а в skills/ переносит блок 4'
             })
           ]
         : [
             jsx('div', {
               className: 'mt-1 opacity-80',
-              children: 'черновик пишет LLM в чате: задание отправляет кнопка «✎ Сделать черновик», файлы лягут в staging — сюда приедут сами, как только агент их допишет'
+              children: 'черновик пишет LLM в чате: задание отправляет кнопка «✎ Сделать черновик», файлы лягут в staging - сюда приедут сами, как только агент их допишет'
             }),
             jsx('div', {
               className: 'mt-1 flex flex-wrap gap-1',
@@ -1842,7 +1842,7 @@ function B2SPane({ ctx }) {
           preview.mode === 'replace'
             ? jsx('div', {
                 className: 'pt-1 text-(--ui-text-primary)',
-                children: '⚠ ЗАМЕНА: каталог скилла сносится целиком — старых глав не останется.'
+                children: '⚠ ЗАМЕНА: каталог скилла сносится целиком - старых глав не останется.'
               })
             : null,
           preview.warning
@@ -1853,7 +1853,7 @@ function B2SPane({ ctx }) {
               ? 'бэкап: ' + preview.backup
               : preview.target_exists
                 ? 'бэкап снимется перед записью'
-                : 'новый скилл — бэкап не нужен',
+                : 'новый скилл - бэкап не нужен',
             'pt-1 opacity-70'
           ))
         ]
@@ -1909,7 +1909,7 @@ function B2SPane({ ctx }) {
           jsx('div', {
             className: 'pt-1 opacity-70',
             children: chapterPlan.target_exists
-              ? 'Python дал раскладку и близость — приговор выносит LLM, спорное решает владелец'
+              ? 'Python дал раскладку и близость - приговор выносит LLM, спорное решает владелец'
               : 'все файлы новые: выбирать не из чего, долив невозможен'
           })
         ]
@@ -1943,7 +1943,7 @@ function B2SPane({ ctx }) {
       jsx('span', Ell(
         chapterBusy
           ? 'считаю близость глав…'
-          : 'долив: показывает пересечение тем со старыми главами — без записи и без LLM',
+          : 'долив: показывает пересечение тем со старыми главами - без записи и без LLM',
         'pl-1 text-[0.625rem] leading-snug text-(--ui-text-tertiary)'
       )),
       chapterBlock
@@ -1977,7 +1977,7 @@ function B2SPane({ ctx }) {
         if (!res.ok) { onlyB(2); return }
         if (!res.md) {
           onlyB(2)
-          setStatus('блок 1 · источник не похож на markdown (стратегия ' + (res.strategy || '?') + ') — смотри блок 2')
+          setStatus('блок 1 · источник не похож на markdown (стратегия ' + (res.strategy || '?') + ') - смотри блок 2')
         }
       }
       return
@@ -1990,7 +1990,7 @@ function B2SPane({ ctx }) {
   const next2 = () => {
     if (!analyzed) {
       setTone('error')
-      setStatus('блок 2 · сначала разбери источник — без отчёта черновик не собрать')
+      setStatus('блок 2 · сначала разбери источник - без отчёта черновик не собрать')
       return
     }
     onlyB(3)
@@ -2000,7 +2000,7 @@ function B2SPane({ ctx }) {
   const next3 = () => {
     if (!hasDraft) {
       setTone('error')
-      setStatus('блок 3 · черновика в staging нет — нажми «Сделать черновик»')
+      setStatus('блок 3 · черновика в staging нет - нажми «Сделать черновик»')
       return
     }
     onlyB(4)
@@ -2046,8 +2046,8 @@ function B2SPane({ ctx }) {
                   })
                 : jsx(Badge, {
                     variant: 'warn', style: BTN_FIT,
-                    title: 'Маршруты /api/plugins/b2s/ ещё не смонтированы — панель уходит в чат. Перезапусти dashboard-службу: tools/restart_dashboard.py',
-                    children: cutSpan('ядро не ответило — перезапусти dashboard')
+                    title: 'Маршруты /api/plugins/b2s/ ещё не смонтированы - панель уходит в чат. Перезапусти dashboard-службу: tools/restart_dashboard.py',
+                    children: cutSpan('ядро не ответило - перезапусти dashboard')
                   })
         ]
       }),
@@ -2065,14 +2065,14 @@ function B2SPane({ ctx }) {
         n: 1,
         title: 'Источник и имя скилла',
         state: trimSrc
-          ? (mdSrc ? 'markdown: блок 2 пропустим' : (isRemoteSrc(trimSrc) ? 'URL — нужен разбор' : 'файл — нужен разбор'))
+          ? (mdSrc ? 'markdown: блок 2 пропустим' : (isRemoteSrc(trimSrc) ? 'URL - нужен разбор' : 'файл - нужен разбор'))
           : 'пусто',
         tone: trimSrc ? (mdSrc ? 'done' : null) : 'bad',
         open: !!openB[1],
         onToggle: () => toggleB(1),
         style: { backgroundColor: openB[1] ? BLOCK_BG : 'transparent' },
         hint: trimSrc
-          ? (mdSrc ? 'файл уже markdown — анализ пропустим' : 'блок 2 разберёт источник')
+          ? (mdSrc ? 'файл уже markdown - анализ пропустим' : 'блок 2 разберёт источник')
           : 'впиши URL или путь к файлу',
         foot: jsx(NextBtn, {
           label: 'ДАЛЕЕ →',
@@ -2103,7 +2103,7 @@ function B2SPane({ ctx }) {
                   variant: 'secondary',
                   size: 'icon-xs',
                   className: 'shrink-0',
-                  title: 'Выбрать файл на диске — полный путь встанет в поле «Источник»',
+                  title: 'Выбрать файл на диске - полный путь встанет в поле «Источник»',
                   'aria-label': 'Выбрать файл',
                   onClick: pickFile,
                   children: iconFolder()
@@ -2112,7 +2112,7 @@ function B2SPane({ ctx }) {
                   variant: 'secondary',
                   size: 'icon-xs',
                   className: 'shrink-0',
-                  title: 'Вставить из буфера обмена — URL страницы или путь к файлу',
+                  title: 'Вставить из буфера обмена - URL страницы или путь к файлу',
                   'aria-label': 'Вставить из буфера обмена',
                   onClick: pasteSrc,
                   children: iconClipboard()
@@ -2160,13 +2160,13 @@ function B2SPane({ ctx }) {
                             }),
                             jsxs('div', { className: CHIP_BOX, style: { backgroundColor: CHIP_BG }, children: [
                               jsx('div', { className: GROUP_LEAD, style: GROUP_CAP, children: [
-                                jsx('div', { className: CHIP_CHIEF, children: '⚠ категории «' + (cat || '…') + '» в профиле нет — папка создастся при установке.' }),
+                                jsx('div', { className: CHIP_CHIEF, children: '⚠ категории «' + (cat || '…') + '» в профиле нет - папка создастся при установке.' }),
                                 jsx('div', { className: CHIP_MUTED, children: 'Опиши её здесь: без описания Hermes покажет категорию агенту голым именем, и скилл в ней будет труднее найти.' })
                               ] }),
                               jsx('div', { className: 'pt-1', children: jsx(Input, {
                                 value: catDesc,
                                 onChange: (e) => setCatDesc(e.target.value),
-                                placeholder: 'описание категории для Hermes — одной строкой',
+                                placeholder: 'описание категории для Hermes - одной строкой',
                                 className: 'h-7 text-xs'
                               }) })
                             ] })
@@ -2181,14 +2181,14 @@ function B2SPane({ ctx }) {
                   : jsx(Input, {
                       value: cat,
                       onChange: (e) => setCat(e.target.value),
-                      placeholder: cats === null ? 'список грузится…' : 'списка нет — перезапусти dashboard',
+                      placeholder: cats === null ? 'список грузится…' : 'списка нет - перезапусти dashboard',
                       title: catErr,
                       className: 'h-7 text-xs'
                     })
               }),
               jsxs(Field, {
                 label: 'Имя скилла',
-                hint: existing ? 'занято — долив' : skills ? 'свободно — новый' : '',
+                hint: existing ? 'занято - долив' : skills ? 'свободно - новый' : '',
                 children: [
                   jsx(Input, {
                     value: name,
@@ -2209,12 +2209,12 @@ function B2SPane({ ctx }) {
                     existing
                       ? 'уже стоит: ' + (existing.category || 'без категории') + ' · глав ' +
                         existing.chapters + ' · файлов ' + existing.files +
-                        ' — новые главы допишутся к нему'
+                        ' - новые главы допишутся к нему'
                       : skills === null
                         ? 'список скиллов грузится…'
                         : skillsErr
-                          ? 'списка нет — имя соберётся как новый скилл'
-                          : 'такого скилла нет — будет новый',
+                          ? 'списка нет - имя соберётся как новый скилл'
+                          : 'такого скилла нет - будет новый',
                     'text-[10px] leading-tight text-(--ui-text-tertiary, #8a8a8a)'
                   )),
                   existing
@@ -2294,14 +2294,14 @@ function B2SPane({ ctx }) {
         title: mdSrc ? 'Анализ MD файла' : 'Анализ источника',
         state: mdSrc
           ? 'пропущен: файл уже markdown'
-          : (analyzed ? 'готов — ' + (report && report.chars ? fmtInt(report.chars) + ' симв.' : 'отчёт есть') : (rerunErr ? 'сорвался' : 'ещё не запускался')),
+          : (analyzed ? 'готов - ' + (report && report.chars ? fmtInt(report.chars) + ' симв.' : 'отчёт есть') : (rerunErr ? 'сорвался' : 'ещё не запускался')),
         tone: mdSrc ? 'skip' : (analyzed ? 'done' : (rerunErr ? 'bad' : null)),
         open: !!openB[2],
         onToggle: () => toggleB(2),
         style: { backgroundColor: openB[2] ? BLOCK_BG : 'transparent' },
         hint: mdSrc
-          ? 'markdown — уже текст: чистить нечего, метрики посмотреть можно'
-          : (analyzed ? 'источник разобран — можно к черновику' : 'скачать и вычистить текст: мимо чата, прямо в ядро'),
+          ? 'markdown - уже текст: чистить нечего, метрики посмотреть можно'
+          : (analyzed ? 'источник разобран - можно к черновику' : 'скачать и вычистить текст: мимо чата, прямо в ядро'),
         foot: jsx(NextBtn, {
           label: 'ДАЛЕЕ →',
           onClick: next2,
@@ -2311,7 +2311,7 @@ function B2SPane({ ctx }) {
         }),
         children: [
           mdSrc
-            ? jsx('div', Ell('⚠ «уже markdown» решено по имени файла, до сети. Если это не так — жми «Прогнать всё равно», ядро разберёт как страницу.',
+            ? jsx('div', Ell('⚠ «уже markdown» решено по имени файла, до сети. Если это не так - жми «Прогнать всё равно», ядро разберёт как страницу.',
                 'text-[0.625rem] leading-snug opacity-80'))
             : null,
           jsx('div', {
@@ -2350,7 +2350,7 @@ function B2SPane({ ctx }) {
             ]
           }),
           rerunErr
-            ? jsx('div', Ell('прогон источника сорвался: ' + rerunErr + ' — в чат это не ушло, разбор делает ядро',
+            ? jsx('div', Ell('прогон источника сорвался: ' + rerunErr + ' - в чат это не ушло, разбор делает ядро',
                 'text-[0.625rem] leading-snug text-(--ui-text-primary)'))
             : null,
           resultBlock
@@ -2360,21 +2360,21 @@ function B2SPane({ ctx }) {
       /* ── 3. Черновик (генерация в staging, в постоянные скиллы не пишем) ── */
       jsx(PaneBlock, {
         n: 3,
-        title: 'Черновик скилла — без записи',
+        title: 'Черновик скилла - без записи',
         state: hasDraft
-          ? 'есть — в staging'
-          : (draftWait ? 'задание в чате — жду staging' : (busy === 'draft' ? 'пишется' : 'нет')),
+          ? 'есть - в staging'
+          : (draftWait ? 'задание в чате - жду staging' : (busy === 'draft' ? 'пишется' : 'нет')),
         tone: hasDraft ? 'done' : null,
         open: !!openB[3],
         onToggle: () => toggleB(3),
         style: { backgroundColor: openB[3] ? BLOCK_BG : 'transparent' },
         hint: hasDraft
-          ? 'черновик на месте — можно записывать в профиль'
+          ? 'черновик на месте - можно записывать в профиль'
           : (draftWait
-              ? 'задание ушло в чат — файлы приедут в staging сами, панель следит'
+              ? 'задание ушло в чат - файлы приедут в staging сами, панель следит'
               : (mdSrc
-                  ? 'блок 2 пропущен: источник уже markdown — жми «✎ Сделать черновик»'
-                  : 'черновика нет: жми «✎ Сделать черновик» — прозу пишет LLM в чате')),
+                  ? 'блок 2 пропущен: источник уже markdown - жми «✎ Сделать черновик»'
+                  : 'черновика нет: жми «✎ Сделать черновик» - прозу пишет LLM в чате')),
         foot: jsx(NextBtn, {
           label: 'ДАЛЕЕ →',
           onClick: next3,
@@ -2428,10 +2428,10 @@ function B2SPane({ ctx }) {
           }),
           jsx('span', Ell(hasDraft
             ? 'Правки к черновику и повторный прогон считаются заново: счёт растёт с числом итераций.'
-            : '«Критика» включится, когда в staging появится черновик — его делает кнопка «✎» выше (она не гаснет).',
+            : '«Критика» включится, когда в staging появится черновик - его делает кнопка «✎» выше (она не гаснет).',
             'pl-1 text-[0.625rem] leading-snug text-(--ui-text-tertiary)')),
           mdSrc && !hasDraft
-            ? jsx('span', Ell('источник — готовый markdown: текст уже добыт шагом 1, анализ (блок 2) не нужен, черновик можно делать сразу.',
+            ? jsx('span', Ell('источник - готовый markdown: текст уже добыт шагом 1, анализ (блок 2) не нужен, черновик можно делать сразу.',
                 'pl-1 text-[0.625rem] leading-snug text-(--ui-text-tertiary)'))
             : null,
           draftBlock,
@@ -2450,13 +2450,11 @@ function B2SPane({ ctx }) {
         open: !!openB[4],
         onToggle: () => toggleB(4),
         style: { backgroundColor: openB[4] ? BLOCK_BG : 'transparent' },
-        hint: hasDraft
-          ? (preview
-              ? 'второй клик пишет в skills/<категория>/<имя>/'
-              : '«Предпросмотр» соберёт план и ничего не запишет — пишет только «Установить»')
-          : 'черновика нет — записывать нечего',
+        /* Подписи-состояния у этого блока НЕТ намеренно: обе фразы ушли в тултип
+           кнопки («что будет, если нажму»), а не висят рядом с ней. Владелец:
+           «выводить их подсказкой на кнопке, а не рядом с кнопкой». */
         foot: jsx(NextBtn, {
-          /* Два клика — два разных слова на кнопке, а не одно и то же действие.
+          /* Два клика - два разных слова на кнопке, а не одно и то же действие.
              До предпросмотра кнопка обещает ровно то, что сделает: показать план
              (ноль риска), и только после него — «Установить». Владелец: «до первого
              клика должна быть надпись "Предпросмотр", и только после его выполнения
@@ -2468,10 +2466,10 @@ function B2SPane({ ctx }) {
           disabled: !!busy || !hasDraft,
           fill: hasDraft ? STEP_BG : undefined,
           title: !hasDraft
-            ? 'сначала сделай черновик — записывать нечего'
+            ? 'сначала сделай черновик - записывать нечего'
             : (preview
-                ? 'записать черновик в skills/<категория>/<имя>/: пишет ядро, LLM и токены не тратятся'
-                : 'показать план записи: что добавится, что перезапишется, где бэкап — без записи')
+                ? 'второй клик пишет в skills/<категория>/<имя>/'
+                : '«Предпросмотр» соберёт план и ничего не запишет - пишет только «Установить»')
         }),
         children: [
           jsx('span', Ell(preview
@@ -2480,7 +2478,7 @@ function B2SPane({ ctx }) {
                 : 'второй клик = записать план в skills/<категория>/<имя>/')
             : (existing
                 ? 'имя занято → долив: новые главы лягут рядом, старое не тронем. План соберёт «Предпросмотр»'
-                : 'перенос в skills/ — сначала «Предпросмотр» без записи, пишет только «Установить». Любое действие в блоках 1–3 сбрасывает план'),
+                : 'перенос в skills/ - сначала «Предпросмотр» без записи, пишет только «Установить». Любое действие в блоках 1-3 сбрасывает план'),
             'text-[0.625rem] leading-snug text-(--ui-text-tertiary)')),
           planBlock
         ]
@@ -2490,7 +2488,7 @@ function B2SPane({ ctx }) {
         className: 'flex flex-col gap-0.5 pt-1 text-[0.625rem] text-(--ui-text-tertiary)',
         children: [
           jsx('span', Ell('REST: /rerun · /install · /plan · /skills · /categories · /text')),
-          jsx('span', Ell('сессия (для чат-шагов): ' + (focusedId || '—')))
+          jsx('span', Ell('сессия (для чат-шагов): ' + (focusedId || '-')))
         ]
       })
     ]

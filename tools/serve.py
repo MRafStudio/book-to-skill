@@ -327,7 +327,7 @@ class Handler(BaseHTTPRequestHandler):
             ORDERS_DIR.mkdir(parents=True, exist_ok=True)
             (ORDERS_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}-{order['kind']}.json").write_text(
                 json.dumps(order, ensure_ascii=False, indent=1), encoding="utf-8")
-            self._json(200, {"ok": True, "message": f"заказ «{order['kind']}» в очереди — агент подхватит",
+            self._json(200, {"ok": True, "message": f"заказ «{order['kind']}» в очереди - агент подхватит",
                              "order": order})
 
         else:
@@ -372,10 +372,10 @@ def main() -> int:
     try:
         httpd = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     except OSError as e:
-        say(f"ОШИБКА: порт {args.port} занят ({e}) — сервер, похоже, уже запущен")
+        say(f"ОШИБКА: порт {args.port} занят ({e}) - сервер, похоже, уже запущен")
         print(f"порт {args.port} уже занят: {e}", flush=True)
         return 1
-    say(f"b2s dashboard: http://127.0.0.1:{args.port}/  (pid {os.getpid()}) — жду страницу")
+    say(f"b2s dashboard: http://127.0.0.1:{args.port}/  (pid {os.getpid()}) - жду страницу")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

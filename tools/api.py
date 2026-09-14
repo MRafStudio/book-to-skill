@@ -332,7 +332,7 @@ def do_write_category_desc(cat: str, text: str = "", mode: str = "write",
         elif not force:
             return {"ok": False, "exists": True, "desc_state": here["desc_state"],
                     "desc": here["desc"] or here["desc_raw"], "path": str(path),
-                    "error": "DESCRIPTION.md уже есть — нужен --force или режим fix"}
+                    "error": "DESCRIPTION.md уже есть - нужен --force или режим fix"}
     if not one_line:
         return {"ok": False, "error": "пустое описание: нечего записывать"}
 
@@ -393,13 +393,13 @@ def _fetched_file(path: str = "") -> Path:
         rep = load_state().get("report") or {}
         raw = str(rep.get("source_file") or "")
     if not raw:
-        raise ValueError("нечего показывать: сначала шаг 1 — разбор источника")
+        raise ValueError("нечего показывать: сначала шаг 1 - разбор источника")
     target = Path(raw).resolve()
     if not target.is_file():
         raise ValueError(f"файл не найден: {target}")
     root = FETCH_DIR.resolve()
     if target != root and root not in target.parents:
-        raise ValueError("файл лежит вне b2s_fetched — показываю только своё сырьё")
+        raise ValueError("файл лежит вне b2s_fetched - показываю только своё сырьё")
     return target
 
 
@@ -463,9 +463,9 @@ def _draft_dir(name: str = "") -> Path:
                 return p
         # Имя задано явно — чужие цифры не подставляем: панель скажет «для этого
         # имени черновика нет», а не покажет объём другого скилла.
-        raise ValueError(f"черновика «{wanted}» в staging нет — его пишет шаг 2")
+        raise ValueError(f"черновика «{wanted}» в staging нет - его пишет шаг 2")
     if not dirs:
-        raise ValueError("в staging нет черновиков — черновик пишет шаг 2 (это работа LLM)")
+        raise ValueError("в staging нет черновиков - черновик пишет шаг 2 (это работа LLM)")
     return dirs[0]
 
 
@@ -783,7 +783,7 @@ def _chapter_plan(staging: Path, target: Path, threshold: float = 0.35) -> dict:
                            confidence="high" if score >= 0.6 else "medium",
                            why=f"тема пересекается с {best} (близость {score:.2f})")
             elif best:
-                row["why"] = f"ближайшее — {best}, но близость низкая ({score:.2f})"
+                row["why"] = f"ближайшее - {best}, но близость низкая ({score:.2f})"
             else:
                 row["why"] = "в скилле нет файлов того же типа"
         rows.append(row)
@@ -810,7 +810,7 @@ def _chapter_prompt(name: str, mode: str, plan: dict) -> str:
     lines = [f"Долив в скилл «{name}» (режим {mode}). Раскладка по файлам:"]
     for row in plan["chapters"]:
         if row["action"] == "merge":
-            tail = "" if row.get("confidence") == "high" else " — пересечение слабое, смотри глазами"
+            tail = "" if row.get("confidence") == "high" else " - пересечение слабое, смотри глазами"
             lines.append(f"- {row['file']} («{row['title']}») → слить в {row['merge_into']} "
                          f"(близость {row['similarity']:.2f}){tail}")
         elif row["action"] == "rewrite":
@@ -824,7 +824,7 @@ def _chapter_prompt(name: str, mode: str, plan: dict) -> str:
         lines.append("Остаются нетронутыми: " + ", ".join(k["file"] for k in plan["keep"]))
     lines.append("")
     lines.append("По каждой строке реши: слить в существующий файл (объединить, убрав дубли), "
-                 "переписать целиком или добавить новой главой. Спорные случаи — на решение "
+                 "переписать целиком или добавить новой главой. Спорные случаи - на решение "
                  "владельца, с обоснованием.")
     return "\n".join(lines)
 
@@ -845,7 +845,7 @@ def do_chapter_plan(name: str, cat: str = "", mode: str = "auto",
     staging = STAGING / skill
     if not staging.is_dir():
         return {"ok": False, "error": f"нет черновика: {staging}",
-                "hint": "сначала шаг 2 — «Сделать черновик»"}
+                "hint": "сначала шаг 2 - «Сделать черновик»"}
     target = hermes_home() / "skills" / category / skill
     target_exists = target.is_dir() and any(target.iterdir())
     wanted = (mode or "auto").strip().lower()
@@ -1061,7 +1061,7 @@ def do_install(name: str, cat: str = "", confirm: bool = False,
     staging = STAGING / skill
     if not staging.is_dir():
         return {"ok": False, "error": f"нет черновика: {staging}",
-                "hint": "сначала шаг 2 — «Сделать черновик» (это уже LLM, идёт в чате)"}
+                "hint": "сначала шаг 2 - «Сделать черновик» (это уже LLM, идёт в чате)"}
 
     target = hermes_home() / "skills" / category / skill
     target_exists = target.is_dir() and any(target.iterdir())
@@ -1187,7 +1187,7 @@ def _install_warning(mode: str, counts: dict, target: Path,
         else:
             # Сносить нечего: режим выбран заранее, но цели ещё нет — говорим прямо,
             # иначе предупреждение пугает сносом того, что не существует.
-            parts.append("каталога ещё нет — заменять нечего, будет обычная установка")
+            parts.append("каталога ещё нет - заменять нечего, будет обычная установка")
     known = _existing_sources(target)
     if known:
         parts.append(f"источников внесено ранее: {len(known)}")
@@ -1196,7 +1196,7 @@ def _install_warning(mode: str, counts: dict, target: Path,
         # пояснение к ней (DESCRIPTION.md) читает из файла. Без файла категория
         # молчит — поэтому про это говорим ДО подтверждения, а не после.
         parts.append("категория новая: папка создастся, а вот DESCRIPTION.md у неё "
-                     "не будет — Hermes покажет её без пояснения "
+                     "не будет - Hermes покажет её без пояснения "
                      "(заполни поле «описание категории»)")
     if not parts:
         return ""
@@ -1232,15 +1232,15 @@ def main(argv: list[str] | None = None) -> int:
     p_rerun.add_argument("--lang", default="")
 
     p_text = sub.add_parser("text", help="очищенный текст источника (то, что видно в панели)")
-    p_text.add_argument("--path", default="", help="файл; по умолчанию — последний прогон")
+    p_text.add_argument("--path", default="", help="файл; по умолчанию - последний прогон")
     p_text.add_argument("--offset", type=int, default=0)
     p_text.add_argument("--limit", type=int, default=0, help="0 = весь текст")
 
     p_draft = sub.add_parser("draft", help="сводка черновика в staging (заголовок блока панели)")
-    p_draft.add_argument("--name", default="", help="имя скилла; по умолчанию — самый свежий черновик")
+    p_draft.add_argument("--name", default="", help="имя скилла; по умолчанию - самый свежий черновик")
 
     p_dtext = sub.add_parser("draft-text", help="текст файла черновика (то, что видно в панели)")
-    p_dtext.add_argument("--name", default="", help="имя скилла; по умолчанию — самый свежий черновик")
+    p_dtext.add_argument("--name", default="", help="имя скилла; по умолчанию - самый свежий черновик")
     p_dtext.add_argument("--file", dest="rel", default="", help="файл внутри черновика; по умолчанию SKILL.md")
     p_dtext.add_argument("--offset", type=int, default=0)
     p_dtext.add_argument("--limit", type=int, default=0, help="0 = весь файл")
@@ -1275,7 +1275,7 @@ def main(argv: list[str] | None = None) -> int:
     p_desc.add_argument("--cat", required=True)
     p_desc.add_argument("--text", default="", help="текст описания (одной строкой)")
     p_desc.add_argument("--mode", default="write", choices=["write", "fix"],
-                        help="fix — обернуть в frontmatter прозу, которую Hermes сейчас не видит")
+                        help="fix - обернуть в frontmatter прозу, которую Hermes сейчас не видит")
     p_desc.add_argument("--force", action="store_true", help="перезаписать существующее описание")
 
 
