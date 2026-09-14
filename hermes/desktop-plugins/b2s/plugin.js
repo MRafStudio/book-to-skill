@@ -508,6 +508,13 @@ function B2SPane({ ctx }) {
      ничего не произошло». Гасится вотчером (watchDraft) или по дедлайну. */
   const [draftWait, setDraftWait] = useState(false)
 
+  /* Страховка к dropPreview: если входы поменяли руками (набрали другое имя, выбрали
+     другую категорию, вставили другой источник, переключили режим/язык), собранный
+     план записи уже не про них — предлагать «Установить» по устаревшему плану нельзя.
+     Явные вызовы dropPreview стоят в действиях, этот эффект ловит всё остальное,
+     включая правку полей клавиатурой. */
+  useEffect(() => { setPreview(null) }, [src, name, cat, act, mode, lang, strat])
+
   /* Мастер из четырёх блоков: источник → анализ → черновик → запись. Открыт ровно
      один блок (владелец: «запускаем плагин — виден только первый»), шапка блока
      сворачивает/разворачивает его руками, а кнопка в правом нижнем углу ведёт к
@@ -686,6 +693,7 @@ function B2SPane({ ctx }) {
   /** Текст источника — тот же шаг 1, но без LLM: ядро отдаёт файл из b2s_fetched.
       limit=0 — файл целиком («показать весь текст»), иначе только первый экран. */
   const loadText = async (limit = 6000) => {
+    dropPreview()          // «показать весь текст» — действие блока 2: прежний план записи уже не про это
     setTextBusy(true)
     try {
       const out = await ctx.rest('/text', {
@@ -711,7 +719,9 @@ function B2SPane({ ctx }) {
    *  блок открыт: черновик пишет LLM в чате, о готовности панель узнать не может —
    *  единственный честный источник правды здесь файлы в staging. */
   const loadDraft = async (silent = false) => {
-    if (!silent) setDraftBusy(true)
+    /* Тихий вызов из вотчера (silent) — это не нажатие владельца, и он не имеет права
+       стирать план, только что собранный в блоке 4. Клик по кнопке — другое дело. */
+    if (!silent) { setDraftBusy(true); dropPreview() }
     try {
       const out = await ctx.rest('/draft', {
         method: 'POST',
@@ -729,6 +739,7 @@ function B2SPane({ ctx }) {
   /** Файл черновика — по клику внутри блока. limit 0 = файл целиком: SKILL.md и
    *  главы читаются глазами, а не «первым экраном», как сырой источник. */
   const loadDraftText = async (rel) => {
+    dropPreview()          // открыли файл черновика — вход блока 4 изменился
     setDraftFile(rel || '')
     setDraftTextBusy(true)
     try {
@@ -856,6 +867,7 @@ function B2SPane({ ctx }) {
       setStatus('нет активной сессии — открой чат и повтори')
       return false
     }
+    dropPreview()   // черновик/критика/описание категории — шаги блоков 2–3: план записи устарел
     const intentText = intentOf(kind, { src, name, strat, mode, lang, cat, act, desc: catDesc })
     busyRef.current = true
     setBusy(kind)
@@ -989,6 +1001,7 @@ function B2SPane({ ctx }) {
     if (busyRef.current) return { ok: false, busy: true }
     busyRef.current = true
     setBusy('rerun')
+    dropPreview()   // новый прогон источника — план записи по прежнему тексту недействителен
     setRerunErr('')
     setTone('working')
     setStatus('источник · загрузка и очистка…')
@@ -1096,11 +1109,19 @@ function B2SPane({ ctx }) {
     }
   }
 
+  /* Любое действие в блоках 1–3 обесценивает собранный план записи: он построен по тем
+     самым входам (источник, имя, категория, режим, черновик), которые это действие
+     меняет. Владелец: «любое нажатие кнопок в блоках 1,2,3 — должны сбрасывать флаг
+     этой кнопки в блоке 4 и скрывать поле предпросмотра». Иначе панель предлагает
+     «Установить» по устаревшему плану. */
+  const dropPreview = () => setPreview(null)
+
   /* План долива по главам. Файловый план (planBlock) говорит, ЧТО ляжет, но не
      отвечает, что слить со старыми главами, а что писать заново — для этого
      нужна близость тем, её считает Python. Запись в скилл тут невозможна:
      план кладётся рядом с черновиком, агент читает его файлом. */
   const runPlan = async () => {
+    dropPreview()   // раскладка по главам — шаг блока 3: план записи собирается заново
     setChapterBusy(true)
     setTone('working')
     setStatus('блок 3 · раскладка по главам…')
@@ -1203,6 +1224,30 @@ function B2SPane({ ctx }) {
      em привязан к кеглю группы (10px), а не к пикселям: высота держится при
      любом шрифте темы. Инлайном — классы панели доезжают не все. */
   const GROUP_CAP = { maxHeight: '7em', overflowY: 'auto', overscrollBehavior: 'contain' }
+  /* «Окно» с потолком, но БЕЗ flex-колонки. Причина не косметическая: у flex-ребёнка
+     с обрезкой (`overflow: hidden`) автоматический минимум = 0, поэтому вместо прокрутки
+     строки СПЛЮЩИВАЮТСЯ — замер стендом: 12 строк по 2.5 px, scrollHeight = clientHeight
+     (окно врало, что переполнения нет, а строки были нечитаемы). Блочная зона отдаёт
+     строки как есть, скролл честный; отступы между ними держит `space-y-1` в className. */
+  const ZONE_CAP = { ...GROUP_CAP, display: 'block' }
+  /* Зона предпросмотра установки — НЕ короткий GROUP_CAP: план по файлам читают
+     глазами, а не по одной строке (владелец: «слишком маленький… минимум до размеров
+     как в блоке 2»). Высота как у полей текста в блоках 2/3 (max-h-72 = 288 px), плюс
+     `resize: vertical` — браузер сам рисует грип в правом нижнем углу, за который
+     зону тянут вниз. Потолок не мешает росту: его снимает сам ресайз. */
+  const PREVIEW_CAP = {
+    minHeight: '7em',
+    maxHeight: 288,
+    /* `display: block` — не вкусовщина: зона flex-колонкой СЖИМАЛА строки плана
+       вместо прокрутки (замер стендом на 45 строках: каждая сплющивалась до 4.2 px,
+       scrollHeight = clientHeight, то есть окно врало о переполнении). Блочная зона
+       отдаёт строки как есть, а лишнее уезжает под скролл. */
+    display: 'block',
+    overflowY: 'auto',
+    overflowX: 'hidden',
+    resize: 'vertical',
+    overscrollBehavior: 'contain'
+  }
   /* Раскладка зоны текста внутри группы: строки друг под другом. */
   const GROUP_LEAD = 'flex min-w-0 flex-col gap-1'
   const FIELD_LINE = '1px solid color-mix(in oklab, ' + BASE + ' 22%, transparent)'
@@ -1623,8 +1668,8 @@ function B2SPane({ ctx }) {
                заливки не будет вовсе. */
             jsx('div', {
               'data-glass-raised': '',
-              className: GROUP_LEAD + ' rounded px-1.5 py-1',
-              style: Object.assign({}, GROUP_CAP, { border: FIELD_LINE, backgroundColor: PANEL_BG }),
+              className: 'min-w-0 space-y-1 rounded px-1.5 py-1',
+              style: Object.assign({}, ZONE_CAP, { border: FIELD_LINE, backgroundColor: PANEL_BG }),
               children: draftRowsList.map((r) => jsx(Button, {
                 size: 'sm',
                 variant: 'ghost',
@@ -1718,9 +1763,10 @@ function B2SPane({ ctx }) {
   const planRowsList = planRows(preview)
   const planBlock = preview
     ? jsxs('div', {
-        className: 'flex flex-col gap-0.5 rounded border px-2 py-1 text-[0.625rem] leading-snug',
+        className: 'rounded border px-2 py-1 text-[0.625rem] leading-snug',
+        title: 'Тяни за угол в правом нижнем углу, чтобы растянуть план',
         style: {
-          ...GROUP_CAP,
+          ...PREVIEW_CAP,
           backgroundColor: BLOCK_BG,
           borderColor: 'color-mix(in oklab, ' + BASE + ' 22%, transparent)'
         },
@@ -1788,8 +1834,8 @@ function B2SPane({ ctx }) {
              обнуляется в transparent (владелец: «дать ей такое же окно»). */
           jsx('div', {
             'data-glass-raised': '',
-            className: GROUP_LEAD + ' rounded px-1.5 py-1',
-            style: Object.assign({}, GROUP_CAP, { border: FIELD_LINE, backgroundColor: PANEL_BG }),
+            className: 'min-w-0 space-y-1 rounded px-1.5 py-1',
+            style: Object.assign({}, ZONE_CAP, { border: FIELD_LINE, backgroundColor: PANEL_BG }),
             children:
               chapterRowsList.map((line, i) => jsx('div', Ell(line), 'chap-' + i))
           }),
@@ -1863,6 +1909,7 @@ function B2SPane({ ctx }) {
   /* Шаг 1 → 2 (или сразу 3, если источник — готовый markdown). Разбор запускаем
      заодно: «ДАЛЕЕ» значит «идём дальше», а не «вернись и нажми ещё раз». */
   const next1 = async () => {
+    dropPreview()   // переход по мастеру обесценивает собранный план записи
     if (!trimSrc) {
       setTone('error')
       setStatus('блок 1 · пустой источник: вставь URL или путь к файлу')
@@ -2351,18 +2398,27 @@ function B2SPane({ ctx }) {
         onToggle: () => toggleB(4),
         style: { backgroundColor: openB[4] ? BLOCK_BG : 'transparent' },
         hint: hasDraft
-          ? (preview ? 'второй клик пишет в skills/<категория>/<имя>/' : 'первый клик — предпросмотр, он ничего не пишет')
+          ? (preview
+              ? 'второй клик пишет в skills/<категория>/<имя>/'
+              : '«Предпросмотр» соберёт план и ничего не запишет — пишет только «Установить»')
           : 'черновика нет — записывать нечего',
         foot: jsx(NextBtn, {
+          /* Два клика — два разных слова на кнопке, а не одно и то же действие.
+             До предпросмотра кнопка обещает ровно то, что сделает: показать план
+             (ноль риска), и только после него — «Установить». Владелец: «до первого
+             клика должна быть надпись "Предпросмотр", и только после его выполнения
+             надпись меняется на "Установить"». Замена сносит каталог — у неё своя подпись. */
           label: preview
-            ? (preview.mode === 'replace' ? 'Подтвердить ЗАМЕНУ' : preview.mode === 'append' ? 'Подтвердить долив' : 'Подтвердить установку')
-            : (existing ? (act === 'replace' ? 'Заменить скилл' : 'Дополнить скилл') : 'Установить'),
+            ? (preview.mode === 'replace' ? 'Подтвердить ЗАМЕНУ' : 'Установить')
+            : 'Предпросмотр',
           onClick: () => runInstall(!!preview),
           disabled: !!busy || !hasDraft,
           fill: hasDraft ? STEP_BG : undefined,
-          title: hasDraft
-            ? (preview ? 'записать черновик в профиль' : 'собрать план записи — без записи')
-            : 'сначала сделай черновик'
+          title: !hasDraft
+            ? 'сначала сделай черновик — записывать нечего'
+            : (preview
+                ? 'записать черновик в skills/<категория>/<имя>/: пишет ядро, LLM и токены не тратятся'
+                : 'показать план записи: что добавится, что перезапишется, где бэкап — без записи')
         }),
         children: [
           jsx('span', Ell(preview
@@ -2370,8 +2426,8 @@ function B2SPane({ ctx }) {
                 ? 'второй клик = снести каталог и залить черновик целиком; бэкап снимается до записи'
                 : 'второй клик = записать план в skills/<категория>/<имя>/')
             : (existing
-                ? 'имя занято → долив: новые главы лягут рядом, старое не тронем'
-                : 'перенос в skills/ — сначала предпросмотр без записи, пишет только второй клик'),
+                ? 'имя занято → долив: новые главы лягут рядом, старое не тронем. План соберёт «Предпросмотр»'
+                : 'перенос в skills/ — сначала «Предпросмотр» без записи, пишет только «Установить». Любое действие в блоках 1–3 сбрасывает план'),
             'text-[0.625rem] leading-snug text-(--ui-text-tertiary)')),
           planBlock
         ]

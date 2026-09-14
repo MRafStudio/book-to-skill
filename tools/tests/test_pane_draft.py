@@ -229,7 +229,7 @@ def main() -> int:
     check("заголовок блока обёрнут в span (Ell даёт props, а не элемент)",
           "jsx('span', Ell('📝 Черновик скилла'" in src)
     check("список файлов под потолком, управление — отдельной строкой",
-          "GROUP_CAP" in src[i_details:i_details + 4000] and
+          "ZONE_CAP" in src[i_details:i_details + 4000] and
           src.find("⟳ обновить с диска") > i_details)
 
     # 5a) Зона списка файлов — «окно» панели, а не вуаль блока. Жалоба владельца:
@@ -250,8 +250,14 @@ def main() -> int:
           "border: FIELD_LINE" in listzone,
           "нет рамки — окно не отделяется от блока")
     check("потолок и прокрутка сохранены (группа не растёт в сосиску)",
-          "Object.assign({}, GROUP_CAP" in listzone and "rounded px-1.5 py-1" in listzone,
+          "Object.assign({}, ZONE_CAP" in listzone and "rounded px-1.5 py-1" in listzone,
           f"{listzone[-200:]!r}")
+    # Зона обязана быть БЛОЧНОЙ: во flex-колонке ребёнок с обрезкой (overflow:hidden)
+    # не защищён минимумом, и вместо прокрутки строки сплющиваются (замер: 12 строк
+    # по 2.5 px при потолке 7em, scrollHeight = clientHeight).
+    check("список файлов — блочная зона, а не flex (иначе строки сплющиваются)",
+          "min-w-0 space-y-1 rounded px-1.5 py-1" in listzone,
+          "зона осталась flex-колонкой — при переполнении кнопки сожмутся по высоте")
 
     # 5a-bis) Зона списка ГЛАВ («План по главам») — тоже «окно», решение владельца:
     # «согласен, надо дать ей такое же окно, как списку файлов». Та же болезнь: строки
@@ -262,8 +268,8 @@ def main() -> int:
           i_chap > 0, f"chapterRowsList@{i_chap}")
     check("список глав — такое же окно панели, как список файлов",
           all(k in chapzone for k in ("backgroundColor: PANEL_BG", "border: FIELD_LINE",
-                                      "'data-glass-raised': ''", "Object.assign({}, GROUP_CAP",
-                                      "rounded px-1.5 py-1")),
+                                      "'data-glass-raised': ''", "Object.assign({}, ZONE_CAP",
+                                      "min-w-0 space-y-1 rounded px-1.5 py-1")),
           f"зона глав осталась вуалью блока: {chapzone[-160:]!r}")
     check("сводку можно перечитать, не раскрывая блок (кнопка «проверить staging»)",
           "проверить staging" in src)
