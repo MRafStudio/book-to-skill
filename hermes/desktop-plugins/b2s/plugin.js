@@ -534,8 +534,12 @@ function B2SPane({ ctx }) {
   const [src, setSrc] = useState(stored.src || '')
   /* Имя скилла по умолчанию - ПУСТОЕ (или подхваченное из прошлого захода): панель
      не подставляет чужой пример вроде `python-pathlib`, иначе человек ставит скилл
-     под чужим именем, не заметив. Имя придумывает он сам или агент. */
-  const [name, setName] = useState(stored.name || '')
+     под чужим именем, не заметив. Имя придумывает он сам или агент.
+     Восстановленное имя приводим к нижнему регистру: оно пришло из storage, а не
+     набрано сейчас, и жёлтая подсветка «такое имя Hermes не примет» на нём читалась
+     как поломка панели (владелец: «я ничего не делал, а он ругается»):
+     `license-Info` → `license-info`. Введённое руками не трогаем - там подсветка честная. */
+  const [name, setName] = useState(stored.name ? String(stored.name).toLowerCase() : '')
   const [strat, setStrat] = useState(stored.strat || 'auto')
   const [mode, setMode] = useState(stored.mode || 'technical')
   const [lang, setLang] = useState(stored.lang || 'ru')
