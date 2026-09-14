@@ -231,6 +231,27 @@ def main() -> int:
     check("список файлов под потолком, управление — отдельной строкой",
           "GROUP_CAP" in src[i_details:i_details + 4000] and
           src.find("⟳ обновить с диска") > i_details)
+
+    # 5a) Зона списка файлов — «окно» панели, а не вуаль блока. Жалоба владельца:
+    # «текстовое поле с прокруткой (в нём есть внедрённые кнопки глав и т.п.) должно
+    # было выводиться с фоном всего плагина». Эталон — блок 2 (поле очищенного текста):
+    # фон панели + рамка поля + data-glass-raised (под стеклом токен = transparent).
+    i_rows = src.find("draftRowsList.map((r) => jsx(Button")
+    listzone = src[max(0, i_rows - 800):i_rows] if i_rows > 0 else ""
+    check("зона списка найдена (есть кнопки файлов)",
+          i_rows > 0, f"draftRowsList@{i_rows}")
+    check("список файлов на фоне панели, как поле в блоке 2 (PANEL_BG)",
+          "backgroundColor: PANEL_BG" in listzone,
+          "нет PANEL_BG у зоны списка — кнопки лягут на вуаль блока")
+    check("под стеклом заливка не обнулится: data-glass-raised",
+          "'data-glass-raised': ''" in listzone,
+          "нет data-glass-raised — при mode=glass токен уйдёт в transparent")
+    check("зона списка обрамлена рамкой поля (FIELD_LINE)",
+          "border: FIELD_LINE" in listzone,
+          "нет рамки — окно не отделяется от блока")
+    check("потолок и прокрутка сохранены (группа не растёт в сосиску)",
+          "Object.assign({}, GROUP_CAP" in listzone and "rounded px-1.5 py-1" in listzone,
+          f"{listzone[-200:]!r}")
     check("сводку можно перечитать, не раскрывая блок (кнопка «проверить staging»)",
           "проверить staging" in src)
     check("пока блок раскрыт, сводка перечитывается сама (таймер по draftOpen)",

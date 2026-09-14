@@ -1585,10 +1585,17 @@ function B2SPane({ ctx }) {
             jsx('div', { className: 'mt-2 text-(--ui-text-secondary)',
               children: 'состав черновика — нажми файл, чтобы прочитать' }),
             /* Скроллится ТОЛЬКО список файлов: управление под ним обязано остаться
-               на виду (грабля: кнопка внутри зоны с потолком уезжает под скроллбар). */
+               на виду (грабля: кнопка внутри зоны с потолком уезжает под скроллбар).
+               Зона — то же «окно», что поле очищенного текста в блоке разбора: фон
+               панели + data-glass-raised + рамка поля. Без них список кнопок ложился
+               прямо на вуаль блока и читался как её же текст (владелец: «текстовое
+               поле с прокруткой должно выводиться с фоном всего плагина»); под стеклом
+               токен вообще обнуляется в transparent, поэтому без data-glass-raised
+               заливки не будет вовсе. */
             jsx('div', {
-              className: GROUP_LEAD,
-              style: GROUP_CAP,
+              'data-glass-raised': '',
+              className: GROUP_LEAD + ' rounded px-1.5 py-1',
+              style: Object.assign({}, GROUP_CAP, { border: FIELD_LINE, backgroundColor: PANEL_BG }),
               children: draftRowsList.map((r) => jsx(Button, {
                 size: 'sm',
                 variant: 'ghost',
