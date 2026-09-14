@@ -62,6 +62,21 @@ def cut_braces(src: str, marker: str) -> str:
     raise ValueError("не найден конец блока: " + marker)
 
 
+def cut_function(src: str, decl: str) -> str:
+    """Вырезать ``function NAME(…) { … }`` целиком."""
+    start = src.index(decl)
+    open_brace = src.index("{", start)
+    depth = 0
+    for i in range(open_brace, len(src)):
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[start:i + 1]
+    raise ValueError("не найден конец функции: " + decl)
+
+
 def cut_arrow(src: str, decl: str) -> str:
     """Вырезать тело ``const NAME = (…) => { … }`` по балансу скобок."""
     start = src.index(decl)
@@ -81,9 +96,21 @@ def cut_arrow(src: str, decl: str) -> str:
 RUNNER = r"""
 import fs from 'node:fs'
 const SRC = fs.readFileSync(process.env.B4_SRC, 'utf8')
-const load = new Function(SRC + '; return { PREVIEW_CAP, labelOf }')()
-const { PREVIEW_CAP, labelOf } = load
+const load = new Function(SRC + '; return { PREVIEW_CAP, labelOf, planFileRows, planTotalRows }')()
+const { PREVIEW_CAP, labelOf, planFileRows, planTotalRows } = load
+const planOut = {
+  plan: {
+    added: Array.from({ length: 16 }, (_, i) => 'chapters/ch' + String(i + 1).padStart(2, '0') + '-new-name.md'),
+    overwrite: ['SKILL.md', 'glossary.md'],
+    keep: ['chapters/ch01-basics.md', 'cheatsheet.md', 'metadata.json']
+  },
+  existing_sources: [{ src: 'https://docs.python.org/3/library/pathlib.html' }],
+  journal: { file: 'metadata.json', new_source: false, sources: 2, installs: 1 }
+}
 const out = {
+  files: planFileRows(planOut),
+  totals: planTotalRows(planOut),
+  files_empty: planFileRows({ plan: {} }),
   cap: PREVIEW_CAP,
   none: labelOf(null),
   create: labelOf({ mode: 'create' }),
@@ -114,7 +141,14 @@ def main() -> int:
           f"cap={len(cap_src)} симв, label={len(label_expr)} симв",
           note=f"подпись: {len(label_expr)} символов живого выражения")
 
-    body = cap_src + "\nconst labelOf = (preview) => (" + label_expr + ")\n"
+    try:
+        plan_files_fn = cut_function(src, "function planFileRows")
+        plan_totals_fn = cut_function(src, "function planTotalRows")
+    except ValueError as exc:
+        check("planFileRows/planTotalRows извлекаются из plugin.js", False, str(exc))
+        return 1
+    body = (cap_src + "\n" + plan_files_fn + "\n" + plan_totals_fn +
+            "\nconst labelOf = (preview) => (" + label_expr + ")\n")
     with tempfile.TemporaryDirectory(prefix="b2s-pane-b4-") as tmp:
         tmpd = Path(tmp)
         (tmpd / "b4.js").write_text(body, encoding="utf-8")
@@ -153,12 +187,51 @@ def main() -> int:
           f"overflowY={cap.get('overflowY')!r}")
     check("минимум окна в em — потолок выживает при крупном шрифте темы",
           str(cap.get("minHeight", "")).endswith("em"), f"minHeight={cap.get('minHeight')!r}")
-    zone = src[src.index("const planBlock = preview"):src.index("const planBlock = preview") + 1200]
-    check("зона плана берёт новое окно, а не короткий GROUP_CAP",
-          "...PREVIEW_CAP" in zone and "...GROUP_CAP" not in zone,
-          f"PREVIEW_CAP={'...PREVIEW_CAP' in zone}, GROUP_CAP={'...GROUP_CAP' in zone}")
-    check("у зоны плана подсказка про грип (объект объясняет себя)",
-          "растянуть план" in zone)
+    i_plan = src.index("const planBlock = preview")
+    zone = src[i_plan:src.index("/* Раскладка по главам — подготовка шага 3")]
+    check("окно плана берёт новое окно, а не короткий GROUP_CAP",
+          "PREVIEW_CAP" in zone and "GROUP_CAP" not in zone,
+          f"PREVIEW_CAP={'PREVIEW_CAP' in zone}, GROUP_CAP={'GROUP_CAP' in zone}")
+    check("у окна плана подсказка про грип (объект объясняет себя)",
+          "растянуть список файлов" in zone)
+
+    # ── 3b) окно со списком файлов: по строке на файл, фон плагина, итоги внизу ──
+    files = out["files"]
+    check("файлы плана перечислены ПО СТРОКЕ НА ФАЙЛ, а не склейкой",
+          isinstance(files, list) and len(files) == 21, f"строк: {len(files) if isinstance(files, list) else files!r}")
+    check("в строке файла виден полный путь (не обрезанный огрызок)",
+          all(r["file"].startswith(("chapters/", "SKILL.md", "glossary.md", "cheatsheet.md",
+                                    "metadata.json")) for r in files),
+          f"{files[:2]!r}")
+    check("знак строки несёт действие: ＋ добавится, ⟳ перезапишется, ＝ останется",
+          [r["mark"] for r in files[:1]] == ["＋"] and "⟳" in [r["mark"] for r in files]
+          and "＝" in [r["mark"] for r in files],
+          f"метки: {sorted(set(r['mark'] for r in files))}")
+    check("первыми идут добавляемые файлы, потом перезапись, потом нетронутые",
+          [r["mark"] for r in files] == ["＋"] * 16 + ["⟳"] * 2 + ["＝"] * 3,
+          f"порядок меток: {[r['mark'] for r in files]}")
+    check("пустой план не роняет список (окно говорит, что пусто)",
+          out["files_empty"] == [], f"{out['files_empty']!r}")
+
+    totals = out["totals"]
+    check("внизу — счётчики словами: «добавится файлов: 16» и прочие подробности",
+          totals and totals[0] == "добавится файлов: 16 · перезапишется: 2 · останется как есть: 3",
+          f"{totals[:2]!r}")
+    check("журнал источников остаётся в нижней части окна",
+          any("журнал" in s for s in totals), f"{totals!r}")
+
+    zone_start = src.index("/* Окно со списком файлов")
+    zone2 = src[zone_start:zone_start + 1100]
+    check("окно файлов — с фоном плагина и рамкой поля (как поле текста в блоке 2)",
+          "backgroundColor: PANEL_BG" in zone2 and "border: FIELD_LINE" in zone2
+          and "'data-glass-raised': ''" in zone2,
+          "окно осталось вуалью блока — под стеклом заливка обнулится")
+    check("внутри окна каждая строка — отдельный div (не один абзац)",
+          "planFiles.map((r, i) => jsx('div', Ell(r.mark + ' ' + r.file)" in src)
+    check("шапка и путь стоят ВНЕ окна (их не нужно прокручивать)",
+          src.index("jsx('div', Ell(preview.target, 'opacity-80'))") < zone_start)
+    check("прежняя склейка плана в одну строку удалена",
+          "planRowsList" not in src and "…'" not in src.split("function planTotalRows")[0].split("function planFileRows")[1])
 
     # ── 4) поле плана скрыто, пока плана нет ───────────────────────────────
     tail = src[src.index("const planBlock = preview"):]

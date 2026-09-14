@@ -62,20 +62,36 @@ const ACTS = [
   { value: 'replace', label: 'замена — снести и залить заново (бэкап)' }
 ]
 
-/** План установки из ядра (ответ /install без записи) — человеческими строками. */
-function planRows(out) {
+/** Файлы плана установки — ПО СТРОКЕ НА ФАЙЛ, а не склейкой в одну строку.
+ *
+ * Раньше список собирался как «＋ добавится (16): a, b, c …» и обрезался
+ * многоточием: владелец видел «+ добавится (16): …» и не мог прочитать, что именно
+ * ляжет в профиль. Знак впереди — действие над файлом (он же несёт смысл группы),
+ * а полное имя файла уходит в `title` — там его видно целиком наведением. */
+function planFileRows(out) {
   const plan = (out && out.plan) || {}
   const rows = []
-  const put = (title, list) => {
-    const items = list || []
-    if (items.length) {
-      rows.push(title + ' (' + items.length + '): ' + items.slice(0, 5).join(', ') +
-        (items.length > 5 ? ' …' : ''))
-    }
-  }
-  put('＋ добавится', plan.added)
-  put('⟳ перезапишется', plan.overwrite)
-  put('＝ останется как есть', plan.keep)
+  const put = (mark, list) => (list || []).forEach((f) => rows.push({ mark, file: String(f) }))
+  put('＋', plan.added)
+  put('⟳', plan.overwrite)
+  put('＝', plan.keep)
+  return rows
+}
+
+/** Итоги плана — то, что стоит в НИЖНЕЙ части окна, под списком файлов: счётчики
+ *  по группам, журнал источников, что уже внесено. Здесь сводка одной строкой
+ *  уместна: это цифры, а не список к чтению. */
+function planTotalRows(out) {
+  const plan = (out && out.plan) || {}
+  const rows = []
+  const added = (plan.added || []).length
+  const over = (plan.overwrite || []).length
+  const keep = (plan.keep || []).length
+  const bits = []
+  if (added) bits.push('добавится файлов: ' + added)
+  if (over) bits.push('перезапишется: ' + over)
+  if (keep) bits.push('останется как есть: ' + keep)
+  if (bits.length) rows.push(bits.join(' · '))
   /* Что уже внесено в скилл: долив «органичен» только когда это видно ДО клика.
      Без журнала вторая страница вливается вслепую, и в скилле не остаётся следа,
      откуда взята та или иная глава. */
@@ -1230,9 +1246,9 @@ function B2SPane({ ctx }) {
      (окно врало, что переполнения нет, а строки были нечитаемы). Блочная зона отдаёт
      строки как есть, скролл честный; отступы между ними держит `space-y-1` в className. */
   const ZONE_CAP = { ...GROUP_CAP, display: 'block' }
-  /* Зона предпросмотра установки — НЕ короткий GROUP_CAP: план по файлам читают
-     глазами, а не по одной строке (владелец: «слишком маленький… минимум до размеров
-     как в блоке 2»). Высота как у полей текста в блоках 2/3 (max-h-72 = 288 px), плюс
+  /* Внутреннее окно списка файлов в плане установки — НЕ короткий GROUP_CAP: файлы
+     читают глазами, по строке на файл (владелец: «слишком маленький… минимум до
+     размеров как в блоке 2»). Высота как у полей текста в блоках 2/3 (max-h-72 = 288 px), плюс
      `resize: vertical` — браузер сам рисует грип в правом нижнем углу, за который
      зону тянут вниз. Потолок не мешает росту: его снимает сам ресайз. */
   const PREVIEW_CAP = {
@@ -1760,17 +1776,18 @@ function B2SPane({ ctx }) {
      перезапишутся, что останется как было, куда лёг бэкап. Раньше панель писала
      в папку молча и, что хуже, «замена» физически накладывала файлы поверх
      старых — теперь режим виден в заголовке и в самом плане. */
-  const planRowsList = planRows(preview)
+  const planFiles = planFileRows(preview)
+  const planTotals = planTotalRows(preview)
   const planBlock = preview
     ? jsxs('div', {
         className: 'rounded border px-2 py-1 text-[0.625rem] leading-snug',
-        title: 'Тяни за угол в правом нижнем углу, чтобы растянуть план',
         style: {
-          ...PREVIEW_CAP,
           backgroundColor: BLOCK_BG,
           borderColor: 'color-mix(in oklab, ' + BASE + ' 22%, transparent)'
         },
         children: [
+          /* Шапка и путь — снаружи окна, «как есть»: это ответ на вопросы «что за
+             операция» и «куда пишем», его не нужно прокручивать. */
           jsx('div', Ell(
             (preview.dry_run === false ? '📦 Установлено · ' : '📦 План установки · ') +
               'режим ' + preview.mode + ' · ' + preview.files + ' файл(ов), ' + preview.kb + ' КБ',
@@ -1785,16 +1802,33 @@ function B2SPane({ ctx }) {
                     : ' · проверка скилла: ок')
               })
             : null,
-          ...planRowsList.map((line, i) =>
-            jsx('div', Ell(line), 'plan-' + i)),
+
+          /* Окно со списком файлов — по образцу поля очищенного текста в блоке 2:
+             фон плагина, рамка поля, потолок 288 px (`max-h-72`) и грип в правом
+             нижнем углу. Внутри — ПО СТРОКЕ НА ФАЙЛ: склейка в одну строку обрезалась
+             многоточием, и что именно ляжет в профиль, прочитать было нельзя. */
+          jsxs('div', {
+            'data-glass-raised': '',
+            className: 'mt-1 rounded px-1.5 py-1',
+            title: 'Тяни за угол в правом нижнем углу, чтобы растянуть список файлов',
+            style: Object.assign({}, PREVIEW_CAP, { border: FIELD_LINE, backgroundColor: PANEL_BG }),
+            children: planFiles.length
+              ? planFiles.map((r, i) => jsx('div', Ell(r.mark + ' ' + r.file), 'plan-file-' + i))
+              : jsx('div', Ell('ядро не перечислило ни одного файла', 'opacity-70'))
+          }),
+
+          /* Низ окна — итоги и подробности, тем же порядком, что в блоке 2:
+             после прокручиваемого поля идёт то, что должно быть видно всегда. */
+          ...planTotals.map((line, i) =>
+            jsx('div', Ell(line, i === 0 ? 'pt-1' : undefined), 'plan-total-' + i)),
           preview.mode === 'replace'
             ? jsx('div', {
-                className: 'text-(--ui-text-primary)',
+                className: 'pt-1 text-(--ui-text-primary)',
                 children: '⚠ ЗАМЕНА: каталог скилла сносится целиком — старых глав не останется.'
               })
             : null,
           preview.warning
-            ? jsx('div', { className: 'text-(--ui-text-primary)', children: '⚠ ' + preview.warning })
+            ? jsx('div', { className: 'pt-1 text-(--ui-text-primary)', children: '⚠ ' + preview.warning })
             : null,
           jsx('div', Ell(
             preview.backup
@@ -1802,7 +1836,7 @@ function B2SPane({ ctx }) {
               : preview.target_exists
                 ? 'бэкап снимется перед записью'
                 : 'новый скилл — бэкап не нужен',
-            'opacity-70'
+            'pt-1 opacity-70'
           ))
         ]
       })
