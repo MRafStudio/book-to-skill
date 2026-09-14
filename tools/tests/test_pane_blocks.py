@@ -21,10 +21,11 @@ markdown**. Если источник — ``.md``/``.markdown`` (локальн�
 -------------
 1. ``srcIsMarkdown``/``isRemoteSrc`` вырезаются из ``plugin.js`` и исполняются в
    node на 15 кейсах (путь, URL, query, якорь, .txt, .html, .pdf, .epub, папка);
-2. в дереве стоят ровно четыре блока ``PaneBlock``, у каждого — кнопка ``NextBtn``
+2. в дереве стоят ровно пять блоков ``PaneBlock``, у каждого — кнопка ``NextBtn``
    в правом нижнем углу (футер с ``min-w-0 flex-1``: подпись слева, кнопка справа);
 3. переходы: ``next1`` (учитывает md), ``next2`` (требует отчёт), ``next3``
-   (требует черновик в staging); шапка подписана «пропущен: файл уже markdown»;
+   (не пускает без имени скилла), ``next4`` (требует черновик в staging); шапка
+   подписана «пропущен: файл уже markdown»;
 4. герметизация: ``busyRef`` стоит и в ``runRerun``, и в ``sendIntent`` — второй
    клик в один тик не копит вызовы;
 5. тихий фоллбэк снят: ``sendIntent('rerun')`` в живом коде не остался (только в
@@ -213,14 +214,16 @@ def main() -> int:
           "nameWarn ? 'обязательное: пустым не поставим'" in src)
     check("подпись «такого скилла нет - будет создан новый» (без обрубка «будет новый»)",
           "такого скилла нет - будет создан новый" in src and "будет новый'" not in src)
-    check("блок 1 требует ТОЛЬКО источник: имя уехало в блок 4",
+    check("блок 1 требует ТОЛЬКО источник: имя уехало в блок 3",
           "disabled: !!busy || !trimSrc," in src and
           "disabled: !!busy || !trimSrc || nameWarn" not in src,
           "имя снова стало входом разбора")
-    check("переход из блока 1 больше не спрашивает имя",
-          "if (nameWarn)" not in src,
-          "«ДАЛЕЕ» блока 1 снова требует имя скилла")
-    check("имя обязательно там, где пишется каталог (блок 4)",
+    check("пустое имя гасит «ДАЛЕЕ» блока 3 и установку в блоке 5, а не разбор",
+          "disabled: !!busy || nameWarn," in src and
+          "disabled: !!busy || !hasDraft || !!installed || nameWarn," in src and
+          "disabled: !!busy || !hasDraft,   // имя" not in src,
+          "пустое имя стало входом разбора или потеряло замок")
+    check("имя обязательно там, где пишется каталог (блок 5)",
           "disabled: !!busy || !hasDraft || !!installed || nameWarn," in src and
           "нужно имя скилла: пустым не поставим - каталог в skills/ должен быть назван" in src,
           "установка пойдёт без имени")
@@ -274,18 +277,18 @@ def main() -> int:
     check("кнопка шага 1 при работе говорит «Идёт разбор…», а не обещает результат",
           "busy === 'rerun' ? 'Идёт разбор…'" in src and "busy === 'rerun' ? '⏳'" in src)
 
-    # 2) четыре блока и футер «ДАЛЕЕ» в каждом
+    # 2) пять блоков и футер «ДАЛЕЕ» в каждом
     blocks = re.findall(r"jsx\(PaneBlock, \{\n\s+n: (\d)", src)
-    check("в дереве ровно четыре блока мастера (PaneBlock n: 1..4)",
-          blocks == ["1", "2", "3", "4"], f"{blocks!r}")
+    check("в дереве ровно пять блоков мастера (PaneBlock n: 1..5)",
+          blocks == ["1", "2", "3", "4", "5"], f"{blocks!r}")
     check("у каждого блока своя кнопка в футере (NextBtn)",
-          src.count("jsx(NextBtn, {") == 4, f"{src.count('jsx(NextBtn, {')}")
+          src.count("jsx(NextBtn, {") == 5, f"{src.count('jsx(NextBtn, {')}")
     check("футер блока: подпись слева, кнопка справа (min-w-0 flex-1 перед foot)",
           src.count("min-w-0 flex-1") >= 1 and "justify-end" in src,
           "нет растяжки подписи перед кнопкой")
-    check("каждый блок сворачивается кликом по шапке (каркас aria-expanded + onToggle ×4)",
+    check("каждый блок сворачивается кликом по шапке (каркас aria-expanded + onToggle ×5)",
           "'aria-expanded': open ? 'true' : 'false'" in src and
-          src.count("onToggle: () => toggleB(") == 4,
+          src.count("onToggle: () => toggleB(") == 5,
           f"onToggle={src.count('onToggle: () => toggleB(')}")
 
     # 3) переходы
@@ -295,13 +298,21 @@ def main() -> int:
     check("переход из блока 2 требует отчёт о разборе (analyzed)",
           "const next2 = () => {" in src and "if (!analyzed)" in src,
           "«ДАЛЕЕ» блока 2 не проверяет разбор")
-    check("переход из блока 3 требует черновик в staging (hasDraft)",
-          "const next3 = () => {" in src and "if (!hasDraft)" in src,
-          "«ДАЛЕЕ» блока 3 не проверяет staging")
+    check("переход из блока 3 не пускает без имени скилла (nameWarn)",
+          "const next3 = () => {" in src and "if (nameWarn)" in src and
+          "каталог установки называется именем" in src,
+          "«ДАЛЕЕ» блока 3 пускает к черновику без имени")
+    check("переход из блока 4 требует черновик в staging (hasDraft)",
+          "const next4 = () => {" in src and "if (!hasDraft)" in src,
+          "«ДАЛЕЕ» блока 4 не проверяет staging")
     check("шапка пропущенного блока 2 подписана «пропущен: файл уже markdown»",
           "пропущен: файл уже markdown" in src)
     check("открытым может быть только один блок (onlyB сбрасывает остальные)",
-          "const onlyB = (n) => setOpenB({ 1: n === 1, 2: n === 2, 3: n === 3, 4: n === 4 })" in src)
+          "const onlyB = (n) => setOpenB({ 1: n === 1, 2: n === 2, 3: n === 3, 4: n === 4, 5: n === 5 })" in src)
+    check("шагов в мастере ровно пять и переходы идут по порядку (next1..next4)",
+          all(f"onClick: next{k}," in src for k in (1, 2, 3, 4)) and
+          "onClick: next5," not in src,
+          "переходы разъехались с нумерацией блоков")
     check("старая простыня шагов убрана (нет steps.map и s.kind ===)",
           "steps.map" not in src and "s.kind ===" not in src,
           "в файле остался старый список шагов")
@@ -330,7 +341,7 @@ def main() -> int:
     if bad:
         print("провалено: " + "; ".join(bad))
         return 1
-    print("ВСЁ ЗЕЛЁНОЕ: мастер из четырёх блоков и детект markdown работают")
+    print("ВСЁ ЗЕЛЁНОЕ: мастер из пяти блоков и детект markdown работают")
     return 0
 
 
