@@ -86,8 +86,8 @@ def cut_function(src: str, decl: str) -> str:
 RUNNER = r"""
 import fs from 'node:fs'
 const SRC = fs.readFileSync(process.env.DRAFT_SRC, 'utf8')
-const load = new Function(SRC + '; return { draftBitsOf, draftRows, plural }')()
-const { draftBitsOf, draftRows, plural } = load
+const load = new Function(SRC + '; return { draftBitsOf, draftRows, plural, chapterBitsOf }')()
+const { draftBitsOf, draftRows, plural, chapterBitsOf } = load
 const norm = (bits) => bits.map((b) => String(b).replace(/[\u00a0\u202f\u2009]/g, ' '))
 const done = {
   ok: true, has_draft: true, name: 'python-pathlib', dir: 'D:/x/staging/python-pathlib',
@@ -117,6 +117,24 @@ out.rows_kinds = draftRows(done).map((r) => r.rel)
 out.rows_none = draftRows(null).length
 out.plural = [plural(1, 'файл', 'файла', 'файлов'), plural(3, 'файл', 'файла', 'файлов'),
               plural(15, 'файл', 'файла', 'файлов'), plural(11, 'глава', 'главы', 'глав')]
+const planMock = {
+  ok: true, target_exists: true, category: 'software-development', name: 'python-pathlib', threshold: 0.6,
+  chapters: [
+    { action: 'merge', file: 'chapters/ch02.md', merge_into: 'chapters/ch01.md', confidence: 'high' },
+    { action: 'merge', file: 'chapters/ch03.md', merge_into: 'chapters/ch02.md', confidence: 'low' },
+    { action: 'merge', file: 'chapters/ch04.md', merge_into: 'chapters/ch03.md', confidence: 'high' },
+    { action: 'rewrite', file: 'chapters/ch05.md' },
+    { action: 'rewrite', file: 'chapters/ch06.md' },
+    { action: 'add', file: 'chapters/ch07.md' }
+  ],
+  touched: [{ file: 'chapters/ch01.md' }], keep: []
+}
+out.chap_bits = norm(chapterBitsOf(planMock))
+out.chap_bits_new = norm(chapterBitsOf({
+  ok: true, target_exists: false, category: 'mlops', name: 'x', threshold: 0.5,
+  chapters: [{ action: 'add', file: 'a.md' }]
+}))
+out.chap_bits_empty = chapterBitsOf(null).length
 console.log(JSON.stringify(out))
 """
 
@@ -134,6 +152,7 @@ def main() -> int:
         bits_expr = (cut_arrow_block(src, "const draftBitsOf") if "const draftBitsOf" in src
                      else src[src.index("function draftBitsOf"):src.index("function Field")])
         rows_fn = cut_function(src, "function draftRows")
+        chap_bits_fn = cut_function(src, "function chapterBitsOf")
     except ValueError as exc:
         check("draftBitsOf/draftRows извлекаются из plugin.js", False, str(exc))
         return 1
@@ -141,7 +160,7 @@ def main() -> int:
         bits_body = "const draftBitsOf = " + bits_expr + "\n"
     else:
         bits_body = bits_expr + "\n"
-    body = fmt_src + plural_src + bits_body + rows_fn + "\n"
+    body = fmt_src + plural_src + bits_body + rows_fn + "\n" + chap_bits_fn + "\n"
     check("draftBitsOf/draftRows извлекаются из plugin.js", len(body) > 400,
           f"длина {len(body)}", note=f"{len(body)} символов живого кода")
 
@@ -283,6 +302,31 @@ def main() -> int:
           "растянуть раскладку по главам" in src)
     check("все окна с потолком — блочные (flex сплющивал бы строки)",
           "const ZONE_CAP = {" in src and "display: 'block'," in src)
+    # 5a-quater) «План по главам» — такой же спойлер, как «Черновик скилла». Владелец:
+    # «осталось только для окна "План по главам" сделать возможность сворачивать его
+    # (спойлер) как и у окна "Черновик скилла"». Свёрнут по умолчанию и говорит фактом.
+    check("«План по главам» свёрнут изначально (useState(false))",
+          "const [chapterOpen, setChapterOpen] = useState(false)" in src)
+    check("спойлер не раскрывается сам (нет setChapterOpen(true))",
+          "setChapterOpen(true)" not in src)
+    check("состояние свёртки отдельное от черновика (свои жизни)",
+          "setChapterOpen(!!(e && e.target && e.target.open))" in src)
+    check("шапка спойлера — факт с раскладки, а не одно название",
+          "🧩 План по главам' +\n              (chapterBits.length ? ' · ' + chapterBits.join(' · ') : '')" in src)
+    check("сводка спойлера считает главы и действия по ним",
+          out["chap_bits"] and out["chap_bits"][0].endswith(("глав", "главы", "глава"))
+          and "⇄ слить 3" in out["chap_bits"] and "⟳ переписать 2" in out["chap_bits"]
+          and "＋ новых 1" in out["chap_bits"],
+          f"{out['chap_bits']!r}")
+    check("в шапке видно, куда долив, и порог близости",
+          out["chap_bits"] and any("долив в software-development/python-pathlib" in b for b in out["chap_bits"])
+          and any(b.startswith("порог ") for b in out["chap_bits"]), f"{out['chap_bits']!r}")
+    check("новая папка честно говорит, что сливать не с чем",
+          out["chap_bits_new"] and any("сливать не с чем" in b for b in out["chap_bits_new"]),
+          f"{out['chap_bits_new']!r}")
+    check("пустой план не рисует битую шапку", out["chap_bits_empty"] == 0)
+    check("кнопка «Отправить агенту» переехала внутрь спойлера (как в черновике)",
+          src.index("↗ Отправить агенту") > src.index("const chapterBlock = chapterPlan"))
     check("сводку можно перечитать, не раскрывая блок (кнопка «проверить staging»)",
           "проверить staging" in src)
     check("пока блок раскрыт, сводка перечитывается сама (таймер по draftOpen)",

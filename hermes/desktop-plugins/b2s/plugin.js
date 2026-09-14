@@ -137,6 +137,25 @@ function chapterRows(out) {
   return rows
 }
 
+/** Заголовок свёрнутого спойлера «План по главам» — тот же принцип, что у блока
+ *  черновика: в свёрнутом виде видно ФАКТ, а не одно название. Числа берём из самой
+ *  раскладки, ничего не пересчитывая: сколько глав и что с ними собираются делать. */
+function chapterBitsOf(out) {
+  const list = (out && out.chapters) || []
+  if (!list.length) return []
+  const cnt = { merge: 0, rewrite: 0, add: 0 }
+  list.forEach((r) => { if (cnt[r.action] != null) cnt[r.action] += 1 })
+  const bits = [plural(list.length, 'глава', 'главы', 'глав')]
+  if (cnt.merge) bits.push('⇄ слить ' + cnt.merge)
+  if (cnt.rewrite) bits.push('⟳ переписать ' + cnt.rewrite)
+  if (cnt.add) bits.push('＋ новых ' + cnt.add)
+  bits.push(out.target_exists
+    ? 'долив в ' + out.category + '/' + out.name
+    : 'новая папка — сливать не с чем')
+  if (out.threshold != null) bits.push('порог ' + out.threshold)
+  return bits
+}
+
 /* Состав черновика человеческими строками (ответ /draft). Владельцу нужно видеть,
    ИЗ ЧЕГО состоит скилл до установки: шапка, главы, справочные части. Порядок
    не алфавитный, а смысловой — SKILL.md, части, главы: так состав читается с
@@ -512,6 +531,10 @@ function B2SPane({ ctx }) {
   const [draft, setDraft] = useState(null)        // сводка из /draft (или из /state)
   const [draftBusy, setDraftBusy] = useState(false)
   const [draftOpen, setDraftOpen] = useState(false)
+  /* «План по главам» — своя свёртка, отдельная от черновика: у них разные жизни
+     (раскладка считается Python-ом по кнопке, черновик пишет LLM в чате), и
+     раскрытие одного не должно тянуть другое. По умолчанию свёрнут — как черновик. */
+  const [chapterOpen, setChapterOpen] = useState(false)
   const [draftFile, setDraftFile] = useState('')  // какой файл черновика открыт
   const [draftText, setDraftText] = useState(null) // его текст (null — не читали)
   /* Строка поля «Источник»: кнопки выбора файла и вставки из буфера стоят
@@ -1841,21 +1864,21 @@ function B2SPane({ ctx }) {
      ТЕКСТЕ скилла, а не только какие файлы лягут. Кнопка отдельная и бесплатная:
      считает Python, в чат ничего не уходит, пока не нажмут «отправить агенту». */
   const chapterRowsList = chapterRows(chapterPlan)
+  const chapterBits = chapterBitsOf(chapterPlan)
   const chapterBlock = chapterPlan
-    ? jsxs('div', {
-        className: 'flex flex-col gap-0.5 rounded border px-2 py-1 text-[0.625rem] leading-snug',
-        style: {
-          backgroundColor: BLOCK_BG,
-          borderColor: 'color-mix(in oklab, ' + BASE + ' 22%, transparent)'
-        },
+    ? jsxs('details', {
+        className: 'rounded border px-2 py-1 text-[0.625rem] leading-snug',
+        style: { backgroundColor: BLOCK_BG, border: BLOCK_LINE },
+        open: chapterOpen,
+        onToggle: (e) => setChapterOpen(!!(e && e.target && e.target.open)),
         children: [
-          jsx('div', Ell(
-            '🧩 План по главам · ' + (chapterPlan.target_exists
-              ? 'долив в ' + chapterPlan.category + '/' + chapterPlan.name +
-                ' · порог ' + chapterPlan.threshold
-              : 'новая папка — сливать не с чем'),
-            'text-(--ui-text-secondary)'
-          )),
+          /* Свёрнут — но не нем: в заголовке факт с раскладки (сколько глав, что с ними
+             сделают, куда долив), как у блока черновика. Разворачивается руками. */
+          jsx('summary', {
+            className: 'cursor-pointer select-none text-(--ui-text-secondary)',
+            children: jsx('span', Ell('🧩 План по главам' +
+              (chapterBits.length ? ' · ' + chapterBits.join(' · ') : '')))
+          }),
           /* Скроллится только список глав: кнопка «отправить агенту» обязана
              оставаться на виду (та же раскладка, что у блока описания).
              Зона — такое же «окно» панели, как список файлов черновика: на вуали
@@ -1863,7 +1886,7 @@ function B2SPane({ ctx }) {
              обнуляется в transparent (владелец: «дать ей такое же окно»). */
           jsx('div', {
             'data-glass-raised': '',
-            className: 'min-w-0 space-y-1 rounded px-1.5 py-1',
+            className: 'mt-1 min-w-0 space-y-1 rounded px-1.5 py-1',
             style: Object.assign({}, ZONE_CAP, { border: FIELD_LINE, backgroundColor: PANEL_BG }),
             title: 'Тяни за угол в правом нижнем углу, чтобы растянуть раскладку по главам',
             children:
@@ -1884,7 +1907,7 @@ function B2SPane({ ctx }) {
             ]
           }),
           jsx('div', {
-            className: 'opacity-70',
+            className: 'pt-1 opacity-70',
             children: chapterPlan.target_exists
               ? 'Python дал раскладку и близость — приговор выносит LLM, спорное решает владелец'
               : 'все файлы новые: выбирать не из чего, долив невозможен'
