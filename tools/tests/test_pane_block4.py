@@ -347,6 +347,29 @@ def main() -> int:
           "setChapterPlan(null) }, [name, cat, act])" not in src)
     check("в блоке 4 нет children: Ell( (ловушка React #31)", "children: Ell(" not in src)
 
+    # Реквизиты ЗАПИСИ живут здесь, а не в блоке 1: категория, имя и описание
+    # категории нужны в момент записи, а не в момент разбора. Проверяем ПО МЕСТУ
+    # В ФАЙЛЕ (после `n: 4,` и до раскладки по главам) - иначе переезд откатится,
+    # и тесты этого не заметят.
+    b4 = src.index("        n: 4,")
+    cat_at = src.index("label: 'Категория скилла'")
+    name_at = src.index("label: 'Имя скилла'")
+    plan_at = src.index("          planBlock\n        ]", b4)
+    check("категория и имя скилла стоят в блоке 4 (после его шапки)",
+          b4 < cat_at < plan_at and b4 < name_at < plan_at,
+          f"n4={b4}, cat={cat_at}, name={name_at}, план={plan_at}")
+    check("блок 1 больше не спрашивает имя и категорию",
+          src.index("        n: 1,") < src.index("title: 'Источник',") < b4,
+          "заголовок блока 1 должен быть про источник")
+    check("описание категории (чипса DESCRIPTION.md) внутри поля категории в блоке 4",
+          cat_at < src.index(": catChip", cat_at) < name_at,
+          "чипса описания осталась в блоке 1 или потерялась")
+    check("определение чипсы описания не зависит от блока (живёт вне разметки)",
+          src.index("const catChip = ") < src.index("        n: 1,"),
+          "чипсу затащили внутрь блока 1")
+    check("блок 4 говорит вслух, что реквизиты правятся свободно",
+          "категория и имя скилла - тут же: это реквизиты записи" in src)
+
     failed = [n for n, ok in checks if not ok]
     print()
     print(f"проверок: {len(checks)}, провалов: {len(failed)}")

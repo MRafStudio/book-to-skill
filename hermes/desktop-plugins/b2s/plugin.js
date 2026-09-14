@@ -571,6 +571,10 @@ function B2SPane({ ctx }) {
      (разбор — Python в ядре, черновик — LLM в чате), и раскрытие одного не
      должно тащить за собой другое. */
   const [draft, setDraft] = useState(null)        // сводка из /draft (или из /state)
+  /* Рабочие каталоги staging: чужие черновики и то, что переросло TTL. Панель
+     показывает их списком с кнопками - «очистка при смене источника» иначе
+     выглядела бы как исчезновение файлов без объяснений. */
+  const [drafts, setDrafts] = useState(null)
   const [draftBusy, setDraftBusy] = useState(false)
   const [draftOpen, setDraftOpen] = useState(false)
   /* «План по главам» — своя свёртка, отдельная от черновика: у них разные жизни
@@ -905,6 +909,12 @@ function B2SPane({ ctx }) {
              не поймёт, есть черновик или нет, не раскрыв блок. */
           if (alive && s && s.draft) setDraft(s.draft)
           if (alive && s && s.draft_key) setDraftKey(s.draft_key)
+          /* Рабочие каталоги: список «рядом лежат чужие черновики» + тихая уборка
+             АРХИВА при открытии (`keep: 99` оставляет лимит свежих в покое,
+             работает только TTL установленных). Убранное называем в статусе:
+             уборка не должна быть молчаливой. */
+          if (alive && s && s.drafts) setDrafts(s.drafts)
+          if (alive) pruneArchive((s && s.draft_key) || '')
           if (alive && s && s.last_error) {
             setTone('error')
             setStatus('последний прогон провалился (' + (s.last_error.at || '') + '): ' +
@@ -1068,6 +1078,82 @@ function B2SPane({ ctx }) {
         inFlight = false
       }
     }, 2500)
+  }
+
+  /* Уборка рабочего каталога. Черновик живёт каталогом `staging/<слаг>`, и после
+     установки он оставался второй копией скилла - навсегда. Правила (выбраны
+     владельцем): установленный черновик = архив с TTL, свежие держим лимитом,
+     служебные `_probe*` не трогаем, и НИ ОДНО удаление не молчит - ядро называет,
+     что уйдёт, а панель это печатает. Автоуборка при открытии трогает только архив
+     (`keep: 99` оставляет лимит свежих в покое): недоделанный черновик чужого
+     источника убирают руками, кнопкой-корзиной у его строки. */
+  const loadDrafts = async () => {
+    try {
+      const out = await ctx.rest('/drafts', {
+        method: 'POST', body: { src: (src || '').trim() }, timeoutMs: 8000
+      })
+      if (out && out.ok) setDrafts(out)
+    } catch (err) { /* список не критичен: панель работает и без него */ }
+  }
+
+  /* Тихая уборка архива: `days: 0` = «срок как в ядре» (STAGING_TTL_DAYS). */
+  const pruneArchive = async (activeSrc) => {
+    try {
+      const out = await ctx.rest('/prune', {
+        method: 'POST',
+        body: { src: activeSrc || '', keep: 99, days: 0, apply: true },
+        timeoutMs: 10000
+      })
+      const gone = (out && out.dropped) || []
+      if (gone.length) {
+        setTone('idle')
+        setStatus('уборка: архивные черновики убраны (' + gone.join(', ') +
+          ') - они уже установлены и переросли срок')
+      }
+      loadDrafts()
+    } catch (err) { /* уборка не критична: панель работает и без неё */ }
+  }
+
+  /* Убрать лишнее руками: ядро считает по своим правилам и называет причины -
+     панель их печатает, а не пересказывает своими словами. */
+  const runPrune = async () => {
+    setBusy('prune')
+    try {
+      const out = await ctx.rest('/prune', {
+        method: 'POST', body: { src: (src || '').trim(), apply: true }, timeoutMs: 20000
+      })
+      const gone = (out && out.dropped) || []
+      setStatus(gone.length
+        ? 'уборка: убрано ' + gone.length + ' (' + gone.join(', ') + ') - каталоги и их сырьё'
+        : 'убирать нечего: черновики свежие и срока не переросли')
+      await loadDrafts()
+    } catch (err) {
+      setTone('error')
+      setStatus('уборка не прошла: ' + note(err))
+    } finally { setBusy('') }
+  }
+
+  /* Убрать один каталог. Скилл в профиле не трогается: staging - мастерская. */
+  const runDrop = async (key) => {
+    setBusy('drop')
+    try {
+      const out = await ctx.rest('/drop', {
+        method: 'POST', body: { key: key, src: (src || '').trim() }, timeoutMs: 20000
+      })
+      if (out && out.ok) {
+        const srcs = (out.source_files || [])
+        setStatus('рабочий каталог убран: ' + out.dropped + ' (' + out.files + ' файлов' +
+          (srcs.length ? ' + сырьё: ' + srcs.join(', ') : '') + ')')
+      } else {
+        setTone('error')
+        setStatus('убрать не удалось: ' + ((out && out.error) || 'причина неизвестна'))
+      }
+      await loadDrafts()
+      await loadDraft(true)
+    } catch (err) {
+      setTone('error')
+      setStatus('убрать не удалось: ' + note(err))
+    } finally { setBusy('') }
   }
 
   /** Черновик пишет агент в чате — панель о готовности не узнаёт ниоткуда, и раньше
@@ -1445,7 +1531,8 @@ function B2SPane({ ctx }) {
     skillMd: 'Показать текст SKILL.md из черновика',
     openFile: 'Показать текст файла черновика: ',
     catDesc: 'Задание агенту в чате: написать description категории - файл скилла не трогается',
-    catDescFix: 'Задание агенту в чате: обернуть готовый текст категории в frontmatter, тело сохранится'
+    catDescFix: 'Задание агенту в чате: обернуть готовый текст категории в frontmatter, тело сохранится',
+    prune: 'Убрать лишние рабочие каталоги: установленные старше срока и свежие сверх лимита. Сырьё уходит с ними, скиллы в профиле не трогаются'
   }
   /* Чипса категории — «суть категории», а не служебная подпись. Описание берём
      ровно то, что читает Hermes: `description` из DESCRIPTION.md уезжает в промпт
@@ -2102,6 +2189,77 @@ function B2SPane({ ctx }) {
     ]
   })
 
+  /* Строка уборки в блоке 3: что лежит рядом и что уйдёт. Молчаливых удалений в
+     панели нет, поэтому «очистка при смене источника» выглядит так: список имён с
+     числом файлов и пометкой «установлен», у каждого кнопка-корзина, а под ними
+     одна кнопка «убрать лишнее» - она отдаёт решение ядру с его правилами. */
+  const draftOthers = (drafts && drafts.others) || []
+  const draftStale = (drafts && drafts.droppable) || []
+  const cleanupSlot = (draftOthers.length || draftStale.length)
+    ? jsxs('div', {
+        className: 'flex flex-col gap-1',
+        children: [
+          jsx('span', Ell(
+            'рабочие каталоги в staging: рядом ' + draftOthers.length + ', под уборку ' +
+            draftStale.length +
+            (drafts && drafts.ttl_days
+              ? ' (установленный черновик живёт ' + drafts.ttl_days + ' дн.)' : ''),
+            'pl-1 text-[0.625rem] leading-snug text-(--ui-text-tertiary)'
+          )),
+          draftOthers.length
+            ? jsx('div', {
+                className: 'flex flex-col gap-0.5',
+                children: draftOthers.slice(0, 5).map((d) => jsxs('div', {
+                  key: d.key,
+                  className: 'flex min-w-0 items-center gap-1',
+                  children: [
+                    jsx('span', Ell(
+                      d.key + ' · ' + d.files + ' файл(ов)' +
+                      (d.installed ? ' · установлен' : '') +
+                      (d.src ? ' · ' + d.src.slice(-40) : ''),
+                      'min-w-0 truncate pl-1 text-[0.625rem] leading-snug text-(--ui-text-tertiary)'
+                    )),
+                    jsx(Button, {
+                      size: 'icon-xs',
+                      variant: 'ghost',
+                      disabled: !!busy,
+                      title: 'убрать рабочий каталог ' + d.key + ' (' + d.files + ' файлов) и его сырьё' +
+                        (d.installed ? ': скилл в профиле не тронем' : ''),
+                      'aria-label': 'убрать рабочий каталог ' + d.key,
+                      onClick: () => runDrop(d.key),
+                      children: jsx('span', {
+                        'aria-hidden': true,
+                        style: { fontSize: 13, lineHeight: 1, display: 'block' },
+                        children: '🗑'
+                      })
+                    })
+                  ]
+                }))
+              })
+            : null,
+          draftStale.length
+            ? jsx('div', {
+                className: 'flex min-w-0 rounded',
+                style: { backgroundColor: REVIEW_BG, alignSelf: 'flex-start', maxWidth: '100%' },
+                children: jsxs(Button, {
+                  size: 'sm',
+                  variant: 'ghost',
+                  disabled: !!busy,
+                  onClick: runPrune,
+                  title: TIP.prune,
+                  className: 'h-7 justify-start text-xs text-(--ui-text-primary)',
+                  style: BTN_FIT,
+                  children: [
+                    jsx('span', { 'aria-hidden': true, style: { flexShrink: 0 }, children: '🧹' }),
+                    cutSpan('Убрать лишнее (' + draftStale.length + ')', undefined, TIP.prune)
+                  ]
+                })
+              })
+            : null
+        ]
+      })
+    : null
+
   /* --- переходы «ДАЛЕЕ» -------------------------------------------------------
      Проверка дешёвая и на месте: не пускаем дальше, когда дальше нечего делать,
      и говорим причину подписью у кнопки (hint), а не молчанием. Никакого REST в
@@ -2117,13 +2275,8 @@ function B2SPane({ ctx }) {
       setStatus('блок 1 · пустой источник: вставь URL или путь к файлу')
       return
     }
-    /* Имя - обязательный вход: без него каталог установки не назвать. Кнопка при
-       пустом поле и так погашена, это защита от Enter/программного вызова. */
-    if (nameWarn) {
-      setTone('error')
-      setStatus('блок 1 · имя скилла не может быть пустым!')
-      return
-    }
+    /* Имени здесь больше нет: категория и имя скилла - реквизиты ЗАПИСИ (блок 4),
+       а не вход разбора. Кнопка установки гаснет без имени там, где имя нужно. */
     if (mdSrc) {
       onlyB(3)
       if (!analyzed) {
@@ -2216,32 +2369,31 @@ function B2SPane({ ctx }) {
          она сообщала бы «ничего не происходит» всем остальным. */
       statusLine,
 
-      /* ── 1. Источник и имя скилла ───────────────────────────────────────── */
+      /* ── 1. Источник ──────────────────────────────────────────────────────
+         Категория и имя скилла отсюда УЕХАЛИ в блок 4: это реквизиты ЗАПИСИ, и
+         спрашивать их на шаге 1 значило спрашивать про то, чего на этом шаге ещё
+         нет. Здесь остаётся один вход - источник. */
       jsx(PaneBlock, {
         n: 1,
-        title: 'Источник и имя скилла',
+        title: 'Источник',
         state: !trimSrc
           ? 'пусто'
-          : (nameWarn
-            ? 'нужно имя скилла'
-            : (mdSrc ? 'markdown: блок 2 пропустим' : (isRemoteSrc(trimSrc) ? 'URL - нужен разбор' : 'файл - нужен разбор'))),
-        tone: trimSrc && !nameWarn ? (mdSrc ? 'done' : null) : (!trimSrc ? 'bad' : null),
+          : (mdSrc ? 'markdown: блок 2 пропустим' : (isRemoteSrc(trimSrc) ? 'URL - нужен разбор' : 'файл - нужен разбор')),
+        tone: trimSrc ? (mdSrc ? 'done' : null) : 'bad',
         open: !!openB[1],
         onToggle: () => toggleB(1),
         style: { backgroundColor: openB[1] ? BLOCK_BG : 'transparent' },
         hint: !trimSrc
           ? 'впиши URL или путь к файлу'
-          : (nameWarn
-            ? 'впиши имя скилла - без него не пойдём дальше'
-            : (mdSrc ? 'файл уже markdown - анализ пропустим' : 'блок 2 разберёт источник')),
+          : (mdSrc ? 'файл уже markdown - анализ пропустим' : 'блок 2 разберёт источник'),
         foot: jsx(NextBtn, {
           label: 'ДАЛЕЕ →',
           onClick: next1,
-          disabled: !!busy || !trimSrc || nameWarn,
+          disabled: !!busy || !trimSrc,
           fill: STEP_BG,
           title: !trimSrc
             ? 'сначала впиши источник'
-            : (nameWarn ? 'нужно имя скилла: пустым не поставим' : 'запомнить выбор и открыть следующий шаг')
+            : 'запомнить выбор и открыть следующий шаг'
         }),
         children: [
           jsx(Field, {
@@ -2283,122 +2435,6 @@ function B2SPane({ ctx }) {
             })
           }),
 
-          jsxs('div', {
-            className: 'grid grid-cols-2 gap-2',
-            children: [
-              jsx(Field, {
-                label: 'Категория скилла',
-                children: cats && cats.length
-                  ? jsxs('div', { className: 'space-y-1', children: [
-                      jsxs(Select, {
-                        value: isCustomCat ? '__custom__' : cat,
-                        onValueChange: (v) => setCat(v === '__custom__' ? '' : v),
-                        /* Список читается заново на каждое открытие — выпадашка не
-                           может показывать профиль вчерашней давности. */
-                        onOpenChange: (open) => { if (open) loadCats() },
-                        children: [
-                          jsx(SelectTrigger, { className: 'h-7 text-xs', children: vFit(jsx(SelectValue, {}), isCustomCat ? 'своя категория' : cat) }),
-                          jsx(SelectContent, {
-                            children: [
-                              ...cats.map((c) => jsx(SelectItem, {
-                                value: c,
-                                children: (catMeta && catMeta[c] && catMeta[c].empty) ? c + ' (пусто)' : c
-                              }, c)),
-                              /* Выход из списка: своя категория. Без него выбор был
-                                 клеткой — подходящей категории в профиле нет, и скилл
-                                 уезжал в чужую, лишь бы из списка. */
-                              jsx(SelectItem, { value: '__custom__', children: '✎ своя категория…' })
-                            ]
-                          })
-                        ]
-                      }),
-                      isCustomCat
-                        ? jsxs('div', { className: 'space-y-1', children: [
-                            jsx(Input, {
-                              value: cat,
-                              onChange: (e) => setCat(e.target.value),
-                              placeholder: 'имя новой категории: латиница и дефис, например mlops/tuning',
-                              className: 'h-7 text-xs'
-                            }),
-                            jsxs('div', { className: CHIP_BOX, style: { backgroundColor: CHIP_BG }, children: [
-                              jsx('div', { className: GROUP_LEAD, style: GROUP_CAP, children: [
-                                jsx('div', { className: CHIP_CHIEF, children: '⚠ категории «' + (cat || '…') + '» в профиле нет - папка создастся при установке.' }),
-                                jsx('div', { className: CHIP_MUTED, children: 'Опиши её здесь: без описания Hermes покажет категорию агенту голым именем, и скилл в ней будет труднее найти.' })
-                              ] }),
-                              jsx('div', { className: 'pt-1', children: jsx(Input, {
-                                value: catDesc,
-                                onChange: (e) => setCatDesc(e.target.value),
-                                placeholder: 'описание категории для Hermes - одной строкой',
-                                className: 'h-7 text-xs'
-                              }) })
-                            ] })
-                          ] })
-                        : catChip,
-                      /* Строку про «скиллы вне категорий» больше не показываем: она пугала
-                         зря — пять таких каталогов Hermes сам считает категориями (и они
-                         вернулись в выпадашку), а настоящий сирота — SKILL.md прямо в
-                         skills/ — случай служебный и внимания владельца не стоит.
-                         Данные остаются в ответе ядра как catLoose. */
-                    ] })
-                  : jsx(Input, {
-                      value: cat,
-                      onChange: (e) => setCat(e.target.value),
-                      placeholder: cats === null ? 'список грузится…' : 'списка нет - перезапусти dashboard',
-                      title: catErr,
-                      className: 'h-7 text-xs'
-                    })
-              }),
-              jsxs(Field, {
-                label: 'Имя скилла',
-                hint: nameWarn ? 'обязательное: пустым не поставим' : (existing ? 'занято - долив' : skills ? 'свободно - новый' : ''),
-                children: [
-                  jsx(Input, {
-                    value: name,
-                    onChange: (e) => setName(e.target.value),
-                    placeholder: 'каталог в skills/: латиница и дефисы',
-                    title: skillsErr || '',
-                    /* Пустое имя - не «просто пустое поле», а причина, по которой кнопка
-                       «ДАЛЕЕ» не работает: жёлтая окантовка (и тот же цвет у подписи под
-                       полем) называет это раньше, чем клик. Толщина и цвет - как у чипсы
-                       DESCRIPTION.md (`border: 1px solid WARN_YELLOW`): ровно 1 px, а не
-                       `boxShadow`-подложка, которая на глаз читается двойной линией. */
-                    className: 'h-7 text-xs',
-                    style: nameWarn ? { border: '1px solid ' + WARN_YELLOW } : undefined
-                  }),
-                  /* Подсказка имён — свой список ТОЛЬКО по выбранной категории
-                     (см. комментарий у `nameOpen`): нативный datalist подсовывал
-                     весь профиль и не давал прокрутки. */
-                  namePickRow,
-                  nameOpen ? nameListBlock : null,
-                  jsx('div', {
-                    className: 'truncate text-[10px] leading-tight' +
-                      (nameWarn ? '' : ' text-(--ui-text-tertiary, #8a8a8a)'),
-                    style: nameWarn ? { color: WARN_YELLOW } : null,
-                    title: nameNote,
-                    children: nameNote
-                  }),
-                  existing
-                    ? jsxs(Select, {
-                        value: act,
-                        onValueChange: setAct,
-                        children: [
-                          jsx(SelectTrigger, { className: 'h-6 text-[10px]', children: vFit(jsx(SelectValue, {}), labelOf(ACTS, act)) }),
-                          jsx(SelectContent, {
-                            children: ACTS.map((a) => jsx(SelectItem, { value: a.value, children: a.label }, a.value))
-                          })
-                        ]
-                      })
-                    : null,
-                  existing && act === 'replace'
-                    ? jsx('div', Ell(
-                        '⚠ каталог скилла будет снесён и залит заново. Перед записью ядро снимет копию в backups/, но подтверждение спрошу ещё раз.',
-                        'text-[10px] leading-tight text-(--ui-text-primary)'
-                      ))
-                    : null
-                ]
-              })
-            ]
-          }),
 
           jsx(Field, {
             label: 'Стратегия загрузки',
@@ -2609,7 +2645,8 @@ function B2SPane({ ctx }) {
                 'pl-1 text-[0.625rem] leading-snug text-(--ui-text-tertiary)'))
             : null,
           draftBlock,
-          chapterSlot
+          chapterSlot,
+          cleanupSlot
         ]
       }),
 
@@ -2641,15 +2678,17 @@ function B2SPane({ ctx }) {
               ? (preview.mode === 'replace' ? 'Подтвердить ЗАМЕНУ' : 'Установить')
               : 'Предпросмотр'),
           onClick: () => runInstall(!!preview),
-          disabled: !!busy || !hasDraft || !!installed,
+          disabled: !!busy || !hasDraft || !!installed || nameWarn,
           fill: hasDraft ? STEP_BG : undefined,
           title: installed
             ? 'скилл уже записан в ' + installed.target + ' - чтобы поставить заново, измени черновик или входы'
-            : (!hasDraft
-              ? 'сначала сделай черновик - записывать нечего'
-              : (preview
-                ? 'второй клик пишет в skills/<категория>/<имя>/'
-                : '«Предпросмотр» соберёт план и ничего не запишет - пишет только «Установить»'))
+            : (nameWarn
+              ? 'нужно имя скилла: пустым не поставим - каталог в skills/ должен быть назван'
+              : (!hasDraft
+                ? 'сначала сделай черновик - записывать нечего'
+                : (preview
+                  ? 'второй клик пишет в skills/<категория>/<имя>/'
+                  : '«Предпросмотр» соберёт план и ничего не запишет - пишет только «Установить»')))
         }),
         children: [
           jsx('span', Ell(installed
@@ -2662,6 +2701,125 @@ function B2SPane({ ctx }) {
                   ? 'имя занято → долив: новые главы лягут рядом, старое не тронем. План соберёт «Предпросмотр»'
                   : 'перенос в skills/ - сначала «Предпросмотр» без записи, пишет только «Установить». Любое действие в блоках 1-3 сбрасывает план')),
             'text-[0.625rem] leading-snug text-(--ui-text-tertiary)')),
+          jsx('span', Ell('категория и имя скилла - тут же: это реквизиты записи, а не входы разбора. Правь свободно в любой момент - план по главам пересоберётся сам.',
+            'pl-1 text-[0.625rem] leading-snug text-(--ui-text-tertiary)')),
+          jsxs('div', {
+            className: 'grid grid-cols-2 gap-2',
+            children: [
+              jsx(Field, {
+                label: 'Категория скилла',
+                children: cats && cats.length
+                  ? jsxs('div', { className: 'space-y-1', children: [
+                      jsxs(Select, {
+                        value: isCustomCat ? '__custom__' : cat,
+                        onValueChange: (v) => setCat(v === '__custom__' ? '' : v),
+                        /* Список читается заново на каждое открытие — выпадашка не
+                           может показывать профиль вчерашней давности. */
+                        onOpenChange: (open) => { if (open) loadCats() },
+                        children: [
+                          jsx(SelectTrigger, { className: 'h-7 text-xs', children: vFit(jsx(SelectValue, {}), isCustomCat ? 'своя категория' : cat) }),
+                          jsx(SelectContent, {
+                            children: [
+                              ...cats.map((c) => jsx(SelectItem, {
+                                value: c,
+                                children: (catMeta && catMeta[c] && catMeta[c].empty) ? c + ' (пусто)' : c
+                              }, c)),
+                              /* Выход из списка: своя категория. Без него выбор был
+                                 клеткой — подходящей категории в профиле нет, и скилл
+                                 уезжал в чужую, лишь бы из списка. */
+                              jsx(SelectItem, { value: '__custom__', children: '✎ своя категория…' })
+                            ]
+                          })
+                        ]
+                      }),
+                      isCustomCat
+                        ? jsxs('div', { className: 'space-y-1', children: [
+                            jsx(Input, {
+                              value: cat,
+                              onChange: (e) => setCat(e.target.value),
+                              placeholder: 'имя новой категории: латиница и дефис, например mlops/tuning',
+                              className: 'h-7 text-xs'
+                            }),
+                            jsxs('div', { className: CHIP_BOX, style: { backgroundColor: CHIP_BG }, children: [
+                              jsx('div', { className: GROUP_LEAD, style: GROUP_CAP, children: [
+                                jsx('div', { className: CHIP_CHIEF, children: '⚠ категории «' + (cat || '…') + '» в профиле нет - папка создастся при установке.' }),
+                                jsx('div', { className: CHIP_MUTED, children: 'Опиши её здесь: без описания Hermes покажет категорию агенту голым именем, и скилл в ней будет труднее найти.' })
+                              ] }),
+                              jsx('div', { className: 'pt-1', children: jsx(Input, {
+                                value: catDesc,
+                                onChange: (e) => setCatDesc(e.target.value),
+                                placeholder: 'описание категории для Hermes - одной строкой',
+                                className: 'h-7 text-xs'
+                              }) })
+                            ] })
+                          ] })
+                        : catChip,
+                      /* Строку про «скиллы вне категорий» больше не показываем: она пугала
+                         зря — пять таких каталогов Hermes сам считает категориями (и они
+                         вернулись в выпадашку), а настоящий сирота — SKILL.md прямо в
+                         skills/ — случай служебный и внимания владельца не стоит.
+                         Данные остаются в ответе ядра как catLoose. */
+                    ] })
+                  : jsx(Input, {
+                      value: cat,
+                      onChange: (e) => setCat(e.target.value),
+                      placeholder: cats === null ? 'список грузится…' : 'списка нет - перезапусти dashboard',
+                      title: catErr,
+                      className: 'h-7 text-xs'
+                    })
+              }),
+              jsxs(Field, {
+                label: 'Имя скилла',
+                hint: nameWarn ? 'обязательное: пустым не поставим' : (existing ? 'занято - долив' : skills ? 'свободно - новый' : ''),
+                children: [
+                  jsx(Input, {
+                    value: name,
+                    onChange: (e) => setName(e.target.value),
+                    placeholder: 'каталог в skills/: латиница и дефисы',
+                    title: skillsErr || '',
+                    /* Пустое имя - не «просто пустое поле», а причина, по которой кнопка
+                       «ДАЛЕЕ» не работает: жёлтая окантовка (и тот же цвет у подписи под
+                       полем) называет это раньше, чем клик. Толщина и цвет - как у чипсы
+                       DESCRIPTION.md (`border: 1px solid WARN_YELLOW`): ровно 1 px, а не
+                       `boxShadow`-подложка, которая на глаз читается двойной линией. */
+                    className: 'h-7 text-xs',
+                    style: nameWarn ? { border: '1px solid ' + WARN_YELLOW } : undefined
+                  }),
+                  /* Подсказка имён — свой список ТОЛЬКО по выбранной категории
+                     (см. комментарий у `nameOpen`): нативный datalist подсовывал
+                     весь профиль и не давал прокрутки. */
+                  namePickRow,
+                  nameOpen ? nameListBlock : null,
+                  jsx('div', {
+                    className: 'truncate text-[10px] leading-tight' +
+                      (nameWarn ? '' : ' text-(--ui-text-tertiary, #8a8a8a)'),
+                    style: nameWarn ? { color: WARN_YELLOW } : null,
+                    title: nameNote,
+                    children: nameNote
+                  }),
+                  existing
+                    ? jsxs(Select, {
+                        value: act,
+                        onValueChange: setAct,
+                        children: [
+                          jsx(SelectTrigger, { className: 'h-6 text-[10px]', children: vFit(jsx(SelectValue, {}), labelOf(ACTS, act)) }),
+                          jsx(SelectContent, {
+                            children: ACTS.map((a) => jsx(SelectItem, { value: a.value, children: a.label }, a.value))
+                          })
+                        ]
+                      })
+                    : null,
+                  existing && act === 'replace'
+                    ? jsx('div', Ell(
+                        '⚠ каталог скилла будет снесён и залит заново. Перед записью ядро снимет копию в backups/, но подтверждение спрошу ещё раз.',
+                        'text-[10px] leading-tight text-(--ui-text-primary)'
+                      ))
+                    : null
+                ]
+              })
+            ]
+          }),
+
           planBlock
         ]
       }),
@@ -2669,7 +2827,7 @@ function B2SPane({ ctx }) {
       jsxs('div', {
         className: 'flex flex-col gap-0.5 pt-1 text-[0.625rem] text-(--ui-text-tertiary)',
         children: [
-          jsx('span', Ell('REST: /rerun · /install · /plan · /skills · /categories · /text')),
+          jsx('span', Ell('REST: /rerun · /install · /plan · /skills · /categories · /text · /drafts · /drop · /prune')),
           jsx('span', Ell('сессия (для чат-шагов): ' + (focusedId || '-')))
         ]
       })

@@ -173,6 +173,10 @@ def do_state() -> dict:
         # Ключ черновика = слаг источника. Панель по нему понимает, что черновик
         # принадлежит ИСТОЧНИКУ, а не имени скилла: правка имени его не теряет.
         "draft_key": _draft_key(st.get("src") or "", st),
+        # Рабочие каталоги: что лежит рядом и что подлежит уборке. Панель называет
+        # это вслух («черновик прежнего источника», «установлен - можно убрать»),
+        # а не удаляет молча: удаление живёт отдельными маршрутами /drop и /prune.
+        "drafts": do_drafts(st.get("src") or ""),
     }
 
 
@@ -550,6 +554,240 @@ def _draft_lookup(name: str = "", src: str = "") -> tuple[Path, str]:
 def _draft_dir(name: str = "", src: str = "") -> Path:
     """Каталог черновика — обёртка над ``_draft_lookup`` для старых вызовов."""
     return _draft_lookup(name, src)[0]
+
+
+# ── уборка рабочего каталога (staging + сырьё) ───────────────────────────────
+# Черновик принадлежит ИСТОЧНИКУ и живёт каталогом ``staging/<слаг>``, сырьё —
+# файлами ``b2s_fetched/<слаг>.{md,txt,*.report.json}``. Ни то, ни другое долго
+# никто не убирал: после установки каталог оставался второй копией скилла, а
+# сырьё копилось молча (владелец: «теоретически - всё должно очищаться»).
+# Правила уборки:
+#   * молча не удаляем ничего: сначала называем, что уйдёт и почему;
+#   * установленный черновик живёт TTL — это архив, а не мусор;
+#   * НЕустановленные свежие черновики держим лимитом (как бэкапы скиллов);
+#   * активный черновик (тот, с которым работают сейчас) не трогаем никогда;
+#   * служебные ``_probe*`` не трогаем — на них стоят тесты ядра.
+STAGING_KEEP = 5       # сколько НЕустановленных черновиков держим, кроме активного
+STAGING_TTL_DAYS = 7   # сколько дней живёт установленный черновик, прежде чем уйдёт
+
+
+def _draft_info(d: Path) -> dict:
+    """Паспорт каталога черновика: источник, объём, когда трогали, установлен ли."""
+    files = [p for p in d.rglob("*") if p.is_file()]
+    mtimes = [p.stat().st_mtime for p in files] or [d.stat().st_mtime]
+    meta = _read_json(d / "metadata.json")
+    inst = meta.get("installed") if isinstance(meta.get("installed"), dict) else {}
+    return {
+        "key": d.name,
+        "src": _draft_meta_src(d),
+        "files": len(files),
+        "bytes": sum(p.stat().st_size for p in files),
+        "mtime": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(max(mtimes))),
+        "probe": d.name.startswith("_"),
+        "installed": bool(inst),
+        "installed_at": str(inst.get("at") or ""),
+        "installed_skill": str(inst.get("skill") or ""),
+        "installed_target": str(inst.get("target") or ""),
+    }
+
+
+def _mark_installed(staging: Path, skill: str, cat: str, mode: str, target: Path) -> dict:
+    """Отметить ЧЕРНОВИК, что он уже поставлен: по ней уборка отличает архив от хлама.
+
+    Пишется в ``metadata.json`` самого черновика, а не скилла: скилл уезжает в
+    профиль и живёт своей жизнью, черновик — временный. Без отметки уборка не
+    отличает «поставлен, можно отпускать» от «ещё не поставлен, над ним работают».
+    """
+    meta_file = staging / "metadata.json"
+    meta = _read_json(meta_file)
+    meta["installed"] = {
+        "skill": skill, "cat": cat, "mode": mode, "target": str(target),
+        "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    meta_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n",
+                         encoding="utf-8")
+    return meta["installed"]
+
+
+def _retitle_skill_md(staging: Path, skill: str) -> dict:
+    """Поставить в шапку SKILL.md имя скилла, выбранное в панели.
+
+    Почему это работа ядра, а не агента: черновик пишет LLM, а имя живёт в блоке
+    ЗАПИСИ и выбирается уже после генерации. Если шапку не привести в соответствие,
+    каталог ``skills/<категория>/<имя>/`` разъедется с ``name:`` внутри, и Hermes
+    будет звать скилл чужим именем (в списке одно, в промпте другое).
+    """
+    md = staging / "SKILL.md"
+    if not md.is_file() or not skill:
+        return {"changed": False}
+    try:
+        text = md.read_text(encoding="utf-8")
+    except OSError:
+        return {"changed": False}
+    m = re.match(r"^---\r?\n(.*?)\r?\n---", text, re.S)
+    if not m:
+        return {"changed": False}
+    head = m.group(1)
+    if re.search(r"^name:\s*.*$", head, re.M):
+        new_head = re.sub(r"^name:\s*.*$", "name: " + skill, head, count=1, flags=re.M)
+    else:
+        new_head = "name: " + skill + "\n" + head
+    if new_head == head:
+        return {"changed": False, "name": skill}
+    md.write_text(text[:m.start(1)] + new_head + text[m.end(1):], encoding="utf-8")
+    return {"changed": True, "name": skill}
+
+
+def _draft_age_days(info: dict) -> float:
+    """Сколько дней черновик лежит без дела.
+
+    Установленному черновику срок отсчитывается от УСТАНОВКИ (``installed.at``):
+    после записи в профиль его файлы больше не меняются, а без этой точки отсчёта
+    архив мог бы «омолодиться» любым касанием metadata. Неустановленному - по
+    последнему касанию файлов.
+    """
+    when = str(info.get("installed_at") or info.get("mtime") or "")
+    try:
+        stamp = time.mktime(time.strptime(when, "%Y-%m-%dT%H:%M:%S"))
+    except ValueError:
+        return 0.0
+    return max(0.0, (time.time() - stamp) / 86400.0)
+
+
+def _is_active_draft(key: str, src: str, active: str) -> bool:
+    """Этот черновик — тот, с которым работают сейчас?
+
+    Сверяем и имя каталога, и ИСТОЧНИК: каталоги, снятые до перехода на слаги,
+    названы именем скилла, и по одному имени активный черновик в них не узнать —
+    а уборка обязана его не тронуть (иначе «просто открыл панель» сносит работу).
+    """
+    if not active:
+        return False
+    return key == active or bool(src) and slug_for_url(src) == active
+
+
+def _source_files(src: str, key: str) -> list[Path]:
+    """Файлы сырья источника в ``b2s_fetched``: ``<слаг>.md|.txt`` и их отчёты."""
+    stems = {s for s in (key, slug_for_url(src) if (src or "").strip() else "") if s}
+    out: list[Path] = []
+    for stem in sorted(stems):
+        out += sorted(p for p in FETCH_DIR.glob(f"{stem}.*") if p.is_file())
+    return out
+
+
+def do_drafts(active_src: str = "") -> dict:
+    """Черновики в ``staging`` + вердикт уборки по каждому — панель показывает список.
+
+    Ядро только НАЗЫВАЕТ, что подлежит уборке; удаляет лишь явная команда
+    (``do_drop_draft`` / ``do_prune_staging(apply=True)``): молчаливых удалений
+    в панели нет, это её общий принцип.
+    """
+    active = _draft_key(active_src) if (active_src or "").strip() else ""
+    infos = sorted((_draft_info(p) for p in _draft_dirs()),
+                   key=lambda i: i["mtime"], reverse=True)
+    fresh = [i for i in infos
+             if not i["installed"] and not _is_active_draft(i["key"], i["src"], active)]
+    over = {i["key"] for i in fresh[STAGING_KEEP:]}
+    for i in infos:
+        i["active"] = _is_active_draft(i["key"], i["src"], active)
+        i["drop"] = (i["key"] in over) or (i["installed"]
+                                           and _draft_age_days(i) > STAGING_TTL_DAYS)
+        i["reason"] = ""
+        if i["drop"]:
+            i["reason"] = (f"установлен и лежит дольше {STAGING_TTL_DAYS} дн."
+                           if i["installed"]
+                           else f"сверх лимита {STAGING_KEEP} свежих черновиков")
+    return {"ok": True, "dirs": infos, "active": active,
+            "keep": STAGING_KEEP, "ttl_days": STAGING_TTL_DAYS,
+            "droppable": [i["key"] for i in infos if i["drop"]],
+            # «Прежний источник»: черновики, снятые не с того, что разбирают сейчас.
+            # Панель называет их вслух — иначе человек не знает, что рядом лежит
+            # готовый черновик другого источника.
+            "others": [i for i in infos
+                       if not i["probe"]
+                       and not _is_active_draft(i["key"], i["src"], active)]}
+
+
+def do_drop_draft(key: str = "", src: str = "", with_source: bool = True) -> dict:
+    """Убрать рабочий каталог черновика — и, по умолчанию, его сырьё.
+
+    Скилл в профиле не трогается вообще: черновик живёт в ``staging``, установка
+    живёт в ``skills/``. Служебные ``_probe*`` защищены: на них стоят тесты ядра.
+    """
+    key = (key or "").strip()
+    asked = (src or "").strip()
+    if not key and asked:
+        key = _draft_key(asked)
+    if not key:
+        return {"ok": False, "error": "нечего убирать: не назван ни каталог, ни источник"}
+    if key.startswith("_"):
+        return {"ok": False,
+                "error": f"служебный каталог {key} не убираем: на нём стоят тесты ядра"}
+    d = STAGING / key
+    if not d.is_dir():
+        if not asked:
+            return {"ok": False, "error": f"каталога staging/{key} нет"}
+        try:
+            d, _how = _draft_lookup(src=asked)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+    files = sum(1 for p in d.rglob("*") if p.is_file())
+    # Сырьё ищем по слагу каталога И по слагу источника: каталог мог быть назван
+    # именем скилла (наследие), и тогда имя файла в b2s_fetched с ним не совпадает.
+    src_files = _source_files(asked or _draft_meta_src(d), d.name) if with_source else []
+    shutil.rmtree(d, ignore_errors=True)
+    gone = not d.is_dir()
+    for p in src_files:
+        try:
+            p.unlink()
+        except OSError:
+            pass
+    return {"ok": gone, "dropped": d.name, "files": files,
+            "source_files": [p.name for p in src_files if not p.exists()],
+            "kept_source": bool(src_files) and not with_source,
+            "staging": str(STAGING)}
+
+
+def do_prune_staging(keep: int = STAGING_KEEP, ttl_days: int = STAGING_TTL_DAYS,
+                     active_src: str = "", apply: bool = False) -> dict:
+    """Убрать лишние черновики: установленные по TTL, свежие — сверх лимита.
+
+    Без ``apply`` это только ПЛАН: что уйдёт и почему. Диск трогает лишь
+    ``apply=True``, и то по названному списку — панель сначала показывает его
+    человеку. Сырьё убранных черновиков уходит вместе с ними.
+    """
+    if keep < 0 or ttl_days < 0:
+        return {"ok": False, "error": "лимит и TTL не могут быть отрицательными"}
+    active = _draft_key(active_src) if (active_src or "").strip() else ""
+    infos = sorted((_draft_info(p) for p in _draft_dirs()),
+                   key=lambda i: i["mtime"], reverse=True)
+    fresh = [i for i in infos
+             if not i["installed"] and not _is_active_draft(i["key"], i["src"], active)]
+    over = {i["key"] for i in fresh[keep:]}
+    plan: list[dict] = []
+    for i in infos:
+        if _is_active_draft(i["key"], i["src"], active):
+            continue
+        if i["installed"]:
+            if _draft_age_days(i) > ttl_days:
+                plan.append({**i, "reason": f"установлен и лежит дольше {ttl_days} дн."})
+        elif i["key"] in over:
+            plan.append({**i, "reason": f"сверх лимита {keep} свежих черновиков"})
+    dropped: list[str] = []
+    src_gone: list[str] = []
+    if apply:
+        for item in plan:
+            shutil.rmtree(STAGING / item["key"], ignore_errors=True)
+            if not (STAGING / item["key"]).exists():
+                dropped.append(item["key"])
+                for p in _source_files(item.get("src") or "", item["key"]):
+                    try:
+                        p.unlink()
+                        src_gone.append(p.name)
+                    except OSError:
+                        pass
+    return {"ok": True, "plan": plan, "dropped": dropped, "source_files": src_gone,
+            "applied": bool(apply), "keep": keep, "ttl_days": ttl_days, "active": active}
 
 
 def _draft_file(dir_path: Path, rel: str = "") -> Path:
@@ -1226,6 +1464,13 @@ def do_install(name: str, cat: str = "", confirm: bool = False,
         backup = _backup_target(target, skill)
     target.parent.mkdir(parents=True, exist_ok=True)
 
+    # Имя скилла выбрано в панели уже ПОСЛЕ генерации черновика (оно живёт в блоке
+    # записи): приводим шапку SKILL.md в соответствие ДО копирования - иначе правка
+    # осталась бы в staging, а в профиль уехала старая. Без этого каталог
+    # skills/<категория>/<имя>/ разъезжается с `name:` внутри, и Hermes зовёт скилл
+    # чужим именем (в списке одно, в промпте другое).
+    retitle = _retitle_skill_md(staging, skill)
+
     wrote: list[str] = []
     if wanted == "replace":
         if target.exists():
@@ -1262,9 +1507,18 @@ def do_install(name: str, cat: str = "", confirm: bool = False,
 
     validation = _validate(target, skill_md)
     journal = _record_sources(target, skill, wanted, plan, backup, staging, prior=prior)
+    # Отметка в самом черновике: он поставлен. По ней уборка отличает архив от
+    # хлама, а панель может честно сказать «этот черновик уже установлен» и
+    # предложить его убрать. Неудача отметки установку не валит: скилл-то лёг.
+    try:
+        installed_mark = _mark_installed(staging, skill, category, mode, target)
+    except OSError as exc:
+        installed_mark = {"error": str(exc)}
     return {**info, "dry_run": False, "installed": str(target), "backup": backup,
             "wrote": sorted(wrote), "kept": plan["keep"],
             "journal": journal,
+            "installed_mark": installed_mark,
+            "retitled": retitle,
             "validation": validation,
             "category_desc_written": desc_written,
             "category_desc": read_category_desc(skills_root(), category),
@@ -1384,6 +1638,24 @@ def main(argv: list[str] | None = None) -> int:
                         help="fix - обернуть в frontmatter прозу, которую Hermes сейчас не видит")
     p_desc.add_argument("--force", action="store_true", help="перезаписать существующее описание")
 
+    p_drafts = sub.add_parser("drafts", help="черновики в staging + вердикт уборки (что уйдёт)")
+    p_drafts.add_argument("--src", default="",
+                          help="источник, с которым работают сейчас: его черновик не трогаем")
+
+    p_drop = sub.add_parser("drop", help="убрать рабочий каталог черновика (и его сырьё)")
+    p_drop.add_argument("--key", default="", help="имя каталога в staging")
+    p_drop.add_argument("--src", default="", help="либо источник: каталог найдётся по слагу")
+    p_drop.add_argument("--keep-source", dest="with_source", action="store_false",
+                        help="оставить сырьё в b2s_fetched")
+    p_drop.set_defaults(with_source=True)
+
+    p_prune = sub.add_parser("prune", help="убрать лишние черновики (без --apply - только план)")
+    p_prune.add_argument("--keep", type=int, default=STAGING_KEEP,
+                         help="сколько НЕустановленных черновиков держим, кроме активного")
+    p_prune.add_argument("--days", type=int, default=STAGING_TTL_DAYS,
+                         help="сколько дней живёт установленный черновик")
+    p_prune.add_argument("--src", default="", help="активный источник: его черновик не трогаем")
+    p_prune.add_argument("--apply", action="store_true", help="реально удалять (иначе план)")
 
     args = parser.parse_args(argv)
     if args.cmd == "health":
@@ -1407,6 +1679,12 @@ def main(argv: list[str] | None = None) -> int:
         out = do_chapter_plan(args.name, args.cat, args.mode, args.save, args.threshold, args.src)
     elif args.cmd == "desc":
         out = do_write_category_desc(args.cat, args.text, args.mode, args.force)
+    elif args.cmd == "drafts":
+        out = do_drafts(args.src)
+    elif args.cmd == "drop":
+        out = do_drop_draft(args.key, args.src, args.with_source)
+    elif args.cmd == "prune":
+        out = do_prune_staging(args.keep, args.days, args.src, args.apply)
     else:
         out = do_install(args.name, args.cat, args.confirm, args.force,
                          args.mode, args.allow_overwrite, args.cat_desc, args.src)

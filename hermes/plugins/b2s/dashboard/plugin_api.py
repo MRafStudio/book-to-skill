@@ -27,6 +27,11 @@ LLM остаётся только там, где без него нельзя: �
                               режим: auto | create | append (долив) | replace (с бэкапом)
     POST /plan    {name,…}    долив по главам: что слить со старыми, что переписать,
                               что добавить; плюс готовая постановка для LLM. Не пишет.
+    GET  /drafts              рабочие каталоги staging: объём, источник, установлен ли,
+                              и вердикт уборки по каждому
+    POST /drop    {key|src}   убрать ОДИН рабочий каталог (и его сырьё в b2s_fetched)
+    POST /prune   {keep,days} убрать лишние: установленные по TTL, свежие - сверх лимита;
+                              без apply это только план
 
 Зависимостей нет: ядро — обычный Python форка (``tools/api.py``).
 """
@@ -189,6 +194,26 @@ class DraftBody(BaseModel):
     src: str = ""    # источник черновика: имя скилла правится свободно, источник - нет
 
 
+class DraftsBody(BaseModel):
+    """Список рабочих каталогов: панель ходит телом, как в /draft и /plan."""
+    src: str = ""    # активный источник: его черновик из очереди уборки исключается
+
+
+class DropBody(BaseModel):
+    """Уборка ОДНОГО рабочего каталога: каталог черновика + его сырьё."""
+    key: str = ""            # имя каталога в staging
+    src: str = ""            # либо источник: каталог найдётся по слагу
+    with_source: bool = True # убрать вместе с сырьём в b2s_fetched
+
+
+class PruneBody(BaseModel):
+    """Уборка лишнего: установленные по TTL, неустановленные - сверх лимита."""
+    keep: int = 0            # 0 = взять дефолт ядра (STAGING_KEEP)
+    days: int = 0            # 0 = взять дефолт ядра (STAGING_TTL_DAYS)
+    src: str = ""            # активный источник: его черновик не трогаем
+    apply: bool = False      # false = только план, диск не трогаем
+
+
 @router.get("/health")
 def health() -> Dict[str, Any]:
     """Быстрая проба: панель показывает «ядро: на связи» без прогонов."""
@@ -274,6 +299,47 @@ def draft_text(body: DraftTextBody) -> Dict[str, Any]:
     а остаток догружает, а не тянет весь скилл на каждый рендер.
     """
     return core().do_draft_text(body.name, body.file, body.offset, body.limit, body.src)
+
+
+@router.get("/drafts")
+def drafts(src: str = "") -> Dict[str, Any]:
+    """Рабочие каталоги staging: источник, объём, установлен ли, что подлежит уборке.
+
+    Панель зовёт это после разбора и по кнопке: человек должен ВИДЕТЬ, что рядом
+    лежит черновик другого источника и что именно уйдёт при уборке, а не узнавать
+    об этом по исчезнувшим файлам.
+    """
+    return core().do_drafts(src)
+
+
+@router.post("/drafts")
+def drafts_post(body: DraftsBody) -> Dict[str, Any]:
+    """То же, что ``GET /drafts``, но телом: панель не клеит query к пути маршрута."""
+    return core().do_drafts(body.src)
+
+
+@router.post("/drop")
+def drop(body: DropBody) -> Dict[str, Any]:
+    """Убрать ОДИН рабочий каталог: черновик в staging и его сырьё в b2s_fetched.
+
+    Скилл в профиле не трогается: staging - мастерская, а не витрина. Служебные
+    каталоги (`_probe*`) ядро убирать откажется: на них стоят тесты ядра.
+    """
+    return core().do_drop_draft(body.key, body.src, body.with_source)
+
+
+@router.post("/prune")
+def prune(body: PruneBody) -> Dict[str, Any]:
+    """Убрать лишние каталоги: установленные по TTL, свежие - сверх лимита.
+
+    По умолчанию это ПЛАН (``apply=false``): панель сначала показывает список и
+    только по подтверждению удаляет. Так автоуборка не может стереть черновик,
+    над которым человек ещё работает.
+    """
+    module = core()
+    keep = body.keep or module.STAGING_KEEP
+    days = body.days or module.STAGING_TTL_DAYS
+    return module.do_prune_staging(keep, days, body.src, body.apply)
 
 
 @router.post("/plan")
