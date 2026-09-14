@@ -524,7 +524,10 @@ function summaryOf(out) {
 function B2SPane({ ctx }) {
   const stored = ctx.storage.get('fields', null) || {}
   const [src, setSrc] = useState(stored.src || 'https://docs.python.org/3/library/pathlib.html')
-  const [name, setName] = useState(stored.name || 'python-pathlib')
+  /* Имя скилла по умолчанию - ПУСТОЕ (или подхваченное из прошлого захода): панель
+     не подставляет чужой пример вроде `python-pathlib`, иначе человек ставит скилл
+     под чужим именем, не заметив. Имя придумывает он сам или агент. */
+  const [name, setName] = useState(stored.name || '')
   const [strat, setStrat] = useState(stored.strat || 'auto')
   const [mode, setMode] = useState(stored.mode || 'technical')
   const [lang, setLang] = useState(stored.lang || 'ru')
@@ -622,6 +625,10 @@ function B2SPane({ ctx }) {
   /* Занятое имя скилла — это не ошибка ввода, а состояние: скилл с таким именем
      уже стоит, и источник доливается в него. Отсюда и режим установки. */
   const wanted = (name || '').trim()
+  /* Пустое имя - обязательный вход не заполнен: поле подсвечивается жёлтым, кнопка
+     «ДАЛЕЕ» гаснет и говорит причину (владелец: «если имя не введено, окантовка
+     жёлтым, а кнопка недоступна»). */
+  const nameWarn = !wanted
   const existing = (skills || []).find((s) => s.name === wanted) || null
 
   // Имя занято → категорию берём у самого скилла (он лежит в своей категории),
@@ -1366,6 +1373,10 @@ function B2SPane({ ctx }) {
      создаёт и не переписывает, только просит LLM разобрать черновик. Держим
      бледно-жёлтой, чтобы её не путали с зелёными шагами, которые меняют файлы. */
   const REVIEW_YELLOW = '#facc15'
+  /* Пустое «Имя скилла» — не ошибка ядра, а незаполненный обязательный вход: жёлтый
+     (тот же, что у критики: «внимание», не «авария»), а не красный. Кнопка «ДАЛЕЕ»
+     при этом гаснет и говорит, чего не хватает. */
+  const NAME_WARN = REVIEW_YELLOW
   const REVIEW_BG = 'color-mix(in srgb, ' + REVIEW_YELLOW + ' 22%, color-mix(in srgb, ' + BASE + ' 4%, transparent))'
   /* Тултипы кнопок: при наведении панель рассказывает, ЧТО СДЕЛАЕТ кнопка, а не
      повторяет её подпись (владелец: «выдавать краткое описание того, что кнопки
@@ -2061,6 +2072,13 @@ function B2SPane({ ctx }) {
       setStatus('блок 1 · пустой источник: вставь URL или путь к файлу')
       return
     }
+    /* Имя - обязательный вход: без него каталог установки не назвать. Кнопка при
+       пустом поле и так погашена, это защита от Enter/программного вызова. */
+    if (nameWarn) {
+      setTone('error')
+      setStatus('блок 1 · имя скилла не может быть пустым!')
+      return
+    }
     if (mdSrc) {
       onlyB(3)
       if (!analyzed) {
@@ -2157,22 +2175,28 @@ function B2SPane({ ctx }) {
       jsx(PaneBlock, {
         n: 1,
         title: 'Источник и имя скилла',
-        state: trimSrc
-          ? (mdSrc ? 'markdown: блок 2 пропустим' : (isRemoteSrc(trimSrc) ? 'URL - нужен разбор' : 'файл - нужен разбор'))
-          : 'пусто',
-        tone: trimSrc ? (mdSrc ? 'done' : null) : 'bad',
+        state: !trimSrc
+          ? 'пусто'
+          : (nameWarn
+            ? 'нужно имя скилла'
+            : (mdSrc ? 'markdown: блок 2 пропустим' : (isRemoteSrc(trimSrc) ? 'URL - нужен разбор' : 'файл - нужен разбор'))),
+        tone: trimSrc && !nameWarn ? (mdSrc ? 'done' : null) : (!trimSrc ? 'bad' : null),
         open: !!openB[1],
         onToggle: () => toggleB(1),
         style: { backgroundColor: openB[1] ? BLOCK_BG : 'transparent' },
-        hint: trimSrc
-          ? (mdSrc ? 'файл уже markdown - анализ пропустим' : 'блок 2 разберёт источник')
-          : 'впиши URL или путь к файлу',
+        hint: !trimSrc
+          ? 'впиши URL или путь к файлу'
+          : (nameWarn
+            ? 'впиши имя скилла - без него не пойдём дальше'
+            : (mdSrc ? 'файл уже markdown - анализ пропустим' : 'блок 2 разберёт источник')),
         foot: jsx(NextBtn, {
           label: 'ДАЛЕЕ →',
           onClick: next1,
-          disabled: !!busy,
+          disabled: !!busy || !trimSrc || nameWarn,
           fill: STEP_BG,
-          title: 'запомнить выбор и открыть следующий шаг'
+          title: !trimSrc
+            ? 'сначала впиши источник'
+            : (nameWarn ? 'нужно имя скилла: пустым не поставим' : 'запомнить выбор и открыть следующий шаг')
         }),
         children: [
           jsx(Field, {
@@ -2281,14 +2305,18 @@ function B2SPane({ ctx }) {
               }),
               jsxs(Field, {
                 label: 'Имя скилла',
-                hint: existing ? 'занято - долив' : skills ? 'свободно - новый' : '',
+                hint: nameWarn ? 'обязательное: пустым не поставим' : (existing ? 'занято - долив' : skills ? 'свободно - новый' : ''),
                 children: [
                   jsx(Input, {
                     value: name,
                     onChange: (e) => setName(e.target.value),
-                    placeholder: 'python-pathlib',
+                    placeholder: 'каталог в skills/: латиница и дефисы',
                     title: skillsErr || '',
-                    className: 'h-7 text-xs'
+                    /* Пустое имя - не «просто пустое поле», а причина, по которой кнопка
+                       «ДАЛЕЕ» не работает: жёлтая окантовка (и тот же цвет у подписи под
+                       полем) называет это раньше, чем клик. */
+                    className: 'h-7 text-xs' + (nameWarn ? ' border-amber-400' : ''),
+                    style: nameWarn ? { borderColor: NAME_WARN, boxShadow: 'inset 0 0 0 1px ' + NAME_WARN } : undefined
                   }),
                   /* Подсказка имён — свой список ТОЛЬКО по выбранной категории
                      (см. комментарий у `nameOpen`): нативный datalist подсовывал
@@ -2296,16 +2324,20 @@ function B2SPane({ ctx }) {
                   namePickRow,
                   nameOpen ? nameListBlock : null,
                   jsx('div', Ell(
-                    existing
-                      ? 'уже стоит: ' + (existing.category || 'без категории') + ' · глав ' +
-                        existing.chapters + ' · файлов ' + existing.files +
-                        ' - новые главы допишутся к нему'
-                      : skills === null
-                        ? 'список скиллов грузится…'
-                        : skillsErr
-                          ? 'списка нет - имя соберётся как новый скилл'
-                          : 'такого скилла нет - будет новый',
-                    'text-[10px] leading-tight text-(--ui-text-tertiary, #8a8a8a)'
+                    nameWarn
+                      ? 'имя скилла не может быть пустым!'
+                      : (existing
+                        ? 'уже стоит: ' + (existing.category || 'без категории') + ' · глав ' +
+                          existing.chapters + ' · файлов ' + existing.files +
+                          ' - новые главы допишутся к нему'
+                        : skills === null
+                          ? 'список скиллов грузится…'
+                          : skillsErr
+                            ? 'списка нет - имя соберётся как новый скилл'
+                            : 'такого скилла нет - будет создан новый'),
+                    nameWarn
+                      ? 'text-[10px] leading-tight text-amber-400'
+                      : 'text-[10px] leading-tight text-(--ui-text-tertiary, #8a8a8a)'
                   )),
                   existing
                     ? jsxs(Select, {
