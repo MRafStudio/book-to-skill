@@ -1,7 +1,10 @@
 """Живой тест режимов установки: план → create → долив → замена, с бэкапом.
 
-Песочница: HERMES_HOME=D:/tmp/b2s-fakehome, черновик-копия staging/_probe.
-Профиль не трогаем — проверяем ядро (tools/api.py do_install/do_skills).
+Песочница: HERMES_HOME=D:/tmp/b2s-fakehome, черновик-фикстура собирается тут же.
+Профиль не трогаем - проверяем ядро (tools/api.py do_install/do_skills).
+
+Фикстуру тест строит САМ, а не копирует из живого staging: уборка (TTL/лимит)
+сносит черновики чужих прогонов, и тест падал с FileNotFoundError на ровном месте.
 """
 import json
 import os
@@ -20,7 +23,15 @@ probe = REPO / "staging" / "_probe"
 shutil.rmtree(FAKE, ignore_errors=True)
 shutil.rmtree(REPO / "backups", ignore_errors=True)
 shutil.rmtree(probe, ignore_errors=True)
-shutil.copytree(REPO / "staging" / "python-pathlib", probe)
+(probe / "chapters").mkdir(parents=True, exist_ok=True)
+(probe / "SKILL.md").write_text(
+    '---\nname: _probe\ndescription: "Use when testing b2s install modes."\n---\n\n'
+    "# _probe\n\nПесочница режимов установки: план, долив, замена.\n",
+    encoding="utf-8")
+for num, topic in ((1, "paths"), (9, "targets")):
+    (probe / "chapters" / f"ch0{num}-{topic}.md").write_text(
+        f"# {topic}\n\nглава {num}\n", encoding="utf-8")
+(probe / "glossary.md").write_text("# Глоссарий\n\nтермин - значение\n", encoding="utf-8")
 
 target = FAKE / "skills" / "software-development" / "_probe"
 

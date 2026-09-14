@@ -204,7 +204,7 @@ def main() -> int:
     check("пустое имя подсвечено жёлтым (окантовка поля + та же краска у подписи)",
           "const nameWarn = !wanted" in src and
           "border: '1px solid ' + WARN_YELLOW" in src and
-          "style: nameWarn ? { color: WARN_YELLOW } : null" in src and
+          "style: (nameWarn || nameBad) ? { color: WARN_YELLOW } : null" in src and
           "text-amber-400" not in src,
           "палитра Tailwind в панели не подключена - цвет классом не появится")
     check("окантовка имени не жирнее чипсы DESCRIPTION.md: ровно 1 px, без boxShadow",
@@ -219,14 +219,25 @@ def main() -> int:
           "disabled: !!busy || !trimSrc || nameWarn" not in src,
           "имя снова стало входом разбора")
     check("пустое имя гасит «ДАЛЕЕ» блока 3 и установку в блоке 5, а не разбор",
-          "disabled: !!busy || nameWarn," in src and
-          "disabled: !!busy || !hasDraft || !!installed || nameWarn," in src and
+          "disabled: !!busy || nameWarn || nameBad," in src and
+          "disabled: !!busy || !hasDraft || !!installed || nameWarn || nameBad," in src and
           "disabled: !!busy || !hasDraft,   // имя" not in src,
           "пустое имя стало входом разбора или потеряло замок")
     check("имя обязательно там, где пишется каталог (блок 5)",
-          "disabled: !!busy || !hasDraft || !!installed || nameWarn," in src and
+          "disabled: !!busy || !hasDraft || !!installed || nameWarn || nameBad," in src and
           "нужно имя скилла: пустым не поставим - каталог в skills/ должен быть назван" in src,
           "установка пойдёт без имени")
+    # Имя, которое линза Hermes не примет, - такая же незаполненная обязательная
+    # строка, как пустая, только ошибка вылезала ПОСЛЕ записи: скилл ложился в
+    # профиль с шапкой `name: license-Info`, а линза отвечала «must be lowercase».
+    check("недопустимое имя (заглавные, пробелы) ловится ДО записи",
+          "const nameBad = !nameWarn && !/^[a-z0-9][a-z0-9._-]*$/.test(wanted)" in src and
+          "блок 3 · такое имя Hermes не примет" in src and
+          "if (nameBad)" in src,
+          "имя с заглавной снова доедет до установки и упадёт на линзе")
+    check("подпись недопустимого имени называет правило, а не только красит",
+          "только строчные латинские буквы, цифры" in src,
+          "владелец видит жёлтое поле без причины")
 
     # 1c) отпечаток ВХОДОВ разбора: его меняют только входы РАЗБОРА - источник,
     # стратегия, режим. Имя скилла и категория сюда НЕ входят: это реквизиты записи,

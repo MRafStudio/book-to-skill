@@ -198,8 +198,18 @@ def main() -> int:
     check("кнопка гаснет, пока цель установлена (disabled: … || !!installed)",
           re.search(r"disabled:\s*!!busy \|\| !hasDraft \|\| !!installed", src) is not None,
           "иначе повторный клик пишет в skills/… ещё раз")
-    check("факт установки ставится только в ветке успеха /install",
-          "setInstalled({ target: out.target" in src and "} else if (out.ok) {" in src)
+    check("факт установки ставится по факту записи, а не по «нет замечаний»",
+          "setInstalled({ target: out.target" in src and "} else if (out.ok) {" in src and
+          "if (out.dry_run === false || out.installed) {" in src,
+          "ядро пишет файлы ДО проверки: ok=false с записанным скиллом - это не «не установили»")
+    check("установка с замечаниями гасит кнопку (иначе второй клик начнёт долив)",
+          re.search(r"dry_run === false \|\| out\.installed\) \{\s*\n\s*setInstalled\(", src) is not None,
+          "кнопка оставалась «Установить» на уже установленном скилле")
+    check("замечания проверки печатаются ТЕКСТОМ, а не «см. подробности ниже»",
+          "const installIssues = (out) => {" in src and
+          "out.error || 'см. подробности ниже'" not in src and
+          "'⚠ ' + installIssues(preview)" in src,
+          "владелец видел отказ без причины: подробностей в панели не было")
     check("шапка блока 4 называет каталог установки, а не «подтверди запись»",
           "установлен в ' + installed.target" in src and
           "state: installed" in src)

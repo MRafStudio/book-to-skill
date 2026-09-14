@@ -660,6 +660,13 @@ function B2SPane({ ctx }) {
      «ДАЛЕЕ» гаснет и говорит причину (владелец: «если имя не введено, окантовка
      жёлтым, а кнопка недоступна»). */
   const nameWarn = !wanted
+  /* Имя, которое Hermes не примет, - тоже незаполненный обязательный вход, только
+     причина другая: линза скиллов требует строчные латинские буквы/цифры и
+     разделители `.-_`. Живой случай: имя `license-Info` дошло до записи, скилл лёг
+     в профиль, а линза ответила `name: 'license-Info' must be lowercase` - то есть
+     ошибку владелец увидел только ПОСЛЕ установки. Проверяем до записи, той же
+     краской, что и пустое имя: это не заполненный вход, а не авария ядра. */
+  const nameBad = !nameWarn && !/^[a-z0-9][a-z0-9._-]*$/.test(wanted)
   const existing = (skills || []).find((s) => s.name === wanted) || null
 
   /* Подпись под полем «Имя скилла» - единственное место, где сказано, свободно имя или
@@ -670,7 +677,9 @@ function B2SPane({ ctx }) {
      обязательный вход, поэтому «внимание», а не «авария». */
   const nameNote = nameWarn
     ? 'имя скилла не может быть пустым!'
-    : (nameAuto
+    : (nameBad
+      ? 'только строчные латинские буквы, цифры, «-», «_», «.»: заглавные, пробелы и кириллицу Hermes не примет'
+      : (nameAuto
       ? 'подставлено по источнику - переписать можно тут же'
       : (existing
       ? 'уже стоит: ' + (existing.category || 'без категории') + ' · глав ' + existing.chapters +
@@ -1332,6 +1341,21 @@ function B2SPane({ ctx }) {
      «добавится / перезапишется / останется», и только увидев этот план,
      второй клик имеет право писать. Замена сносит каталог — поэтому при
      ней ядро сперва снимает бэкап, а панель показывает предупреждение. */
+  /* Замечания пост-проверки ядра - человеческой строкой. Ядро пишет файлы ДО
+     проверки, поэтому «проверка не прошла» ≠ «не записано»: панель обязана сказать и
+     то, и другое, и назвать саму ошибку. Живой случай: в статусе стояло «см.
+     подробности ниже», а подробностей панель не печатала - причина осталась в поле
+     `validation.validate.output` и до глаз не доехала. */
+  const installIssues = (out) => {
+    const v = (out && out.validation) || {}
+    const lines = [v.validate, v.scan]
+      .filter((r) => r && r.ok === false)
+      .reduce((acc, r) => acc.concat(String(r.output || r.error || '').split('\n')), [])
+      .map((s) => s.trim())
+      .filter((s) => /^(ERROR|WARN|✗|⚠)/.test(s))
+    return lines.length ? lines.slice(0, 3).join('; ') : ((out && out.error) || 'причину ядро не назвало')
+  }
+
   const runInstall = async (confirm) => {
     setBusy('install')
     setTone('working')
@@ -1372,8 +1396,23 @@ function B2SPane({ ctx }) {
         loadSkills()
         loadCats()
       } else {
+        /* Ядро пишет файлы ДО проверки, поэтому `ok: false` здесь значит не «не
+           записали», а «записали, а линза нашла замечания» - различить их можно по
+           `dry_run`/`installed`. Раньше эта ветка ставила только статус: кнопка
+           оставалась «Установить» на уже установленном скилле (второй клик пошёл бы
+           доливом поверх), а факт записи в панели не отмечался. Владелец:
+           «в каталоге скилл появился, а кнопка не изменилась на „Успешно установлено“». */
+        const issues = installIssues(out)
         setTone('error')
-        setStatus('записано, но проверка не прошла: ' + (out.error || 'см. подробности ниже'))
+        if (out.dry_run === false || out.installed) {
+          setInstalled({ target: out.target || '', name: String(name || '').trim(), cat })
+          loadSkills()
+          loadCats()
+          setStatus('установлено в ' + (out.target || '') + ', но проверка нашла замечания: ' + issues +
+            ' - скилл уже лежит в профиле, поэтому кнопка погашена: повторный клик начал бы долив')
+        } else {
+          setStatus('не записано: ' + issues)
+        }
       }
     } catch (err) {
       setTone('error')
@@ -2116,6 +2155,15 @@ function B2SPane({ ctx }) {
                     : ' · проверка скилла: ок')
               })
             : null,
+          /* Замечания - ТЕКСТОМ, а не словом «есть замечания»: строка статуса обещает
+             «см. подробности ниже», значит подробности обязаны быть здесь. Это ответ
+             на «что пошло не так» без похода в терминал и без догадок. */
+          (preview.dry_run === false && preview.validation && preview.validation.ok === false)
+            ? jsx('div', {
+                style: { color: WARN_YELLOW },
+                children: '⚠ ' + installIssues(preview)
+              })
+            : null,
 
           /* Окно со списком файлов — по образцу поля очищенного текста в блоке 2:
              фон плагина, рамка поля, потолок 288 px (`max-h-72`) и грип в правом
@@ -2370,6 +2418,11 @@ function B2SPane({ ctx }) {
     if (nameWarn) {
       setTone('error')
       setStatus('блок 3 · без имени скилла нельзя: каталог установки называется именем')
+      return
+    }
+    if (nameBad) {
+      setTone('error')
+      setStatus('блок 3 · такое имя Hermes не примет: только строчные латинские буквы, цифры, «-», «_», «.» (заглавные и пробелы валят шапку скилла)')
       return
     }
     dropPreview()   // реквизиты могли поменяться - прежний план записи устарел
@@ -2661,11 +2714,13 @@ function B2SPane({ ctx }) {
         foot: jsx(NextBtn, {
           label: 'ДАЛЕЕ →',
           onClick: next3,
-          disabled: !!busy || nameWarn,
+          disabled: !!busy || nameWarn || nameBad,
           fill: STEP_BG,
           title: nameWarn
             ? 'нужно имя скилла: пустым не поставим - каталог в skills/ должен быть назван'
-            : 'открыть черновик - он ляжет в ' + (cat ? cat + '/' : '') + wanted
+            : (nameBad
+              ? 'такое имя Hermes не примет: нужны строчные латинские буквы, цифры, «-», «_», «.»'
+              : 'открыть черновик - он ляжет в ' + (cat ? cat + '/' : '') + wanted)
         }),
         children: [
           jsx('span', Ell('Это реквизиты ЗАПИСИ, а не входы разбора. Панель спрашивает их до черновика: блок 4 (черновик) получает готовое имя и категорию, а план записи в блоке 5 сразу считается как долив или замена.',
@@ -2750,7 +2805,7 @@ function B2SPane({ ctx }) {
                        DESCRIPTION.md (`border: 1px solid WARN_YELLOW`): ровно 1 px, а не
                        `boxShadow`-подложка, которая на глаз читается двойной линией. */
                     className: 'h-7 text-xs',
-                    style: nameWarn ? { border: '1px solid ' + WARN_YELLOW } : undefined
+                    style: (nameWarn || nameBad) ? { border: '1px solid ' + WARN_YELLOW } : undefined
                   }),
                   /* Подсказка имён — свой список ТОЛЬКО по выбранной категории
                      (см. комментарий у `nameOpen`): нативный datalist подсовывал
@@ -2759,8 +2814,8 @@ function B2SPane({ ctx }) {
                   nameOpen ? nameListBlock : null,
                   jsx('div', {
                     className: 'truncate text-[10px] leading-tight' +
-                      (nameWarn ? '' : ' text-(--ui-text-tertiary, #8a8a8a)'),
-                    style: nameWarn ? { color: WARN_YELLOW } : null,
+                      ((nameWarn || nameBad) ? '' : ' text-(--ui-text-tertiary, #8a8a8a)'),
+                    style: (nameWarn || nameBad) ? { color: WARN_YELLOW } : null,
                     title: nameNote,
                     children: nameNote
                   }),
@@ -2900,17 +2955,19 @@ function B2SPane({ ctx }) {
               ? (preview.mode === 'replace' ? 'Подтвердить ЗАМЕНУ' : 'Установить')
               : 'Предпросмотр'),
           onClick: () => runInstall(!!preview),
-          disabled: !!busy || !hasDraft || !!installed || nameWarn,
+          disabled: !!busy || !hasDraft || !!installed || nameWarn || nameBad,
           fill: hasDraft ? STEP_BG : undefined,
           title: installed
             ? 'скилл уже записан в ' + installed.target + ' - чтобы поставить заново, измени черновик или входы'
             : (nameWarn
               ? 'нужно имя скилла: пустым не поставим - каталог в skills/ должен быть назван'
-              : (!hasDraft
-                ? 'сначала сделай черновик - записывать нечего'
-                : (preview
-                  ? 'второй клик пишет в skills/<категория>/<имя>/'
-                  : '«Предпросмотр» соберёт план и ничего не запишет - пишет только «Установить»')))
+              : (nameBad
+                ? 'такое имя Hermes не примет: нужны строчные латинские буквы, цифры, «-», «_», «.» - линза валит шапку сразу после записи'
+                : (!hasDraft
+                  ? 'сначала сделай черновик - записывать нечего'
+                  : (preview
+                    ? 'второй клик пишет в skills/<категория>/<имя>/'
+                    : '«Предпросмотр» соберёт план и ничего не запишет - пишет только «Установить»'))))
         }),
         children: [
           jsx('span', Ell(installed
