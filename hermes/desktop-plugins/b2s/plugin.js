@@ -632,7 +632,8 @@ function B2SPane({ ctx }) {
   const existing = (skills || []).find((s) => s.name === wanted) || null
 
   /* Подпись под полем «Имя скилла» - единственное место, где сказано, свободно имя или
-     занято, и что не так с пустым. Цвет ставим inline (NAME_WARN), а не tailwind-классом:
+     занято, и что не так с пустым. Цвет ставим inline (WARN_YELLOW, как рамка чипсы
+     DESCRIPTION.md), а не tailwind-классом:
      палитра Tailwind в панели не подключена, класс молча ничего не
      покрасит. Жёлтым - только про пустое имя: это не ошибка ядра, а незаполненный
      обязательный вход, поэтому «внимание», а не «авария». */
@@ -1387,10 +1388,6 @@ function B2SPane({ ctx }) {
      создаёт и не переписывает, только просит LLM разобрать черновик. Держим
      бледно-жёлтой, чтобы её не путали с зелёными шагами, которые меняют файлы. */
   const REVIEW_YELLOW = '#facc15'
-  /* Пустое «Имя скилла» — не ошибка ядра, а незаполненный обязательный вход: жёлтый
-     (тот же, что у критики: «внимание», не «авария»), а не красный. Кнопка «ДАЛЕЕ»
-     при этом гаснет и говорит, чего не хватает. */
-  const NAME_WARN = REVIEW_YELLOW
   const REVIEW_BG = 'color-mix(in srgb, ' + REVIEW_YELLOW + ' 22%, color-mix(in srgb, ' + BASE + ' 4%, transparent))'
   /* Тултипы кнопок: при наведении панель рассказывает, ЧТО СДЕЛАЕТ кнопка, а не
      повторяет её подпись (владелец: «выдавать краткое описание того, что кнопки
@@ -2328,9 +2325,11 @@ function B2SPane({ ctx }) {
                     title: skillsErr || '',
                     /* Пустое имя - не «просто пустое поле», а причина, по которой кнопка
                        «ДАЛЕЕ» не работает: жёлтая окантовка (и тот же цвет у подписи под
-                       полем) называет это раньше, чем клик. */
+                       полем) называет это раньше, чем клик. Толщина и цвет - как у чипсы
+                       DESCRIPTION.md (`border: 1px solid WARN_YELLOW`): ровно 1 px, а не
+                       `boxShadow`-подложка, которая на глаз читается двойной линией. */
                     className: 'h-7 text-xs',
-                    style: nameWarn ? { borderColor: NAME_WARN, boxShadow: 'inset 0 0 0 1px ' + NAME_WARN } : undefined
+                    style: nameWarn ? { border: '1px solid ' + WARN_YELLOW } : undefined
                   }),
                   /* Подсказка имён — свой список ТОЛЬКО по выбранной категории
                      (см. комментарий у `nameOpen`): нативный datalist подсовывал
@@ -2340,7 +2339,7 @@ function B2SPane({ ctx }) {
                   jsx('div', {
                     className: 'truncate text-[10px] leading-tight' +
                       (nameWarn ? '' : ' text-(--ui-text-tertiary, #8a8a8a)'),
-                    style: nameWarn ? { color: NAME_WARN } : null,
+                    style: nameWarn ? { color: WARN_YELLOW } : null,
                     title: nameNote,
                     children: nameNote
                   }),

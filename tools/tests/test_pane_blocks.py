@@ -198,10 +198,13 @@ def main() -> int:
           "панель подставит своё имя, и скилл уедет под чужим")
     check("пустое имя подсвечено жёлтым (окантовка поля + та же краска у подписи)",
           "const nameWarn = !wanted" in src and
-          "borderColor: NAME_WARN, boxShadow: 'inset 0 0 0 1px ' + NAME_WARN" in src and
-          "style: nameWarn ? { color: NAME_WARN } : null" in src and
+          "border: '1px solid ' + WARN_YELLOW" in src and
+          "style: nameWarn ? { color: WARN_YELLOW } : null" in src and
           "text-amber-400" not in src,
           "палитра Tailwind в панели не подключена - цвет классом не появится")
+    check("окантовка имени не жирнее чипсы DESCRIPTION.md: ровно 1 px, без boxShadow",
+          "NAME_WARN" not in src and "boxShadow: 'inset 0 0 0 1px '" not in src,
+          "borderColor + inset-тень давали двойную линию - владелец: «беспрецедентно толстая»")
     check("пустое имя названо словами, а не только цветом",
           "имя скилла не может быть пустым!" in src and
           "nameWarn ? 'обязательное: пустым не поставим'" in src)
