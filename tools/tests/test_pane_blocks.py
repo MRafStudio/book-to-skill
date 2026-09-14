@@ -57,8 +57,15 @@ RUNNER = r"""
 const jsx = (t, p) => ({ type: t, props: p || {} })
 const jsxs = (t, p) => ({ type: t, props: p || {} })
 const api = new Function('jsx', 'jsxs', process.env.MD_SRC +
-  '\n; return { MD_EXT, stripQuery, isRemoteSrc, srcIsMarkdown }')(jsx, jsxs)
-const { isRemoteSrc, srcIsMarkdown } = api
+  '\n; return { MD_EXT, stripQuery, isRemoteSrc, srcIsMarkdown, skillsInCat }')(jsx, jsxs)
+const { isRemoteSrc, srcIsMarkdown, skillsInCat } = api
+const skillFixtures = [
+  { name: 'swift-notes', category: 'apple', chapters: 3, files: 9 },
+  { name: 'ios-hig', category: 'apple', chapters: 5, files: 14 },
+  { name: 'python-pathlib', category: 'software-development', chapters: 10, files: 15 },
+  { name: 'loose-one', category: '', chapters: 1, files: 2 },
+  { name: 'k8s', category: 'devops', chapters: 4, files: 11 }
+]
 const cases = [
   'D:/src/docs/HERMES.md',
   'D:/src/docs/note.markdown',
@@ -82,7 +89,13 @@ console.log(JSON.stringify({
   n: cases.length,
   remote: [isRemoteSrc('https://a.b/c.md'), isRemoteSrc('D:/a/b.md'), isRemoteSrc(''), isRemoteSrc('  ')],
   ext_upper: srcIsMarkdown('D:/X/Y.MD'),
-  clean: srcIsMarkdown('D:/a/b.md')
+  clean: srcIsMarkdown('D:/a/b.md'),
+  cat_apple: skillsInCat(skillFixtures, 'apple').map((s) => s.name),
+  cat_sd: skillsInCat(skillFixtures, 'software-development').map((s) => s.name),
+  cat_none: skillsInCat(skillFixtures, 'nope').map((s) => s.name),
+  cat_loose: skillsInCat(skillFixtures, '').map((s) => s.name),
+  cat_empty: skillsInCat(null, 'apple').length,
+  cat_sorted: skillsInCat(skillFixtures, 'apple').map((s) => s.name).join(',')
 }))
 """
 
@@ -95,7 +108,8 @@ def main() -> int:
 
     # 1) живые функции детекта — в node
     try:
-        md_src = src[src.index("const MD_EXT"):src.index("const fmtInt")]
+        md_src = (src[src.index("const MD_EXT"):src.index("const fmtInt")] +
+                  src[src.index("function skillsInCat"):src.index("/** Заголовок свёрнутого спойлера")])
     except ValueError as exc:
         check("детект markdown извлекается из plugin.js", False, str(exc))
         return 1
@@ -135,6 +149,30 @@ def main() -> int:
           out["ext_upper"] is True, f"{out['ext_upper']!r}")
     check("URL отличается от локального пути (для подписей блока)",
           out["remote"] == [True, False, False, False], f"{out['remote']!r}")
+
+    # 1b) список имён скиллов подчиняется выбранной КАТЕГОРИИ (жалоба владельца:
+    # «выбрали категорию apple - значит в списке должны быть только те, кто входит
+    # в каталог apple, а не всё, что в принципе найдено на диске»).
+    check("список имён подчиняется категории: apple даёт только свои скиллы",
+          out["cat_apple"] == ["ios-hig", "swift-notes"], f"{out['cat_apple']!r}")
+    check("другая категория даёт другой список (не «всё, что на диске»)",
+          out["cat_sd"] == ["python-pathlib"], f"{out['cat_sd']!r}")
+    check("пустая категория честно даёт пустой список",
+          out["cat_none"] == [], f"{out['cat_none']!r}")
+    check("скиллы вне категорий (loose) в список имён не подмешиваются",
+          out["cat_loose"] == [], f"{out['cat_loose']!r}")
+    check("нет списка скиллов — не падаем", out["cat_empty"] == 0)
+    check("имена в списке по алфавиту", out["cat_sorted"] == "ios-hig,swift-notes")
+    check("нативный datalist убран из панели (все скиллы подряд + непрокручиваемый попап)",
+          "jsx('datalist'" not in src and "b2s-skill-names" not in src,
+          "имя скилла всё ещё подсказывается нативным datalist")
+    check("список имён — окно панели (фон плагина, рамка, потолок и скролл)",
+          "Object.assign({}, ZONE_CAP, { border: FIELD_LINE, backgroundColor: PANEL_BG })" in
+          src[src.index("const nameListBlock"):src.index("const namePickRow")])
+    check("список открывается кнопкой и перечитывается с диска при открытии",
+          "loadSkills(); setNameOpen((v) => !v)" in src)
+    check("ввод имени остался свободным (Input не превратился в Select)",
+          "onChange: (e) => setName(e.target.value)" in src)
 
     # 2) четыре блока и футер «ДАЛЕЕ» в каждом
     blocks = re.findall(r"jsx\(PaneBlock, \{\n\s+n: (\d)", src)

@@ -137,6 +137,20 @@ function chapterRows(out) {
   return rows
 }
 
+/** Скиллы ВЫБРАННОЙ категории — по алфавиту.
+ *
+ * Список имён обязан подчиняться категории: иначе панель подсказывает имена из чужих
+ * каталогов, и человек ставит скилл не туда, куда смотрел (владелец: «выбрали категорию
+ * apple - значит в списке должны быть только те, кто входит в каталог apple»).
+ * Скиллы, лежащие прямо в `skills/` (категория ""), в список не попадают вовсе. */
+function skillsInCat(skills, cat) {
+  const want = String(cat || '')
+  if (!want) return []          // категория не выбрана — подсказывать нечего
+  return (skills || [])
+    .filter((s) => String((s && s.category) || '') === want)
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+}
+
 /** Заголовок свёрнутого спойлера «План по главам» — тот же принцип, что у блока
  *  черновика: в свёрнутом виде видно ФАКТ, а не одно название. Числа берём из самой
  *  раскладки, ничего не пересчитывая: сколько глав и что с ними собираются делать. */
@@ -535,6 +549,10 @@ function B2SPane({ ctx }) {
      (раскладка считается Python-ом по кнопке, черновик пишет LLM в чате), и
      раскрытие одного не должно тянуть другое. По умолчанию свёрнут — как черновик. */
   const [chapterOpen, setChapterOpen] = useState(false)
+  /* Список имён скиллов — свой, а не нативный `<datalist>`: тот показывает ВСЁ, что
+     нашлось на диске (игнорируя категорию), а его попап не прокрутить и не стилизовать.
+     Здесь только подсказка-список под полем: ввод имени остаётся свободным. */
+  const [nameOpen, setNameOpen] = useState(false)
   const [draftFile, setDraftFile] = useState('')  // какой файл черновика открыт
   const [draftText, setDraftText] = useState(null) // его текст (null — не читали)
   /* Строка поля «Источник»: кнопки выбора файла и вставки из буфера стоят
@@ -1551,6 +1569,53 @@ function B2SPane({ ctx }) {
       })
     : null
 
+  /* ── подсказка имён скиллов: только из ВЫБРАННОЙ категории ─────────────── */
+  /* Раньше здесь стоял нативный `<datalist>`: он подсовывал весь профиль подряд,
+     игнорируя категорию (владелец: «выбрали категорию apple - значит в списке
+     должны быть только те, кто входит в каталог apple»), а его попап нельзя ни
+     прокрутить, ни стилизовать. Список стал своим: окно панели с потолком и
+     скроллом (ZONE_CAP), строка на скилл, ввод имени при этом остаётся свободным. */
+  const skillsOfCat = skillsInCat(skills, cat)
+  const nameListBlock = jsxs('div', {
+    'data-glass-raised': '',
+    className: 'mt-1 min-w-0 space-y-1 rounded px-1.5 py-1',
+    style: Object.assign({}, ZONE_CAP, { border: FIELD_LINE, backgroundColor: PANEL_BG }),
+    title: 'Тяни за угол в правом нижнем углу, чтобы растянуть список скиллов',
+    children: skillsOfCat.length
+      ? skillsOfCat.map((s) => jsx(Button, {
+          size: 'sm',
+          variant: 'ghost',
+          onClick: () => { setName(s.name); setNameOpen(false) },
+          className: 'h-6 justify-start text-[0.625rem]',
+          style: CHIP_FIT,
+          title: 'подставить имя «' + s.name + '» - скилл уже есть, включится долив',
+          children: cutSpan(s.name + ' · ' + plural(s.chapters || 0, 'глава', 'главы', 'глав') +
+            ' · ' + (s.files || 0) + ' файл(ов)', undefined,
+            'подставить имя «' + s.name + '» - скилл уже есть, включится долив')
+        }, s.name))
+      : jsx('div', Ell(skills === null
+          ? 'список скиллов грузится…'
+          : 'в категории «' + (cat || '…') + '» скиллов нет - имя будет новым',
+          'opacity-70'))
+  })
+  const namePickRow = jsxs('div', {
+    className: 'flex flex-wrap items-center gap-1 pt-1',
+    children: [
+      jsx(Button, {
+        size: 'sm',
+        variant: 'ghost',
+        onClick: () => { loadSkills(); setNameOpen((v) => !v) },
+        className: 'h-6 justify-start text-[0.625rem]',
+        style: CHIP_FIT,
+        title: 'Показать скиллы категории «' + (cat || '…') + '» - имя готового можно подставить, а не набирать руками',
+        children: cutSpan((nameOpen ? '▴ скрыть список' : '▾ скиллы категории') +
+          (skills === null ? '' : ' · ' + skillsOfCat.length), undefined,
+          'Показать скиллы категории «' + (cat || '…') + '» - имя готового можно подставить, а не набирать руками')
+      }),
+      jsx('span', Ell(catEmpty ? 'в этой категории ещё ничего нет' : '', 'text-[10px] opacity-70'))
+    ]
+  })
+
   const resultBlock = jsxs('details', {
     className: 'rounded border px-2 py-1 text-[0.625rem] leading-snug',
     style: { backgroundColor: BLOCK_BG, border: BLOCK_LINE },
@@ -2194,17 +2259,14 @@ function B2SPane({ ctx }) {
                     value: name,
                     onChange: (e) => setName(e.target.value),
                     placeholder: 'python-pathlib',
-                    list: 'b2s-skill-names',
                     title: skillsErr || '',
                     className: 'h-7 text-xs'
                   }),
-                  /* Подсказка имён — из профиля, а не выдуманная: на 600 страницах
-                     набирать имя руками и угадывать его написание невозможно. */
-                  jsx('datalist', {
-                    id: 'b2s-skill-names',
-                    children: (skills || []).slice(0, 300).map((s) =>
-                      jsx('option', { value: s.name, children: s.category || '' }, s.name))
-                  }),
+                  /* Подсказка имён — свой список ТОЛЬКО по выбранной категории
+                     (см. комментарий у `nameOpen`): нативный datalist подсовывал
+                     весь профиль и не давал прокрутки. */
+                  namePickRow,
+                  nameOpen ? nameListBlock : null,
                   jsx('div', Ell(
                     existing
                       ? 'уже стоит: ' + (existing.category || 'без категории') + ' · глав ' +
