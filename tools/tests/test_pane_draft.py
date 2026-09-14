@@ -165,9 +165,14 @@ def main() -> int:
     # 2) состояния черновика разведены
     check("сводка не прочитана → так и сказано",
           out["read"] and out["read"][0] == "состояние черновика не прочитано", f"{out['read']!r}")
-    check("черновика нет → «сделай шаг 2», и это не выдаётся за готовность",
+    # Ссылки на «шаг 2» здесь быть не должно: блок 2 — это АНАЛИЗ источника, и при
+    # готовом markdown он пропускается. Раньше подпись звала именно туда, и человек
+    # упирался в тупик («шаг 2 пропущен, а черновика нет»). Черновик делает кнопка
+    # в ЭТОМ блоке — так и сказано.
+    check("черновика нет → сказано, что его делает кнопка в этом блоке, и нет ссылки на «шаг 2»",
           out["empty"] and out["empty"][0] == "черновика «python-pathlib» в staging нет"
-          and "сделай шаг 2" in out["empty"], f"{out['empty']!r}")
+          and any("кнопка" in b for b in out["empty"])
+          and not any("шаг 2" in b for b in out["empty"]), f"{out['empty']!r}")
     check("идёт генерация → «⏳ пишется», без цифр прошлого черновика",
           out["working"] and out["working"][0].startswith("⏳")
           and "симв" not in " · ".join(out["working"]), f"{out['working']!r}")
@@ -230,6 +235,33 @@ def main() -> int:
           "проверить staging" in src)
     check("пока блок раскрыт, сводка перечитывается сама (таймер по draftOpen)",
           "if (!draftOpen) return undefined" in src and "setInterval" in src)
+
+    # 5b) черновик пишет LLM в чате — панель обязана следить за staging сама.
+    # Корень жалобы владельца: «Сделать черновик» отправляла задание и молчала, а
+    # подпись звала в «шаг 2» (он же блок 2 — анализ), который при готовом markdown
+    # пропускается. Получался тупик: кнопка вроде есть, но сделать нельзя.
+    i_watch = src.find("const watchDraft")
+    watch_body = src[i_watch:i_watch + 2000] if i_watch > 0 else ""
+    check("есть вотчер черновика (панель не молчит после «Сделать черновик»)",
+          i_watch > 0 and "setInterval" in watch_body and "/draft" in watch_body,
+          f"watchDraft@{i_watch}")
+    check("вотчер сдаётся по дедлайну и называет это честно",
+          "900000" in watch_body and "не появился в staging" in watch_body,
+          "вотчер будет ждать вечно или промолчит")
+    check("интент draft запускает вотчер и поднимает «жду staging»",
+          "if (kind === 'draft')" in src and "setDraftWait(true)" in src
+          and "watchDraft((name || '').trim())" in src,
+          "после «Сделать черновик» панель снова останется молчать")
+    check("ожидание видно в шапке блока 3, а не только в строке статуса",
+          "draftWait ? 'задание в чате — жду staging'" in src,
+          "шапка блока 3 не знает про ожидание")
+    check("при пропущенном блоке 2 подпись блока 3 говорит про markdown",
+          "блок 2 пропущен: источник уже markdown" in src,
+          "человек не поймёт, почему анализа нет, а черновик нужен")
+    ui_step2 = [l for l in src.splitlines()
+                if "шаг 2" in l and not l.lstrip().startswith(("*", "//", "/*"))]
+    check("в подписях панели нет ссылок на «шаг 2» (блок 2 при markdown пропускается)",
+          not ui_step2, f"осталось: {[l.strip()[:70] for l in ui_step2[:3]]}")
 
     # 6) ядро
     sys.path.insert(0, str(REPO / "tools"))

@@ -255,7 +255,7 @@ const headBitsOf = ({ report, src, tone, busy }) => {
   if (tone === 'error') bits.push('⚠ ошибка')
   else if (busy) bits.push('⏳ ' + busy)
   else if (!report) bits.push('разбор не производился')
-  else if (stale) bits.push('отчёт по другому источнику — прогони шаг 1')
+  else if (stale) bits.push('отчёт по другому источнику — прогони источник заново')
   else bits.push('разбор готов')
   if (report && !busy && tone !== 'error') {
     if (report.chars != null) bits.push(fmtInt(report.chars) + ' симв')
@@ -287,9 +287,13 @@ const plural = (n, one, few, many) => {
  *  («видно, что черновик есть, сколько в нём глав и объёма — и ладно»).
  *
  *  Черновик пишет LLM в ЧАТЕ, а не ядро: панель узнаёт о нём только с диска,
- *  поэтому состояния разведены явно — «черновика нет, сделай шаг 2», «черновик
- *  другого имени» (в поле одно имя, в staging другое), «⏳ пишется» (идёт
- *  генерация: цифры прошлого черновика к ней не примешиваем). */
+ *  поэтому состояния разведены явно — «черновика нет: его делает кнопка в этом
+ *  блоке», «черновик другого имени» (в поле одно имя, в staging другое),
+ *  «⏳ пишется» (идёт генерация: цифры прошлого черновика к ней не примешиваем).
+ *
+ *  Ссылок на «шаг 2» тут быть не может: блок 2 — это АНАЛИЗ источника, и при
+ *  готовом markdown он пропускается, так что такая подпись отправляла человека
+ *  в тупик. */
 function draftBitsOf({ draft, want, busy }) {
   const bits = []
   if (busy === 'draft') {
@@ -302,7 +306,7 @@ function draftBitsOf({ draft, want, busy }) {
   }
   if (!draft.has_draft) {
     bits.push(want ? 'черновика «' + want + '» в staging нет' : 'черновика нет')
-    bits.push('сделай шаг 2')
+    bits.push('черновик делает кнопка ✎ в этом блоке')
     return bits
   }
   bits.push('черновик готов')
@@ -495,6 +499,10 @@ function B2SPane({ ctx }) {
      дал прочитать буфер (тогда единственный путь — Ctrl+V руками). */
   const srcRow = useRef(null)
   const [draftTextBusy, setDraftTextBusy] = useState(false)
+  /* «Задание ушло в чат, жду файлы в staging». Пока LLM пишет прозу, шапка блока 3
+     и его футер обязаны это говорить: иначе панель выглядит сломанной — «нажал, а
+     ничего не произошло». Гасится вотчером (watchDraft) или по дедлайну. */
+  const [draftWait, setDraftWait] = useState(false)
 
   /* Мастер из четырёх блоков: источник → анализ → черновик → запись. Открыт ровно
      один блок (владелец: «запускаем плагин — виден только первый»), шапка блока
@@ -857,6 +865,13 @@ function B2SPane({ ctx }) {
         const m = (catMeta || {})[cat]
         watchDesc(cat, (m && m.desc_state) || 'no-file')
       }
+      /* Черновик пишет агент в чате: панель о готовности не узнаёт ниоткуда и до сих
+         пор молчала — человек читал «черновика нет» и решал, что кнопка сломана.
+         Теперь после отправки задания панель сама следит за staging. */
+      if (kind === 'draft') {
+        setDraftWait(true)
+        watchDraft((name || '').trim())
+      }
       return true
     } catch (err) {
       setTone('error')
@@ -915,6 +930,51 @@ function B2SPane({ ctx }) {
     }, 2500)
   }
 
+  /** Черновик пишет агент в чате — панель о готовности не узнаёт ниоткуда, и раньше
+      после «Сделать черновик» она молчала: человек читал «черновика нет» и решал,
+      что кнопка сломана. Теперь панель сама читает staging, пока файлы не появятся
+      (тот же приём, что у описания категории). Следим по ИМЕНИ из поля: пока агент
+      пишет прозу, имя в поле могли поправить. */
+  const watchDraft = (targetName) => {
+    if (!targetName) return
+    const deadline = Date.now() + 900000     // проза глав идёт минутами — пятнадцати хватит
+    let inFlight = false
+    const id = setInterval(async () => {
+      if (inFlight) return
+      inFlight = true
+      let done = false
+      try {
+        const out = await ctx.rest('/draft', {
+          method: 'POST',
+          body: { name: targetName },
+          timeoutMs: 8000
+        })
+        if (out && out.has_draft) {
+          done = true
+          setDraft(out)
+          setDraftWait(false)
+          setTone('done')
+          const c = out.counts || {}
+          setStatus('черновик «' + (out.name || targetName) + '» приехал в staging' +
+            (c.files ? ' — ' + c.files + ' ' + plural(c.files, 'файл', 'файла', 'файлов') : '') +
+            ': можно к блоку 4')
+        }
+      } catch (err) { /* ещё не готов — ждём дальше, молча */ }
+      finally {
+        inFlight = false
+        const late = Date.now() > deadline
+        if (done || late) {
+          clearInterval(id)
+          if (!done && late) {
+            setDraftWait(false)
+            setTone('error')
+            setStatus('черновик «' + targetName + '» за 15 минут не появился в staging — смотри ответ агента в чате')
+          }
+        }
+      }
+    }, 5000)
+  }
+
   /** Шаг 1: детерминированный прогон источника. Никакого чата — прямой REST. */
   /** Шаг 1: детерминированный прогон источника — только ядро, без LLM и без чата.
    *  Возврат { ok, strategy, md } нужен кнопке «ДАЛЕЕ»: по нему она решает, можно
@@ -927,7 +987,7 @@ function B2SPane({ ctx }) {
     setBusy('rerun')
     setRerunErr('')
     setTone('working')
-    setStatus('шаг 1 · загрузка и очистка источника…')
+    setStatus('источник · загрузка и очистка…')
     try {
       const out = await ctx.rest('/rerun', {
         method: 'POST',
@@ -969,7 +1029,7 @@ function B2SPane({ ctx }) {
       setCore(false)
       setTone('error')
       const why = 'REST-ядро недоступно (' + note(err) + ')'
-      setStatus(why + ' — шаг 1 не выполнен')
+      setStatus(why + ' — источник ещё не прогнан')
       setRerunErr(why)
       return { ok: false, why }
     } finally {
@@ -986,7 +1046,7 @@ function B2SPane({ ctx }) {
   const runInstall = async (confirm) => {
     setBusy('install')
     setTone('working')
-    setStatus(confirm ? 'установка · перенос в skills/…' : 'шаг 3 · предпросмотр переноса…')
+    setStatus(confirm ? 'установка · перенос в skills/…' : 'блок 4 · предпросмотр переноса…')
     try {
       const out = await ctx.rest('/install', {
         method: 'POST',
@@ -1039,7 +1099,7 @@ function B2SPane({ ctx }) {
   const runPlan = async () => {
     setChapterBusy(true)
     setTone('working')
-    setStatus('шаг 3 · раскладка по главам…')
+    setStatus('блок 3 · раскладка по главам…')
     try {
       const out = await ctx.rest('/plan', {
         method: 'POST',
@@ -1441,7 +1501,7 @@ function B2SPane({ ctx }) {
           })
         : jsx('div', {
             className: 'mt-1 opacity-70',
-            children: 'нажми шаг 1 — вычищенный текст появится здесь'
+            children: 'нажми «Прогнать источник заново» в блоке 1 — вычищенный текст появится здесь'
           }),
       textInfo && textInfo.path
         ? jsx('div', Ell(textInfo.path, 'pt-1 opacity-70'))
@@ -1482,7 +1542,7 @@ function B2SPane({ ctx }) {
      решается, надо ли вообще заходить внутрь. Внутри — состав черновика и текст
      выбранного файла; «показать всё сразу» здесь не нужно: SKILL.md и главы
      читаются по одному, а не простынёй. */
-  const draftBits = draftBitsOf({ draft, want: (name || '').trim(), busy })
+  const draftBits = draftBitsOf({ draft, want: (name || '').trim(), busy: draftWait ? 'draft' : busy })
   const draftRowsList = draftRows(draft)
   const draftBlock = jsxs('details', {
     className: 'rounded border px-2 py-1 text-[0.625rem] leading-snug',
@@ -1583,13 +1643,13 @@ function B2SPane({ ctx }) {
                 }),
             jsx('div', {
               className: 'pt-1 opacity-70',
-              children: 'черновик правят в чате (шаг 2 перегенерирует), а в skills/ переносит шаг 3'
+              children: 'черновик правят в чате; перегенерация — кнопка «✎» в блоке 3, а в skills/ переносит блок 4'
             })
           ]
         : [
             jsx('div', {
               className: 'mt-1 opacity-80',
-              children: 'черновик пишет LLM в чате: шаг 2 отправляет задание, файлы ложатся в staging — сюда они приедут сами, как только агент их допишет'
+              children: 'черновик пишет LLM в чате: задание отправляет кнопка «✎ Сделать черновик», файлы лягут в staging — сюда приедут сами, как только агент их допишет'
             }),
             jsx('div', {
               className: 'mt-1 flex flex-wrap gap-1',
@@ -1856,14 +1916,14 @@ function B2SPane({ ctx }) {
         n: 1,
         title: 'Источник и имя скилла',
         state: trimSrc
-          ? (mdSrc ? 'markdown: шаг 2 пропустим' : (isRemoteSrc(trimSrc) ? 'URL — нужен разбор' : 'файл — нужен разбор'))
+          ? (mdSrc ? 'markdown: блок 2 пропустим' : (isRemoteSrc(trimSrc) ? 'URL — нужен разбор' : 'файл — нужен разбор'))
           : 'пусто',
         tone: trimSrc ? (mdSrc ? 'done' : null) : 'bad',
         open: !!openB[1],
         onToggle: () => toggleB(1),
         style: { backgroundColor: openB[1] ? BLOCK_BG : 'transparent' },
         hint: trimSrc
-          ? (mdSrc ? 'файл уже markdown — анализ пропустим' : 'шаг 2 разберёт источник')
+          ? (mdSrc ? 'файл уже markdown — анализ пропустим' : 'блок 2 разберёт источник')
           : 'впиши URL или путь к файлу',
         foot: jsx(NextBtn, {
           label: 'ДАЛЕЕ →',
@@ -2138,7 +2198,7 @@ function B2SPane({ ctx }) {
             ]
           }),
           rerunErr
-            ? jsx('div', Ell('шаг 1 сорвался: ' + rerunErr + ' — в чат это не ушло, разбор делает ядро',
+            ? jsx('div', Ell('прогон источника сорвался: ' + rerunErr + ' — в чат это не ушло, разбор делает ядро',
                 'text-[0.625rem] leading-snug text-(--ui-text-primary)'))
             : null,
           resultBlock
@@ -2149,20 +2209,26 @@ function B2SPane({ ctx }) {
       jsx(PaneBlock, {
         n: 3,
         title: 'Черновик скилла — без записи',
-        state: hasDraft ? 'есть — в staging' : (busy === 'draft' ? 'пишется' : 'нет'),
+        state: hasDraft
+          ? 'есть — в staging'
+          : (draftWait ? 'задание в чате — жду staging' : (busy === 'draft' ? 'пишется' : 'нет')),
         tone: hasDraft ? 'done' : null,
         open: !!openB[3],
         onToggle: () => toggleB(3),
         style: { backgroundColor: openB[3] ? BLOCK_BG : 'transparent' },
         hint: hasDraft
-          ? 'правки принимаются — перегенерация считается заново'
-          : 'проза глав — работа LLM, поэтому идёт в чат',
+          ? 'черновик на месте — можно записывать в профиль'
+          : (draftWait
+              ? 'задание ушло в чат — файлы приедут в staging сами, панель следит'
+              : (mdSrc
+                  ? 'блок 2 пропущен: источник уже markdown — жми «✎ Сделать черновик»'
+                  : 'черновика нет: жми «✎ Сделать черновик» — прозу пишет LLM в чате')),
         foot: jsx(NextBtn, {
           label: 'ДАЛЕЕ →',
           onClick: next3,
           disabled: !!busy || !hasDraft,
           fill: STEP_BG,
-          title: hasDraft ? 'открыть запись в профиль' : 'сначала сделай черновик'
+          title: hasDraft ? 'открыть запись в профиль' : 'сначала сделай черновик кнопкой «✎» выше'
         }),
         children: [
           jsx('div', {
@@ -2197,6 +2263,10 @@ function B2SPane({ ctx }) {
           }),
           jsx('span', Ell('Правки к черновику и повторный прогон считаются заново: счёт растёт с числом итераций.',
             'pl-1 text-[0.625rem] leading-snug text-(--ui-text-tertiary)')),
+          mdSrc && !hasDraft
+            ? jsx('span', Ell('источник — готовый markdown: текст уже добыт шагом 1, анализ (блок 2) не нужен, черновик можно делать сразу.',
+                'pl-1 text-[0.625rem] leading-snug text-(--ui-text-tertiary)'))
+            : null,
           draftBlock,
           chapterSlot
         ]
