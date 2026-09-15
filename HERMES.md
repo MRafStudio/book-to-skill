@@ -238,6 +238,12 @@
 
 ## Для нас, Hermes
 
+- **Регресс гоняй ЯВНЫМ venv-питоном профиля** (`D:/NEURO/Hermes/data/hermes/hermes-agent/venv/Scripts/python.exe`).
+  В bash `python` уже venv, но вложенный `subprocess.run(['python', …])` подставляет
+  системный интерпретатор без зависимостей форка - и два теста падают с
+  `ModuleNotFoundError: trafilatura` / `fastapi`, выглядя как регресс правок.
+  Признак: тот же тест руками зелёный, а в общем прогоне красный. Гонять общий
+  прогон так: `"<venv>/Scripts/python.exe" - <<'PYEOF'` с `sys.executable` внутри.
 - **Панель кормит backend ПРИЛОЖЕНИЯ, а не служба dashboard - и это разные двери.**
   Панель b2s ходит в процесс, который Electron поднял сам: его порт виден в
   `data/hermes/logs/desktop.log` строкой `HERMES_BACKEND_READY port=65250` (сейчас
