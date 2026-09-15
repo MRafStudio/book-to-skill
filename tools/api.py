@@ -61,6 +61,7 @@ from serve import (  # noqa: E402  — логику прогона переис�
     load_state,
     run_fetch,
     save_state,
+    source_status,
     summary_line,
 )
 # Слаг источника = ключ черновика в staging. Ядро уже зовёт его, когда называет
@@ -423,6 +424,17 @@ def do_rerun(src: str = "", strat: str = "", mode: str = "",
     result["suggested_name"] = dash.suggest_skill_name(
         st.get("src") or "", report.get("title") or "", report.get("source_file") or "")
     return result
+
+
+def do_probe(src: str = "") -> dict:
+    """Доступен ли источник — файл на диске или URL, — БЕЗ разбора и отчёта.
+
+    Это критерий шага 1 целиком: «в группе 1 успешным является, если указанный в
+    поле файл или url существует/доступен» (владелец). Панель зовёт пробу при
+    вводе источника и красит границу блока 1 ТОЛЬКО по её ответу: прежний удачный
+    разбор чужого источника больше не может сделать ввод зелёным.
+    """
+    return source_status(src)
 
 
 def do_resolve(src: str = "") -> dict:
@@ -1909,6 +1921,8 @@ def main(argv: list[str] | None = None) -> int:
     p_rerun.add_argument("--depth", default="")
     p_rerun.add_argument("--lang", default="")
 
+    p_probe = sub.add_parser("probe", help="доступен ли источник: файл на диске или живой URL (без разбора)")
+    p_probe.add_argument("--src", required=True)
     p_resolve = sub.add_parser("resolve", help="ключ черновика (слаг) + имя по строке источника, без сети")
     p_resolve.add_argument("--src", required=True)
 
@@ -2015,6 +2029,8 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "rerun":
         out = do_rerun(args.src, args.strat, args.mode, args.name, args.cat,
                        args.depth, args.lang)
+    elif args.cmd == "probe":
+        out = do_probe(args.src)
     elif args.cmd == "resolve":
         out = do_resolve(args.src)
     elif args.cmd == "text":

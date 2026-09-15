@@ -587,6 +587,9 @@ function B2SPane({ ctx }) {
   const [tone, setTone] = useState('idle')
   const [busy, setBusy] = useState('')
   const [core, setCore] = useState(null)         // null — неизвестно, true/false — ответ /health
+  /* Проба источника: ответ ядра на «а он вообще есть?» - файл на диске или живой URL.
+     Это критерий шага 1 целиком, поэтому граница блока 1 читает ЕГО, а не факт разбора. */
+  const [srcProbe, setSrcProbe] = useState(null)
   const [coreInfo, setCoreInfo] = useState(null) // тело /health: staging, python, черновики — в подсказке бейджа
   const [report, setReport] = useState(null)     // последний прогон из /state
   const [preview, setPreview] = useState(null)   // предпросмотр установки (без записи)
@@ -1051,6 +1054,26 @@ function B2SPane({ ctx }) {
         if (alive && out && out.ok) setDraftKey(out.key || '')
       } catch (err) { /* ядро промолчало: ключ не трогаем, аварию назовёт статус */ }
     }, 500)
+    return () => { alive = false; clearTimeout(t) }
+  }, [src])
+
+  /* Проба источника — критерий шага 1: «успех, если указанный в поле файл или url
+     существует/доступен» (владелец). Спрашиваем ядро при вводе (debounce 600 мс) и ДО
+     разбора: путь оно проверяет на диске, URL — запросом. Нейтральная граница, пока
+     ответа нет, честнее зелёной: панель ещё ничего не знает об этом вводе. */
+  useEffect(() => {
+    const asked = (src || '').trim()
+    if (!asked) { setSrcProbe(null); return undefined }
+    let alive = true
+    setSrcProbe(null)
+    const t = setTimeout(async () => {
+      try {
+        const out = await ctx.rest('/probe', {
+          method: 'POST', body: { src: asked }, timeoutMs: 15000
+        })
+        if (alive && out) setSrcProbe(out)
+      } catch (err) { /* ядро промолчало: граница нейтральна, аварию назовёт строка статуса */ }
+    }, 600)
     return () => { alive = false; clearTimeout(t) }
   }, [src])
 
@@ -1660,17 +1683,13 @@ function B2SPane({ ctx }) {
   }
 
   const isWorking = !!busy
-  /* Точка у шапки: авария — красная, ядро молчит — жёлтая, работа/готово/ядро на связи —
-     зелёная, покой — серая. Ядро отвечает всегда, кроме неразвёрнутого dashboard, поэтому
-     «на связи» = зелёный: состояние видно без наведения. */
-  const dotTone =
-    tone === 'error'
-      ? 'bad'
-      : core === false
-        ? 'warn'
-        : isWorking || tone === 'done' || core === true
-          ? 'good'
-          : 'muted'
+  /* Точка у шапки говорит РОВНО об одном - есть ли связь с ядром, и теми же словами, что
+     плашка рядом (владелец: «шарик красный - значит плашка должна писать "нет связи", а
+     она зелёная "локальный режим"»). Раньше шарик краснел от `tone === 'error'` - то есть
+     от любой локальной ошибки шага (23 места), при живом ядре. Локальная ошибка - это
+     граница блока и строка состояния, а не связь: двух разных осей у одной пары быть не
+     должно. */
+  const dotTone = core === false ? 'bad' : core === true ? 'good' : 'warn'
 
   /* Подсказка бейджа: ЧТО именно ответило. Серая плашка «ядро на связи» не сообщала ничего
      (владелец: «непонятно, что он там отображает»), а в /health лежит начинка ядра:
@@ -2780,9 +2799,12 @@ function B2SPane({ ctx }) {
                           children: cutSpan('локальный режим')
                         })
                       : jsx(Badge, {
-                          variant: 'warn', style: BTN_FIT,
-                          title: 'Маршруты /api/plugins/b2s/ ещё не смонтированы - панель уходит в чат. Перезапусти dashboard-службу: tools/restart_dashboard.py',
-                          children: cutSpan('ядро не ответило - перезапусти dashboard')
+                          /* Тот же цвет, что у шарика: пара «шарик + плашка» читается как одно
+                             состояние. «нет связи» - буквально, потому что это и есть связь;
+                             цена и способ починки - в подсказке, не в подписи. */
+                          variant: 'bad', style: BTN_FIT,
+                          title: 'Ядро не отвечает на GET /api/plugins/b2s/health: маршруты /api/plugins/b2s/ ещё не смонтированы, панель уходит в чат. Перезапусти dashboard-службу: tools/restart_dashboard.py',
+                          children: cutSpan('нет связи с ядром')
                         })
             ]
           }),
@@ -2840,45 +2862,63 @@ function B2SPane({ ctx }) {
            «нужен разбор» (владелец: «анализ завершён - тогда и менять состояние»). */
         state: !trimSrc
           ? 'пусто'
-          : (mdSrc
-            ? 'markdown: блок 2 пропустим'
-            : (busy === 'rerun'
-              ? (isRemoteSrc(trimSrc) ? 'URL - разбираю…' : 'файл - разбираю…')
-              : (analyzed
-                ? (isRemoteSrc(trimSrc) ? 'URL - анализ завершён' : 'файл - анализ завершён')
-                : (isRemoteSrc(trimSrc) ? 'URL - нужен разбор' : 'файл - нужен разбор')))),
-        tone: trimSrc
-          ? (mdSrc || analyzed
-            ? 'done'
-            /* Красная граница — только за дефицит СВОЕГО шага: источник не получен
-               (нет доступа, файла нет). Провал разбора — это блок 2, там и краснеет;
-               авария REST-ядра — не вина источника, у неё своя строка статуса. */
-            : (busy === 'rerun' ? 'working' : (rerunErrKind === 'source' ? 'bad' : null)))
-          : 'bad',
+          : (busy === 'rerun'
+            ? (isRemoteSrc(trimSrc) ? 'URL - разбираю…' : 'файл - разбираю…')
+            : (!srcProbe
+              ? 'проверяю источник…'
+              : (!srcProbe.ok
+                ? srcProbe.detail
+                : (mdSrc
+                  ? 'markdown: блок 2 пропустим'
+                  : (analyzed
+                    ? (isRemoteSrc(trimSrc) ? 'URL - анализ завершён' : 'файл - анализ завершён')
+                    : (isRemoteSrc(trimSrc) ? 'URL доступен - нужен разбор'
+                                            : 'файл найден - нужен разбор')))))),
+        /* Зелёная граница блока 1 = источник СУЩЕСТВУЕТ/ДОСТУПЕН - ответ пробы по
+           ТЕКУЩЕМУ полю («в группе 1 успешным является, если указанный в поле файл или
+           url существует/доступен»). Не следствие разбора: прежний удачный отчёт ядра
+           больше не может сделать зелёным ввод, которого никто не открывал. Красная -
+           провал пробы («1», нет файла, URL молчит). Пока пробы нет - нейтрально; идёт
+           разбор - «работаю». Провал разбора остаётся блоком 2, авария ядра - строкой. */
+        tone: !trimSrc
+          ? 'bad'
+          : (busy === 'rerun'
+            ? 'working'
+            : (!srcProbe ? null : (srcProbe.ok ? 'done' : 'bad'))),
         open: !!openB[1],
         onToggle: () => toggleB(1),
         style: { backgroundColor: openB[1] ? BLOCK_BG : 'transparent' },
         hint: !trimSrc
           ? 'впиши URL или путь к файлу'
-          : (mdSrc
-            ? 'файл уже markdown - анализ пропустим'
-            : (busy === 'rerun'
-              ? 'иду разбор источника: загрузка, очистка, метрики'
-              : (analyzed
-                ? 'источник разобран - можно делать черновик'
-                : (rerunErr
-                  ? (rerunErrKind === 'strategy'
-                    ? 'разбор не прошёл: ' + rerunErr
-                    : (rerunErrKind === 'source' ? 'не удалось получить источник: ' + rerunErr : rerunErr))
-                  : 'Следующий шаг проанализирует источник данных')))),
+          : (busy === 'rerun'
+            ? 'иду разбор источника: загрузка, очистка, метрики'
+            : (!srcProbe
+              ? 'проверяю источник: есть ли файл на диске и отвечает ли URL'
+              : (!srcProbe.ok
+                /* Причина отказа - словами ядра: «файла нет по пути…», «URL ответил
+                   HTTP 404…», «не похоже ни на URL, ни на путь к файлу: 1». */
+                ? 'источник не получен - ' + srcProbe.detail
+                : (mdSrc
+                  ? 'файл уже markdown - анализ пропустим'
+                  : (analyzed
+                    ? 'источник разобран - можно делать черновик'
+                    : (rerunErr
+                      ? 'разбор не прошёл: ' + rerunErr
+                      : 'Следующий шаг проанализирует источник данных')))))),
         foot: jsx(NextBtn, {
           label: 'ДАЛЕЕ →',
           onClick: next1,
-          disabled: !!busy || !trimSrc,
+          /* Пока источник не подтверждён пробой, шаг не открывается: иначе человек
+             уходит разбирать то, чего нет. Кнопка гаснет и называет причину (в подсказке). */
+          disabled: !!busy || !trimSrc || (!!srcProbe && !srcProbe.ok),
           fill: STEP_BG,
           title: !trimSrc
             ? 'сначала впиши источник'
-            : 'запомнить выбор и открыть следующий шаг'
+            : (!srcProbe
+              ? 'проверяю источник…'
+              : (!srcProbe.ok
+                ? 'источник не получен (' + srcProbe.detail + ') - поправь поле или выбери файл'
+                : 'запомнить выбор и открыть следующий шаг'))
         }),
         children: [
           jsx(Field, {

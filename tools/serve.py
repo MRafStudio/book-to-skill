@@ -17,6 +17,7 @@
     GET  /api/health     жив ли сервер и сколько уже работает
     GET  /api/state      текущее состояние (JSON)
     POST /api/state      запомнить поля страницы (src, strat, name, mode, ...)
+    POST /api/probe      доступен ли источник (файл на диске / ответил ли URL) - без разбора
     POST /api/rerun      прогнать каскад по state.src под state.strat
     POST /api/order      положить заказ на генерацию черновика в staging/.orders/
 
@@ -34,6 +35,8 @@ import os
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -51,6 +54,9 @@ for _stream in (sys.stdout, sys.stderr):
 
 import dashboard as dash  # noqa: E402  — сбор данных переиспользуем, не копируем
 from book_to_skill.fetcher import Fetcher  # noqa: E402
+# Опознание источника и сетевой клиент - из общего контракта плагинов: своей копии
+# правил «это путь или url» у сервера быть не должно, иначе они разъедутся.
+from book_to_skill.plugins.base import USER_AGENT, looks_like_path  # noqa: E402
 
 STATE_FILE = REPO / "dashboard" / ".state.json"
 ORDERS_DIR = REPO / "staging" / ".orders"
@@ -133,6 +139,79 @@ def failure_kind(src: str, strat: str, report: dict) -> str:
     if low.endswith((".md", ".markdown")) and strat in ("trafilatura", "bs4", "stdlib"):
         return "strategy"
     return "source"
+
+
+def source_status(src: str, timeout: int = 8) -> dict:
+    """Есть ли источник НА САМОМ ДЕЛЕ: файл лежит на диске, URL отвечает.
+
+    Правило владельца: «в группе 1 успешным является, если указанный в поле файл
+    или url существует/доступен. В противном случае - провал». Поэтому проверка
+    идёт БЕЗ разбора и БЕЗ отчёта: зелёная граница блока 1 не может держаться на
+    чужом разборе - «1» в поле не станет источником ни при каком отчёте.
+
+    Отвечаем словами, а не только флагом: панель показывает эту причину рядом с
+    полем, и человек видит, чего именно не хватает (файла по пути, ответа сайта,
+    или это вообще не источник).
+
+    ``kind``: url | file | dir | path | none | empty.
+    """
+    raw = (src or "").strip()
+    if not raw:
+        return {"ok": False, "kind": "empty",
+                "detail": "поле пустое - впиши URL или путь к файлу"}
+    low = raw.lower()
+    if low.startswith(("http://", "https://")):
+        return _probe_url(raw, timeout)
+    path = Path(raw).expanduser()
+    try:
+        found = path.exists()
+    except OSError:
+        found = False
+    if found:
+        if path.is_dir():
+            return {"ok": False, "kind": "dir",
+                    "detail": "по этому пути каталог, а нужен файл: " + raw}
+        return {"ok": True, "kind": "file", "detail": "файл найден: " + path.name}
+    if looks_like_path(raw):
+        return {"ok": False, "kind": "path", "detail": "файла нет по пути: " + raw}
+    return {"ok": False, "kind": "none",
+            "detail": "не похоже ни на URL, ни на путь к файлу: " + raw}
+
+
+def _probe_url(url: str, timeout: int = 8) -> dict:
+    """Отвечает ли URL. HEAD, а если сайт его не отдаёт - GET без чтения тела.
+
+    HEAD дёшев, но часть сайтов на него отвечает 403/405 (антибот, статические
+    хостинги), хотя обычный GET отдаёт страницу. Поэтому при таком отказе
+    повторяем GET и закрываем соединение, не читая тело: нам нужны ЗАГОЛОВКИ,
+    то есть сам факт ответа, а не содержимое.
+    """
+    def _ask(method: str, extra: dict | None = None):
+        headers = {"User-Agent": USER_AGENT, "Accept": "*/*"}
+        headers.update(extra or {})
+        req = urllib.request.Request(url, headers=headers, method=method)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return getattr(resp, "status", None) or 200
+
+    try:
+        code = _ask("HEAD")
+        return {"ok": True, "kind": "url", "detail": f"URL доступен · HTTP {code}"}
+    except urllib.error.HTTPError as exc:
+        first = exc.code
+    except Exception as exc:  # noqa: BLE001 - сеть отвечает разными типами (DNS, SSL, таймаут)
+        return {"ok": False, "kind": "url",
+                "detail": "URL недоступен: " + (str(exc) or "нет ответа от сайта")}
+    if first not in (403, 405, 501):
+        return {"ok": False, "kind": "url",
+                "detail": f"URL ответил HTTP {first} - источник недоступен"}
+    try:
+        code = _ask("GET", {"Range": "bytes=0-0"})
+        return {"ok": True, "kind": "url", "detail": f"URL доступен · HTTP {code}"}
+    except urllib.error.HTTPError as exc:
+        return {"ok": False, "kind": "url",
+                "detail": f"URL ответил HTTP {exc.code} - источник недоступен"}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "kind": "url", "detail": "URL недоступен: " + str(exc)}
 
 
 def explain_failure(src: str, strat: str, report: dict) -> str:
@@ -310,7 +389,14 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"ok": False, "error": "пустое тело запроса: нужен JSON с полями"})
             return
 
-        if path == "/api/state":
+        if path == "/api/probe":
+            # Проба источника ДО разбора: панель зовёт её при вводе и по ответу красит
+            # границу блока 1 (владелец: «успех в группе 1 - указанный файл или url
+            # существует/доступен»). Сеть трогаем только для http(s); путь проверяется
+            # на диске мгновенно и без запросов.
+            self._json(200, source_status(str(body.get("src") or "")))
+
+        elif path == "/api/state":
             with _lock:
                 st = load_state()
                 for key in ("src", "strat", "name", "mode", "depth", "lang", "cat"):
