@@ -105,8 +105,9 @@ def main() -> int:
     check("ошибка имени красит рамку красным (color-mix 45%, как рамка блока 3)",
           "color-mix(in srgb, ' + STOP_RED + ' 45%, transparent)" in src,
           "рамка ошибки не покраснела")
-    check("рамка различает ошибку и предупреждение (красная / оранжевая)",
-          "? { border: '1px solid ' + (nameBad" in src and ": WARN_YELLOW) }" in src)
+    check("рамка ошибки имени КРАСНАЯ и тонкая - как у блока 3 (color-mix 45%)",
+          "? { border: '1px solid color-mix(in srgb, ' + STOP_RED + ' 45%, transparent)' }" in src,
+          "красная ветка не попала в style поля")
     check("цвет ПОДПИСИ под полем остался оранжевым",
           "style: (nameWarn || nameBad) ? { color: WARN_YELLOW } : null" in src,
           "текст сообщения перекрасили")
