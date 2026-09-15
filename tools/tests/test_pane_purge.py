@@ -75,7 +75,7 @@ const calls = []
 const stub = (name) => (v) => { calls.push([name, v]) }
 const forbidden = { src: 0, cat: 0 }
 const factory = new Function(
-  'ctx', 'setBusy', 'setTone', 'setStatus', 'note',
+  'ctx', 'setBusy', 'setTone', 'say', 'note',
   'setText', 'setTextInfo', 'setOutOpen', 'setReport', 'setFetchedSig', 'setRerunErr', 'setRerunErrKind',
   'setName', 'setStrat', 'setMode', 'setLang', 'setAct', 'setCatDesc', 'setCatErr',
   'setNameAuto', 'setDraft', 'setDraftText', 'setDraftFile', 'setDraftOpen',
@@ -87,7 +87,7 @@ const factory = new Function(
 
 function build(restImpl) {
   const map = {}
-  for (const n of ['setBusy','setTone','setStatus','setText','setTextInfo','setOutOpen','setReport',
+  for (const n of ['setBusy','setTone','say','setText','setTextInfo','setOutOpen','setReport',
     'setFetchedSig','setRerunErr','setRerunErrKind','setName','setStrat','setMode','setLang','setAct','setCatDesc',
     'setCatErr','setNameAuto','setDraft','setDraftText','setDraftFile','setDraftOpen','setDrafts',
     'setInstalled','setChapterPlan','setChapterOpen','setPreview','setReadySeen','setDraftWait',
@@ -98,7 +98,7 @@ function build(restImpl) {
   map.setCat = () => { forbidden.cat++ }
   return factory(
     { rest: restImpl },
-    map.setBusy, map.setTone, map.setStatus, String,
+    map.setBusy, map.setTone, map.say, String,
     map.setText, map.setTextInfo, map.setOutOpen, map.setReport, map.setFetchedSig, map.setRerunErr, map.setRerunErrKind,
     map.setName, map.setStrat, map.setMode, map.setLang, map.setAct, map.setCatDesc, map.setCatErr,
     map.setNameAuto, map.setDraft, map.setDraftText, map.setDraftFile, map.setDraftOpen,
@@ -123,7 +123,7 @@ const out = {}
     called,
     busy: get('setBusy'),
     tone: get('setTone'),
-    status: get('setStatus').filter(Boolean).join(' | '),
+    status: get('say').filter(Boolean).join(' | '),
     report: get('setReport'),
     draft: get('setDraft'),
     drafts: get('setDrafts'),
@@ -146,7 +146,7 @@ const out = {}
   await api.runPurgeAll()
   out.failed = {
     tone: calls.filter((c) => c[0] === 'setTone').map((c) => c[1]),
-    status: calls.filter((c) => c[0] === 'setStatus').map((c) => c[1]).join(' | '),
+    status: calls.filter((c) => c[0] === 'say').map((c) => c[1]).join(' | '),
     reportTouched: calls.filter((c) => c[0] === 'setReport').length,
     busy: calls.filter((c) => c[0] === 'setBusy').map((c) => c[1])
   }

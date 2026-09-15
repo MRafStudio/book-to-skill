@@ -608,7 +608,15 @@ function B2SPane({ ctx }) {
   const [skills, setSkills] = useState(null)     // существующие скиллы из /skills
   const [skillsErr, setSkillsErr] = useState('')
   const [act, setAct] = useState(stored.act || 'auto')  // долив или замена, когда имя занято
-  const [status, setStatus] = useState('')
+  /* Строка статуса помнит, про КАКОЙ ввод сказана: третий аргумент `say` - отпечаток
+     источника (тот же curSig, по которому блок 2 считает разбор сделанным). Владелец
+     разобрал источник, ввёл в поле «1» - панель честно ответила «не источник», а под
+     плашкой всё ещё висело «источник разобран: стратегия trafilatura…»: строка,
+     оставшаяся от прежнего ввода, врала о чужой работе. Теперь она гаснет вместе с
+     вводом. `say('текст')` без отпечатка - сообщение не про источник (ядро, уборка,
+     аудит) и живёт само по себе. */
+  const [statusSig, setStatusSig] = useState('')
+  const say = (text, sig) => { setStatusSig(sig == null ? '' : sig); setStatus(text) }
   const [tone, setTone] = useState('idle')
   const [busy, setBusy] = useState('')
   const [core, setCore] = useState(null)         // null — неизвестно, true/false — ответ /health
@@ -1010,7 +1018,7 @@ function B2SPane({ ctx }) {
         /* Текст статуса владелец переписал сам: прежнее «шаги 1 и 3 идут мимо чата»
            читалось как лекция в строке состояния. Теперь сказано, что именно идёт
            через LLM - описание категории и черновики. */
-        setStatus('ядро на связи - через LLM строится описание категории и создание черновиков')
+        say('ядро на связи - через LLM строится описание категории и создание черновиков')
         try {
           const s = await ctx.rest('/state', { timeoutMs: 8000 })
           /* Отчёт берём из /state (ядро отдаёт его целиком, кроме preview), а НЕ
@@ -1050,14 +1058,14 @@ function B2SPane({ ctx }) {
           if (alive) pruneArchive(stored.src || '')
           if (alive && s && s.last_error) {
             setTone('error')
-            setStatus('последний прогон провалился (' + (s.last_error.at || '') + '): ' +
+            say('последний прогон провалился (' + (s.last_error.at || '') + '): ' +
               (s.last_error.message || 'причина неизвестна'))
           }
         } catch (err) { /* история не критична */ }
       } catch (err) {
         if (!alive) return
         setCore(false)
-        setStatus('ядро не ответило: маршруты /api/plugins/b2s/ ещё не смонтированы - перезапусти dashboard-службу')
+        say('ядро не ответило: маршруты /api/plugins/b2s/ ещё не смонтированы - перезапусти dashboard-службу')
       }
     }
     load()
@@ -1215,7 +1223,7 @@ function B2SPane({ ctx }) {
     const sid = host.state.focusedSessionId.get()
     if (!sid) {
       setTone('error')
-      setStatus('нет активной сессии - открой чат и повтори')
+      say('нет активной сессии - открой чат и повтори')
       return false
     }
     dropPreview()   // черновик/критика/описание категории — шаги блоков 2–4: план записи устарел
@@ -1229,7 +1237,7 @@ function B2SPane({ ctx }) {
       setLlmSid(sid)
       setLlmLabel(LLM_LABEL[kind] || '')
       setTone('sent')
-      setStatus('→ ушло в чат агенту: ' + intentText)
+      say('→ ушло в чат агенту: ' + intentText)
       /* Описание категории пишет агент, а не панель: без слежения за целью красная
          рамка и кнопка «написать» остались бы в панели до её переоткрытия. */
       if (kind === 'desc' || kind === 'desc-fix' || kind === 'desc-rewrite') {
@@ -1251,7 +1259,7 @@ function B2SPane({ ctx }) {
       return true
     } catch (err) {
       setTone('error')
-      setStatus('не доехало: ' + (err && err.message ? err.message : String(err)))
+      say('не доехало: ' + (err && err.message ? err.message : String(err)))
       return false
     } finally {
       busyRef.current = false
@@ -1287,18 +1295,18 @@ function B2SPane({ ctx }) {
           setCatMeta((out && out.details) || {})
           setCatLoose((out && out.loose) || [])
           setTone('done')
-          setStatus('описание категории «' + targetCat + '» ' +
+          say('описание категории «' + targetCat + '» ' +
             (now === 'ok' ? 'записано - Hermes его читает' : 'обновлено: ' + now))
         } else if (Date.now() > deadline) {
           clearInterval(id)
           setTone('error')
-          setStatus('описание «' + targetCat + '» не изменилось за 3 минуты - смотри ответ агента в чате')
+          say('описание «' + targetCat + '» не изменилось за 3 минуты - смотри ответ агента в чате')
         }
       } catch (err) {
         if (Date.now() > deadline) {
           clearInterval(id)
           setTone('error')
-          setStatus('состояние «' + targetCat + '» не перечитать: ' + note(err))
+          say('состояние «' + targetCat + '» не перечитать: ' + note(err))
         }
       } finally {
         inFlight = false
@@ -1333,7 +1341,7 @@ function B2SPane({ ctx }) {
       const gone = (out && out.dropped) || []
       if (gone.length) {
         setTone('idle')
-        setStatus('уборка: архивные черновики убраны (' + gone.join(', ') +
+        say('уборка: архивные черновики убраны (' + gone.join(', ') +
           ') - они уже установлены и переросли срок')
       }
       loadDrafts()
@@ -1349,13 +1357,13 @@ function B2SPane({ ctx }) {
         method: 'POST', body: { src: (src || '').trim(), apply: true }, timeoutMs: 20000
       })
       const gone = (out && out.dropped) || []
-      setStatus(gone.length
+      say(gone.length
         ? 'уборка: убрано ' + gone.length + ' (' + gone.join(', ') + ') - каталоги и их сырьё'
         : 'убирать нечего: черновики свежие и срока не переросли')
       await loadDrafts()
     } catch (err) {
       setTone('error')
-      setStatus('уборка не прошла: ' + note(err))
+      say('уборка не прошла: ' + note(err))
     } finally { setBusy('') }
   }
 
@@ -1368,17 +1376,17 @@ function B2SPane({ ctx }) {
       })
       if (out && out.ok) {
         const srcs = (out.source_files || [])
-        setStatus('рабочий каталог убран: ' + out.dropped + ' (' + out.files + ' файлов' +
+        say('рабочий каталог убран: ' + out.dropped + ' (' + out.files + ' файлов' +
           (srcs.length ? ' + сырьё: ' + srcs.join(', ') : '') + ')')
       } else {
         setTone('error')
-        setStatus('убрать не удалось: ' + ((out && out.error) || 'причина неизвестна'))
+        say('убрать не удалось: ' + ((out && out.error) || 'причина неизвестна'))
       }
       await loadDrafts()
       await loadDraft(true)
     } catch (err) {
       setTone('error')
-      setStatus('убрать не удалось: ' + note(err))
+      say('убрать не удалось: ' + note(err))
     } finally { setBusy('') }
   }
 
@@ -1394,17 +1402,17 @@ function B2SPane({ ctx }) {
         const srcs = out.source_files || []
         resetAfterPurge()
         setTone('idle')
-        setStatus('мусор убран: каталогов ' + dirs.length +
+        say('мусор убран: каталогов ' + dirs.length +
           (dirs.length ? ' (' + dirs.join(', ') + ')' : '') +
           ', файлов сырья ' + srcs.length +
           ((out.kept && out.kept.length) ? '; служебные оставил: ' + out.kept.join(', ') : ''))
       } else {
         setTone('error')
-        setStatus('очистка не прошла: ' + ((out && out.error) || 'причина неизвестна'))
+        say('очистка не прошла: ' + ((out && out.error) || 'причина неизвестна'))
       }
     } catch (err) {
       setTone('error')
-      setStatus('очистка не прошла: ' + note(err))
+      say('очистка не прошла: ' + note(err))
     } finally { setBusy('') }
   }
 
@@ -1442,17 +1450,17 @@ function B2SPane({ ctx }) {
         setAuditRep(out)
         const ap = out.apply || null
         setTone('idle')
-        setStatus('аудит «' + (out.category || cat) + '»: скиллов ' + (out.count || 0) +
+        say('аудит «' + (out.category || cat) + '»: скиллов ' + (out.count || 0) +
           ', связей ' + (out.edge_count || 0) +
           (ap ? ', related_skills обновлено у ' + ((ap.updated || []).length) : '') +
           ((out.orphans || []).length ? '; сироты: ' + out.orphans.join(', ') : '; сирот нет'))
       } else {
         setTone('error')
-        setStatus('аудит не прошёл: ' + ((out && out.error) || 'причина неизвестна'))
+        say('аудит не прошёл: ' + ((out && out.error) || 'причина неизвестна'))
       }
     } catch (err) {
       setTone('error')
-      setStatus('аудит не прошёл: ' + note(err))
+      say('аудит не прошёл: ' + note(err))
     } finally { setAuditBusy('') }
   }
 
@@ -1488,7 +1496,7 @@ function B2SPane({ ctx }) {
             setDraftWait(false)
             setTone('done')
             const c = out.counts || {}
-            setStatus('черновик готов: ' + (out.name || targetName || targetSrc) +
+            saySrc('черновик готов: ' + (out.name || targetName || targetSrc) +
               (c.files ? ' - ' + c.files + ' ' + plural(c.files, 'файл', 'файла', 'файлов') : '') +
               ': можно к блоку 4')
           } else {
@@ -1497,7 +1505,7 @@ function B2SPane({ ctx }) {
                «ДАЛЕЕ»: скилл мог уехать в профиль обрезанным. */
             const c = out.counts || {}
             setTone('working')
-            setStatus('черновик пишется: ' +
+            saySrc('черновик пишется: ' +
               (c.files ? c.files + ' ' + plural(c.files, 'файл', 'файла', 'файлов') : 'файлы в staging') +
               (c.chapters ? ', ' + c.chapters + ' ' + plural(c.chapters, 'глава', 'главы', 'глав') : '') +
               ' - жду маркер готовности от LLM')
@@ -1512,7 +1520,7 @@ function B2SPane({ ctx }) {
           if (!done && late) {
             setDraftWait(false)
             setTone('error')
-            setStatus('черновик за 30 минут не помечен готовым (LLM ещё пишет или упал) - смотри ответ агента в чате')
+            saySrc('черновик за 30 минут не помечен готовым (LLM ещё пишет или упал) - смотри ответ агента в чате')
           }
         }
       }
@@ -1532,7 +1540,10 @@ function B2SPane({ ctx }) {
     dropPreview()   // новый прогон источника — план записи по прежнему тексту недействителен
     setRerunErr(''); setRerunErrKind('')   // провал — из прошлого прогона, новый его не наследует
     setTone('working')
-    setStatus('источник · загрузка и очистка…')
+    /* Отпечаток ЭТОГО прогона: по нему строка статуса понимает, к какому вводу она
+       относится, и гаснет, если ввод успели сменить, пока ядро работало. */
+    const sig = analysisSigOf({ src, strat, mode })
+    say('источник · загрузка и очистка…', sig)
     try {
       const out = await ctx.rest('/rerun', {
         method: 'POST',
@@ -1544,8 +1555,8 @@ function B2SPane({ ctx }) {
       const strategy = out.strategy || (out.report && out.report.strategy) || ''
       if (out.fetch_ok) {
         setTone('done')
-        setStatus('источник разобран: ' + summaryOf(out))
-        setFetchedSig(analysisSigOf({ src, strat, mode }))
+        say('источник разобран: ' + summaryOf(out), sig)
+        setFetchedSig(sig)
         // Ключ черновика этого источника: по нему панель ищет черновик и собирает план,
         // и он НЕ меняется от правки имени скилла.
         if (out.draft_key) setDraftKey(out.draft_key)
@@ -1575,7 +1586,7 @@ function B2SPane({ ctx }) {
       }
       const why = out.warning || 'причина неизвестна'
       setTone('error')
-      setStatus('источник не разобран: ' + why)
+      say('источник не разобран: ' + why, sig)
       setRerunErr(why)
       // Ядро говорит, чей это провал: получение источника (блок 1) или разбор (блок 2).
       setRerunErrKind(out.failure_kind || 'source')
@@ -1591,7 +1602,7 @@ function B2SPane({ ctx }) {
       setCore(false)
       setTone('error')
       const why = 'REST-ядро недоступно (' + note(err) + ')'
-      setStatus(why + ' - источник ещё не прогнан')
+      say(why + ' - источник ещё не прогнан', sig)
       setRerunErr(why)
       setRerunErrKind('core')
       setFetchedSig('')   // авария ядра тоже не подтверждает разбор
@@ -1625,7 +1636,7 @@ function B2SPane({ ctx }) {
   const runInstall = async (confirm) => {
     setBusy('install')
     setTone('working')
-    setStatus(confirm ? 'установка · перенос в skills/…' : 'блок 5 · предпросмотр переноса…')
+    saySrc(confirm ? 'установка · перенос в skills/…' : 'блок 5 · предпросмотр переноса…')
     try {
       const out = await ctx.rest('/install', {
         method: 'POST',
@@ -1640,17 +1651,17 @@ function B2SPane({ ctx }) {
       if (!confirm) {
         if (!out.has_skill_md) {
           setTone('error')
-          setStatus((out.error || 'черновика в staging нет') + ' - сначала черновик в блоке 4')
+          saySrc((out.error || 'черновика в staging нет') + ' - сначала черновик в блоке 4')
         } else {
           setTone(out.risk ? 'error' : 'done')
-          setStatus(
+          saySrc(
             'план (' + out.mode + '): +' + adds + ' новых, ⟳' + rewrites + ' перезапишется, ' +
             '＝' + keeps + ' останется как есть → ' + out.target
           )
         }
       } else if (out.ok) {
         setTone('done')
-        setStatus(
+        saySrc(
           'установлено: ' + out.target + (out.backup ? ' · бэкап: ' + out.backup : ' · бэкап не нужен (новая цель)') +
           (out.category_desc_written ? ' · описание категории записано' : '')
         )
@@ -1674,15 +1685,15 @@ function B2SPane({ ctx }) {
           setInstalled({ target: out.target || '', name: String(name || '').trim(), cat })
           loadSkills()
           loadCats()
-          setStatus('установлено в ' + (out.target || '') + ', но проверка нашла замечания: ' + issues +
+          saySrc('установлено в ' + (out.target || '') + ', но проверка нашла замечания: ' + issues +
             ' - скилл уже лежит в профиле, поэтому кнопка погашена: повторный клик начал бы долив')
         } else {
-          setStatus('не записано: ' + issues)
+          saySrc('не записано: ' + issues)
         }
       }
     } catch (err) {
       setTone('error')
-      setStatus('REST-ядро недоступно (' + note(err) + '): установка не выполнена')
+      saySrc('REST-ядро недоступно (' + note(err) + '): установка не выполнена')
     } finally {
       setBusy('')
     }
@@ -1703,7 +1714,7 @@ function B2SPane({ ctx }) {
     dropPreview()   // раскладка по главам — шаг блока 4: план записи собирается заново
     setChapterBusy(true)
     setTone('working')
-    setStatus('блок 4 · раскладка по главам…')
+    saySrc('блок 4 · раскладка по главам…')
     try {
       const out = await ctx.rest('/plan', {
         method: 'POST',
@@ -1715,19 +1726,19 @@ function B2SPane({ ctx }) {
       const saved = out && out.saved ? ' · план: ' + out.saved : ''
       if (!out || !out.ok) {
         setTone('error')
-        setStatus('план по главам не построен: ' + ((out && out.error) || 'ядро не ответило'))
+        saySrc('план по главам не построен: ' + ((out && out.error) || 'ядро не ответило'))
       } else if (!out.target_exists) {
         setTone('done')
-        setStatus('скилла «' + name + '» ещё нет - все ' + ((out.chapters || []).length) +
+        saySrc('скилла «' + name + '» ещё нет - все ' + ((out.chapters || []).length) +
           ' файлов лягут новыми, сливать не с чем' + saved)
       } else {
         setTone('done')
-        setStatus('раскладка: ＋' + (counts.add || 0) + ' новых, ⇄' + (counts.merge || 0) +
+        saySrc('раскладка: ＋' + (counts.add || 0) + ' новых, ⇄' + (counts.merge || 0) +
           ' слить, ⟳' + (counts.rewrite || 0) + ' переписать' + saved)
       }
     } catch (err) {
       setTone('error')
-      setStatus('REST-ядро недоступно (' + note(err) + '): план по главам не построен')
+      saySrc('REST-ядро недоступно (' + note(err) + '): план по главам не построен')
     } finally {
       setChapterBusy(false)
     }
@@ -1788,6 +1799,10 @@ function B2SPane({ ctx }) {
   const reportOtherSrc = !!report && !!reportSrc && normSrc(reportSrc) !== normSrc(trimSrc)
   const mdSrc = srcIsMarkdown(trimSrc)
   const curSig = analysisSigOf({ src: trimSrc, strat, mode })
+  /* Сообщения о работе с ЭТИМ вводом (черновик, план по главам, запись в skills/) гаснут
+     вместе с ним - тем же отпечатком, что и строка разбора. `say` объявлен выше всех
+     шагов, `curSig` считается здесь, отсюда и отдельная обёртка. */
+  const saySrc = (text) => say(text, curSig)
   /* Отчёт считается «по этим входам» только если он ещё и принадлежит ЭТОМУ источнику:
      иначе состояние ядра (прежний удачный отчёт + новый ввод в поле) выдавало бы чужой
      отчёт за завершённый анализ - с «1» в поле блок 1 красовался зелёной границей. */
@@ -2129,7 +2144,10 @@ function B2SPane({ ctx }) {
   /* Строка статуса живёт ВНЕ спойлера: состояние шага обязано быть видно всегда —
      иначе клик по кнопке выглядит как «ничего не происходит» (эту граблю ловили,
      когда статус стоял ПОД спойлером), а раскрывать блок разбора владелец запретил. */
-  const statusLine = status
+  /* Строка гаснет, если ввод, про который она сказана, заменили: владелец разобрал
+     источник, ввёл в поле «1» - в блоке 1 честное «не источник», а под плашкой висело
+     «источник разобран: стратегия trafilatura…» про работу, которой уже нет. */
+  const statusLine = (status && (!statusSig || statusSig === curSig))
     ? jsx('div', {
         className: cn(
           'mt-1 rounded border border-(--ui-border) px-2 py-1 text-[0.625rem] leading-snug',
@@ -2700,7 +2718,7 @@ function B2SPane({ ctx }) {
     dropPreview()   // переход по мастеру обесценивает собранный план записи
     if (!trimSrc) {
       setTone('error')
-      setStatus('блок 1 · пустой источник: вставь URL или путь к файлу')
+      say('блок 1 · пустой источник: вставь URL или путь к файлу')
       return
     }
     /* Имени здесь больше нет: категория и имя скилла - реквизиты записи (блок 3),
@@ -2714,7 +2732,7 @@ function B2SPane({ ctx }) {
         if (!res.ok) { onlyB(2); return }
         if (!res.md) {
           onlyB(2)
-          setStatus('блок 1 · источник не похож на markdown (стратегия ' + (res.strategy || '?') + ') - смотри блок 2')
+          say('блок 1 · источник не похож на markdown (стратегия ' + (res.strategy || '?') + ') - смотри блок 2')
         }
       }
       return
@@ -2733,7 +2751,7 @@ function B2SPane({ ctx }) {
     if (mdSrc && !analyzed) { next1(); return }
     if (!analyzed) {
       setTone('error')
-      setStatus('блок 2 · сначала разбери источник - без отчёта не собрать реквизиты записи')
+      say('блок 2 · сначала разбери источник - без отчёта не собрать реквизиты записи')
       return
     }
     onlyB(3)
@@ -2746,17 +2764,17 @@ function B2SPane({ ctx }) {
        запрет проверяем и здесь - иначе «ДАЛЕЕ» можно нажать в обход блока 2. */
     if (!block2Passed) {
       setTone('error')
-      setStatus('блок 3 · сначала пройди блок 2 - «Анализ источника»: отчёт о разборе даёт имя скилла и метрики')
+      say('блок 3 · сначала пройди блок 2 - «Анализ источника»: отчёт о разборе даёт имя скилла и метрики')
       return
     }
     if (nameWarn) {
       setTone('error')
-      setStatus('блок 3 · без имени скилла нельзя: каталог установки называется именем')
+      say('блок 3 · без имени скилла нельзя: каталог установки называется именем')
       return
     }
     if (nameBad) {
       setTone('error')
-      setStatus('блок 3 · такое имя Hermes не примет: только строчные латинские буквы, цифры, «-», «_», «.» (заглавные и пробелы валят шапку скилла)')
+      say('блок 3 · такое имя Hermes не примет: только строчные латинские буквы, цифры, «-», «_», «.» (заглавные и пробелы валят шапку скилла)')
       return
     }
     dropPreview()   // реквизиты могли поменяться - прежний план записи устарел
@@ -2768,18 +2786,18 @@ function B2SPane({ ctx }) {
     const next4 = () => {
       if (!block2Passed) {
         setTone('error')
-        setStatus('блок 4 · сначала пройди блок 2 - «Анализ источника»: без разбора черновик соберётся вслепую')
+        say('блок 4 · сначала пройди блок 2 - «Анализ источника»: без разбора черновик соберётся вслепую')
         return
       }
       if (!hasDraft) {
         setTone('error')
-        setStatus('блок 4 · черновика в staging нет - нажми «Сделать черновик»')
+        say('блок 4 · черновика в staging нет - нажми «Сделать черновик»')
         return
       }
       if (!draftReady) {
         setTone('working')
         const c = (draft && draft.counts) || {}
-        setStatus('блок 4 · черновик ещё пишется' +
+        say('блок 4 · черновик ещё пишется' +
           (c.files ? ' (' + c.files + ' ' + plural(c.files, 'файл', 'файла', 'файлов') +
             (c.chapters ? ', ' + c.chapters + ' ' + plural(c.chapters, 'глава', 'главы', 'глав') : '') + ')' : '') +
           ' - кнопка записи откроется, когда LLM допишет и положит маркер готовности')

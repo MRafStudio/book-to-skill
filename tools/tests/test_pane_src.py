@@ -274,6 +274,27 @@ def main() -> int:
     check("ловушка children: Ell( не вернулась (роняла панель в error-boundary)",
           "children: Ell(" not in src, "найдено children: Ell(")
 
+    # 6.1) строка статуса помнит, про КАКОЙ ввод сказана (владелец: разобрал источник,
+    #      ввёл «1» - панель честно сказала «не источник», а под плашкой висело
+    #      «источник разобран: стратегия trafilatura…» про работу, которой уже нет)
+    check("обёртка say запоминает отпечаток ввода (statusSig)",
+          "const [statusSig, setStatusSig] = useState('')" in src and
+          "const say = (text, sig) => { setStatusSig(sig == null ? '' : sig); setStatus(text) }" in src,
+          "строка статуса не знает, к какому вводу относится")
+    check("say не зовёт сам себя (такая рекурсия уронила бы панель)",
+          "say(text) }" not in src, "внутри say остался вызов say(text)")
+    check("строка гаснет, когда ввод заменили",
+          "(status && (!statusSig || statusSig === curSig))" in src,
+          "старое «источник разобран» висело бы над новым вводом")
+    check("сообщения разбора привязаны к отпечатку прогона",
+          "say('источник разобран: ' + summaryOf(out), sig)" in src and
+          "say('источник · загрузка и очистка…', sig)" in src and
+          "say('источник не разобран: ' + why, sig)" in src,
+          "строка разбора живёт без привязки")
+    check("сообщения шагов 4-5 привязаны к текущему вводу (saySrc)",
+          "const saySrc = (text) => say(text, curSig)" in src and src.count("saySrc(") >= 14,
+          "черновик и запись оставляли строку от прежнего источника")
+
     # 7) штатные двери — не выдумка: сверяем со сборкой Hermes, если она под рукой
     if GLOBAL_DTS.is_file():
         dts = GLOBAL_DTS.read_text(encoding="utf-8", errors="replace")

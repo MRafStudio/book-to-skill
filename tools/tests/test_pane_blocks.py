@@ -315,7 +315,8 @@ def main() -> int:
           out["sig_glue"] is True, f"{out['sig_glue']!r}")
     check("analyzed требует совпадения отпечатка (fetchedSig === curSig)",
           "fetchedSig !== '' && fetchedSig === curSig" in src and
-          "setFetchedSig(analysisSigOf({ src, strat, mode }))" in src,
+          "const sig = analysisSigOf({ src, strat, mode })" in src and
+          "setFetchedSig(sig)" in src,
           "шаг 2 может пустить к черновику по отчёту от других входов")
 
     # 1d) черновик принадлежит ИСТОЧНИКУ, а не имени скилла: правка имени или

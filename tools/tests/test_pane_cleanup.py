@@ -71,7 +71,7 @@ RUNNER = r"""
 import fs from 'node:fs'
 const SRC = fs.readFileSync(process.env.CLEAN_SRC, 'utf8')
 const factory = new Function(
-  'ctx', 'setDrafts', 'setBusy', 'setTone', 'setStatus', 'note', 'loadDraft', 'src',
+  'ctx', 'setDrafts', 'setBusy', 'setTone', 'say', 'note', 'loadDraft', 'src',
   'return (() => {\n' + SRC + '\nreturn { loadDrafts, pruneArchive, runPrune, runDrop }\n})()'
 )
 const out = {}

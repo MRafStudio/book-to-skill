@@ -70,7 +70,7 @@ RUNNER = r"""
 import fs from 'node:fs'
 const SRC = fs.readFileSync(process.env.WATCH_SRC, 'utf8')
 const factory = new Function(
-  'ctx', 'setCats', 'setCatMeta', 'setCatLoose', 'setTone', 'setStatus', 'note',
+  'ctx', 'setCats', 'setCatMeta', 'setCatLoose', 'setTone', 'say', 'note',
   'setInterval', 'clearInterval', 'Date',
   'return (' + SRC + ')'
 )
