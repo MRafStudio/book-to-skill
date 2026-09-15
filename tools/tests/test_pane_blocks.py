@@ -223,17 +223,28 @@ def main() -> int:
     check("главная кнопка шага отбита от содержимого (футер с pt-1)",
           "className: 'flex min-w-0 items-center gap-2 px-2 pb-2 pt-1'" in src,
           "владелец: кнопки «ДАЛЕЕ» и «Предпросмотр» надо опустить минимум на 3 px")
+    check("«ДАЛЕЕ» блоков 3-5 требует ПРОЙДЕННОГО блока 2",
+          "disabled: !!busy || nameWarn || nameBad || !block2Passed" in src and
+          "disabled: !!busy || !draftReady || !block2Passed" in src and
+          "|| nameWarn || nameBad || !block2Passed," in src,
+          "владелец: кнопку нельзя открывать в обход «Анализа источника»")
+    check("блок 2 пройден и для markdown-источника (analyzed || mdSrc)",
+          "const block2Passed = analyzed || mdSrc" in src,
+          "иначе md-источник заклинило бы: разбор ему не нужен, но и пройти его нельзя")
+    check("обход закрыт и в обработчиках next3/next4",
+          src.count("if (!block2Passed) {") >= 2,
+          "кнопки блокируются, а клик по шапке блока открывает его - проверять надо и в переходе")
     check("блок 1 требует ТОЛЬКО источник: имя уехало в блок 3",
           "disabled: !!busy || !trimSrc," in src and
           "disabled: !!busy || !trimSrc || nameWarn" not in src,
           "имя снова стало входом разбора")
     check("пустое имя гасит «ДАЛЕЕ» блока 3 и установку в блоке 5, а не разбор",
-          "disabled: !!busy || nameWarn || nameBad," in src and
-          "disabled: !!busy || !draftReady || !readySeen || !!installed || nameWarn || nameBad," in src and
+          "disabled: !!busy || nameWarn || nameBad || !block2Passed," in src and
+          "|| nameWarn || nameBad || !block2Passed," in src and
           "disabled: !!busy || !hasDraft,   // имя" not in src,
           "пустое имя стало входом разбора или потеряло замок")
     check("имя обязательно там, где пишется каталог (блок 5)",
-          "disabled: !!busy || !draftReady || !readySeen || !!installed || nameWarn || nameBad," in src and
+          "|| nameWarn || nameBad || !block2Passed," in src and
           "нужно имя скилла: пустым не поставим - каталог в skills/ должен быть назван" in src,
           "установка пойдёт без имени")
     # Имя, которое линза Hermes не примет, - такая же незаполненная обязательная
