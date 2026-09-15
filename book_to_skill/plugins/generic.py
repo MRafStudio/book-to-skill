@@ -27,6 +27,46 @@ def _without_query(url: str) -> str:
     return url.split("#", 1)[0].split("?", 1)[0]
 
 
+def _is_sep_row(line: str) -> bool:
+    """Строка-разделитель markdown-таблицы: ``| --- | :--: |``."""
+    s = line.strip()
+    if not s.startswith("|"):
+        return False
+    cells = [c.strip() for c in s.strip("|").split("|")]
+    return bool(cells) and all(re.fullmatch(r":?-{1,}:?", c) for c in cells)
+
+
+def fix_md_tables(text: str) -> str:
+    """Вставить строку-разделитель в markdown-таблицы, где её нет.
+
+    ``trafilatura`` 2.2.0 с ``output_format="markdown"`` печатает таблицы БЕЗ
+    разделителя (``| # | CMD |`` и сразу строки данных). Без разделителя Markdown
+    таблицу не видит: в панели это простыня с палками, а глоссарий, собранный по
+    таблице, даёт 0 терминов. Разделитель ставим после строки-заголовка и только
+    если его там нет, чтобы уже корректную таблицу не портить.
+    """
+    lines = text.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        if not lines[i].strip().startswith("|"):
+            out.append(lines[i])
+            i += 1
+            continue
+        block: list[str] = []
+        while i < len(lines) and lines[i].strip().startswith("|"):
+            block.append(lines[i])
+            i += 1
+        cols = len(block[0].strip().strip("|").split("|")) if block else 0
+        if len(block) >= 2 and cols > 1 and not _is_sep_row(block[1]):
+            out.append(block[0])
+            out.append("|" + " --- |" * cols)
+            out.extend(block[1:])
+        else:
+            out.extend(block)
+    return "\n".join(out)
+
+
 def clean_html(raw_html: str, force: str | None = None):
     """HTML -> text. Returns (text, winner, notes).
 
@@ -53,7 +93,10 @@ def clean_html(raw_html: str, force: str | None = None):
             except Exception as exc:  # malformed HTML raising inside trafilatura
                 notes.append(f"trafilatura error: {type(exc).__name__}")
             if extracted and extracted.strip():
-                return extracted, "trafilatura", notes
+                fixed = fix_md_tables(extracted)
+                if fixed != extracted:
+                    notes.append("tables: added markdown separator rows (trafilatura omits them)")
+                return fixed, "trafilatura", notes
             notes.append("trafilatura: no confident extraction")
         except ImportError:
             notes.append("trafilatura not installed")
