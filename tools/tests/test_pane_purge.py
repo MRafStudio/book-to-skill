@@ -80,7 +80,7 @@ const factory = new Function(
   'setName', 'setStrat', 'setMode', 'setLang', 'setAct', 'setCatDesc', 'setCatErr',
   'setNameAuto', 'setDraft', 'setDraftText', 'setDraftFile', 'setDraftOpen',
   'setDrafts', 'setInstalled', 'setChapterPlan', 'setChapterOpen', 'setPreview',
-  'setReadySeen', 'setDraftWait', 'setLlmSid', 'setLlmLabel', 'onlyB',
+  'setReadySeen', 'setNameSeen', 'setDraftWait', 'setLlmSid', 'setLlmLabel', 'onlyB',
   'setSrc', 'setCat',
   'return (function(){' + SRC + '; return { runPurgeAll, resetAfterPurge } })()'
 )
@@ -90,7 +90,7 @@ function build(restImpl) {
   for (const n of ['setBusy','setTone','say','setText','setTextInfo','setOutOpen','setReport',
     'setFetchedSig','setRerunErr','setRerunErrKind','setName','setStrat','setMode','setLang','setAct','setCatDesc',
     'setCatErr','setNameAuto','setDraft','setDraftText','setDraftFile','setDraftOpen','setDrafts',
-    'setInstalled','setChapterPlan','setChapterOpen','setPreview','setReadySeen','setDraftWait',
+    'setInstalled','setChapterPlan','setChapterOpen','setPreview','setReadySeen','setNameSeen','setDraftWait',
     'setLlmSid','setLlmLabel','onlyB']) {
     map[n] = stub(n)
   }
@@ -103,7 +103,7 @@ function build(restImpl) {
     map.setName, map.setStrat, map.setMode, map.setLang, map.setAct, map.setCatDesc, map.setCatErr,
     map.setNameAuto, map.setDraft, map.setDraftText, map.setDraftFile, map.setDraftOpen,
     map.setDrafts, map.setInstalled, map.setChapterPlan, map.setChapterOpen, map.setPreview,
-    map.setReadySeen, map.setDraftWait, map.setLlmSid, map.setLlmLabel, map.onlyB,
+    map.setReadySeen, map.setNameSeen, map.setDraftWait, map.setLlmSid, map.setLlmLabel, map.onlyB,
     map.setSrc, map.setCat
   )
 }
@@ -180,6 +180,18 @@ def main() -> int:
     except ValueError as exc:
         check("runPurgeAll и resetAfterPurge вырезаны из plugin.js", False, str(exc))
         return report()
+
+    # Стенд перечисляет сеттеры вручную, и новая пара состояния обгоняет его молча: срез
+    # зовёт setNameSeen, фабрика такого параметра не знает - node падает с ReferenceError,
+    # и тест валит ЖИВУЮ панель вместо стенда (ловилось на правке «зелёная рамка шага 3»).
+    # Поэтому сверяем: каждый сеттер из среза обязан быть параметром стенда.
+    used_setters = set(re.findall(r"(?<![\w.$])(set[A-Z][\w$]*)\s*\(", src_slice))
+    listed_setters = set(re.findall(r"'(set[A-Z][\w$]*)'", RUNNER))
+    missing_setters = sorted(used_setters - listed_setters)
+    check("стенд знает все сеттеры, которые зовут runPurgeAll и resetAfterPurge",
+          not missing_setters,
+          "срез зовёт незаданные стенду сеттеры: " + ", ".join(missing_setters) +
+          " - node упадёт с ReferenceError, и живая панель будет выглядеть сломанной")
 
     # прогон в node
     with tempfile.TemporaryDirectory() as tmp:

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -388,8 +389,12 @@ def main() -> int:
     # markdown («не похож на markdown ... смотри шаг 2») - тогда шаг 2 существует.
     # Всё остальное - тупик «кнопка есть, а сделать нельзя»: подпись зовёт в шаг,
     # которого при markdown-источнике нет вовсе (владелец ловил это на подписи).
-    ui_step2 = [l for l in src.splitlines()
-                if "шаг 2" in l and not l.lstrip().startswith(("*", "//", "/*"))]
+    #    Прозу вырезаем ДО построчного разбора: продолжения блочных комментариев в этом
+    #    файле пишутся без ведущей звёздочки, и прежний фильтр (по «*», «//», «/*») считал
+    #    их текстом панели - сторож падал на объяснении, а не на том, что видит человек.
+    code_step2 = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    ui_step2 = [l for l in code_step2.splitlines()
+                if "шаг 2" in l and not l.lstrip().startswith("//")]
     ok_step2 = ("«Анализ источника»", "пропущен", "не нужен", "шаг 2 · ", "не похож на markdown")
     bad_step2 = [l for l in ui_step2 if not any(m in l for m in ok_step2)]
     check("ссылка на «шаг 2» всегда называет сам шаг или его пропуск",

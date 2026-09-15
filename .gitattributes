@@ -3,3 +3,6 @@
 # станет CRLF, и сверка sha256 начнёт врать).
 HERMES.md text eol=lf
 ЖУРНАЛ-АРХИВ.md text eol=lf
+# Скрипт панели держим в LF тем же резоном: копия в профиле сверяется
+# по sha, а core.autocrlf=true иначе переведёт её в CRLF на checkout.
+*.js text eol=lf
