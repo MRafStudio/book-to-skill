@@ -226,6 +226,7 @@
 - Страницы и виджеты проверять своим headless Chrome:
   `python D:/NEURO/Hermes/scripts/py/chrome_cdp.py <file|url> --check-overflow --widths 300,460`
   (скилл `chrome-headless-cdp`). `browser_exec` на этой машине не поднимается.
+- **Порт backend-а приложения берём из `desktop.log` (`HERMES_BACKEND_READY port=...`), но маршруты `/api/plugins/b2s/*` агенту недоступны: curl отдаёт `{"detail":"Unauthorized"}`.** Токен есть только у приложения, поэтому черновик/состояние проверяем ядром (`python -B tools/api.py draft --src <url>`), а не запросом в порт: тот же `do_draft` вернёт `has_draft`/`matched`, который увидит панель.
 - Плагины десктопа: `desktop-plugins\<id>\plugin.js` (ESM, `jsx()` вместо JSX; экспорты SDK сверять
   по `apps/desktop/src/sdk/index.ts`). Канал «панель → чат» — RPC `prompt.submit`. Знание — скилл
   `hermes-desktop-html-previews`, файл `references/desktop-plugin-pane.md`.
