@@ -244,6 +244,13 @@ const cutSpan = (text, cls, tip) => jsx('span', Ell(text, cls, tip))
    только ИНЛАЙН: `flex-shrink: 1` + `min-width: 0` на кнопке. */
 const BTN_FIT = { minWidth: 0, flexShrink: 1, maxWidth: '100%' }
 
+/* Посадка текста в плашках режима (Badge). Базовый `py-0.5` даёт по 2 px сверху и снизу,
+   и строка садится ниже центра. Владелец просил поднять её на 1 px («надо на 1 пиксель
+   поднять»): асимметрия 1 сверху / 3 снизу - высота плашки та же, текст уходит вверх.
+   Константа ОДНА на все состояния плашки (Работает LLM / работаю / проба ядра /
+   локальный режим / нет связи с ядром): иначе при смене состояния строка прыгает. */
+const BADGE_FIT = Object.assign({}, BTN_FIT, { paddingTop: 1, paddingBottom: 3 })
+
 /* Значение комбобокса. Radix `SelectValue` рендерит голый span и НАМЕРЕННО выбрасывает
    из props `className` и `style` (проверено на живом DOM плагина: `title` и `data-*`
    доезжают, классы и стили — нет, см. references/desktop-plugin-pane.md). Поэтому
@@ -2852,15 +2859,15 @@ function B2SPane({ ctx }) {
                  называет цену: счёт растёт в чате. */
               llmTurn
                 ? jsx(Badge, {
-                    variant: 'warn', style: BTN_FIT,
+                    variant: 'warn', style: BADGE_FIT,
                     title: 'Агент работает в чате - платный шаг: счёт растёт с каждой итерацией. Панель ждёт результат и заперла кнопки этого шага',
                     children: cutSpan('Работает LLM...')
                   })
                 : isWorking
-                  ? jsx(Badge, { variant: 'warn', style: BTN_FIT, children: cutSpan('работаю') })
+                  ? jsx(Badge, { variant: 'warn', style: BADGE_FIT, children: cutSpan('работаю') })
                   : core === null
                     ? jsx(Badge, {
-                        variant: 'muted', style: BTN_FIT,
+                        variant: 'muted', style: BADGE_FIT,
                         title: 'проверяю ответ локального ядра: GET /api/plugins/b2s/health',
                         children: cutSpan('проба ядра…')
                       })
@@ -2868,12 +2875,12 @@ function B2SPane({ ctx }) {
                       /* Зелёный success, а не серый muted: «на связи» — это норма, и она должна
                          читаться состоянием, а не фоном; подробности (staging, python, черновики) —
                          в наведении. Badge SDK тоже `shrink-0 whitespace-nowrap` в базовом классе,
-                         поэтому сжимается инлайном BTN_FIT + подпись cutSpan (грабля 15).
+                         поэтому сжимается инлайном BADGE_FIT + подпись cutSpan (грабля 15).
                          Подпись короткая - «локальный режим»: владелец просил без хвоста
                          «прямой режим · локальный Python» (что LLM не работает, видно из первой
                          ветки плашки). */
                       ? jsx(Badge, {
-                          variant: 'success', style: BTN_FIT, title: coreTip,
+                          variant: 'success', style: BADGE_FIT, title: coreTip,
                           children: cutSpan('локальный режим')
                         })
                       : jsx(Badge, {
@@ -2894,13 +2901,10 @@ function B2SPane({ ctx }) {
                              буквами»). Красноватая заливка + рамка того же цвета, чтобы
                              плашка читалась состоянием даже боковым зрением. Рамку владелец
                              отменил («красную границу выводить не надо») - заливки хватает. */
-                          style: Object.assign({}, BTN_FIT, {
-                            backgroundColor: 'rgba(220, 38, 38, 0.32)',
-                            /* Текст выше центра на 1 px (владелец: «поднять текст на 1
-                               пиксель выше»): базовый `py-0.5` даёт 2 px сверху и снизу,
-                               здесь 1 + 3 - высота плашки та же, строка поднялась. */
-                            paddingTop: 1,
-                            paddingBottom: 3
+                          style: Object.assign({}, BADGE_FIT, {
+                            /* Посадка текста (paddingTop 1 / paddingBottom 3) - в BADGE_FIT,
+                               она общая для всех состояний плашки; здесь только заливка. */
+                            backgroundColor: 'rgba(220, 38, 38, 0.32)'
                           }),
                           className: 'text-amber-600 dark:text-amber-300',
                           title: 'Ядро не отвечает на GET /api/plugins/b2s/health: маршруты /api/plugins/b2s/ ещё не смонтированы, панель уходит в чат. Перезапусти dashboard-службу: tools/restart_dashboard.py',
