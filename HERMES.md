@@ -189,8 +189,9 @@
 - Черновики RK7 XML (`cat=rk7xml-interface`) в работе. Установлены в профиль: `introduction`, `methods-of-executing-commands`, `requests-and-functions`, `getreflist-getrefdata`, `rkeeper-licenseinfo`. Собраны и проверены черновики (лежат в `staging/`, установку делает панель):
   - `interaction-workflow` - «Алгоритм взаимодействия»: права на операции в `OpRights`, base64 -> биты, обратный порядок; 7 файлов, 2 главы, 22 термина;
   - `data-exchange` - «Обмен данными»: каркас `RK7Query`/`RK7QueryResult`, разбор ответа справочника `RK7Reference`; 7 файлов, 2 главы, 50 терминов;
-  - `retrieving-the-current-menu` - «Получение актуального меню»: два запроса (`MENUITEMS` + `GetOrderMenu`), связь по `Ident`, цена в копейках, остаток в тысячных; 10 файлов, 5 глав, 72 термина.
-  У всех трёх: `validate_skill.py --lens hermes` 0 warning(s), `scan_generated_skill.py` чист, длинного тире нет, `api.py draft --src` отдаёт `has_draft: true` и `matched: slug`. Имена скиллов сверяются с сырьём через `grep` по каждому идентификатору (у `data-exchange` 70 из 70, у `retrieving-the-current-menu` 146 из 146).
+  - `retrieving-the-current-menu` - «Получение актуального меню»: два запроса (`MENUITEMS` + `GetOrderMenu`), связь по `Ident`, цена в копейках, остаток в тысячных; 10 файлов, 5 глав, 72 термина;
+  - `order-processing` - «Работа с заказами»: цепочка `GetOrderList`/`GetOrder`/`CreateOrder`/`SaveOrder`/`CloseVisit`/`VoidOrder`, скидки, комбо, курс, доставка; 11 файлов, 6 глав, 66 терминов.
+  У всех четырёх: `validate_skill.py --lens hermes` 0 warning(s), `scan_generated_skill.py` чист, длинного тире нет, `api.py draft --src` отдаёт `has_draft: true` и `matched: slug`. Каждый идентификатор скилла сверяется с сырьём через `grep` (у `data-exchange` 70 из 70, у `retrieving-the-current-menu` 146 из 146, у `order-processing` 82 имени: 81 в сырье, одно - URL статьи-соседки из живой страницы).
 
 ## Открытые вопросы (нужны ответы владельца)
 
