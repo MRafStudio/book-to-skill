@@ -450,7 +450,11 @@ function PaneBlock({ n, title, state, tone, open, onToggle, hint, foot, style, c
       open ? jsx('div', { className: 'flex min-w-0 flex-col gap-2 px-2 pb-1', children }) : null,
       open
         ? jsx('div', {
-            className: 'flex min-w-0 items-center gap-2 px-2 pb-2',
+            /* `pt-1` (4 px) - отбивка кнопки шага от содержимого блока: владелец просил
+               опустить ВСЕ «ДАЛЕЕ» (и «Предпросмотр» в блоке 5) минимум на 3 px - кнопка
+               стояла вплотную к тексту. Опускается весь футер, поэтому кнопка и подпись-
+               причина слева остаются на одном уровне между собой. */
+            className: 'flex min-w-0 items-center gap-2 px-2 pb-2 pt-1',
             children: [
               jsx('div', {
                 className: 'min-w-0 flex-1',
