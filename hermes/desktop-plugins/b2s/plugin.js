@@ -2989,7 +2989,7 @@ function B2SPane({ ctx }) {
                   ? 'не источник: ' + unwrapSrc(trimSrc)
                   : srcProbe.detail)
                 : (mdSrc
-                  ? 'markdown: блок 2 пропустим'
+                  ? 'markdown: шаг анализа пропущен'
                   : (analyzed
                     ? (isRemoteSrc(trimSrc) ? 'URL - анализ завершён' : 'файл - анализ завершён')
                     : (isRemoteSrc(trimSrc) ? 'URL доступен - нужен разбор'
@@ -3023,7 +3023,7 @@ function B2SPane({ ctx }) {
                   ? 'проверять нечего: ' + srcProbe.detail + ' · ' + (srcProbe.rules || '')
                   : 'источник не получен - ' + srcProbe.detail)
                 : (mdSrc
-                  ? 'файл уже markdown - анализ пропустим'
+                  ? 'файл уже markdown - шаг анализа будет пропущен'
                   : (analyzed
                     ? 'источник разобран - можно делать черновик'
                     : (rerunErr
