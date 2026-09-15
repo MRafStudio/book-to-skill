@@ -279,6 +279,20 @@ def _frontmatter(text: str) -> dict:
     return fields
 
 
+def _fm_text(fm: dict | None, key: str) -> str:
+    """Поле шапки как ТЕКСТ: без кавычек YAML и пробелов по краям.
+
+    Кавычки в шапке — синтаксис YAML, а не часть значения: ``"Use when …"`` и
+    ``Use when …`` для читателя одно и то же. Наружу (в панель, в чипсу блока)
+    должно уходить второе, иначе человек видит кавычки как опечатку.
+
+    Место одно на всех, кто отдаёт поле наружу (``read_category_desc``,
+    ``do_draft``): пока правило жило в одном месте из двух, черновик показывал
+    ``"Use when …"``, а описание категории — чистый текст.
+    """
+    return str((fm or {}).get(key, "")).strip().strip("'\"")
+
+
 def _plain_text(text: str, limit: int = 400) -> str:
     """Текст файла без YAML-шапки — панель показывает его человеку как есть."""
     body = (text or "").lstrip("\ufeff").lstrip()
@@ -305,7 +319,7 @@ def read_category_desc(root: Path, cat: str) -> dict:
     if not path.is_file():
         return {"desc_state": "no-file", "desc": "", "desc_raw": "", "desc_path": str(path)}
     text = path.read_text(encoding="utf-8", errors="replace")
-    desc = str(_frontmatter(text).get("description", "")).strip().strip("'\"")
+    desc = _fm_text(_frontmatter(text), "description")
     return {"desc_state": "ok" if desc else "no-frontmatter",
             "desc": desc, "desc_raw": _plain_text(text), "desc_path": str(path)}
 
@@ -977,8 +991,8 @@ def do_draft(name: str = "", src: str = "") -> dict:
         fm = _frontmatter(skill_md.read_text(encoding="utf-8", errors="replace"))
         skill = {
             "frontmatter": bool(fm),
-            "name": fm.get("name", ""),
-            "description": fm.get("description", ""),
+            "name": _fm_text(fm, "name"),
+            "description": _fm_text(fm, "description"),
         }
 
     glossary = next((f for f in files if f["rel"].lower().endswith("glossary.md")), None)
