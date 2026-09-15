@@ -186,7 +186,11 @@
 Пайплайн долива закрыт: файловый план → план по главам → установка с бэкапом.
 - Имя скилла, подхваченное из прошлого захода, приводится к нижнему регистру: жёлтая подсветка на восстановленном `license-Info` читалась как поломка панели (владелец: «я ничего не делал, а он ругается»). Сторож — `test_pane_name.py` (8).
 - Служебные метки `creator`/`created`/`updated` в наших скиллах: `created` правится по первой установке из `install_log` (`metadata.json`), а не по времени последней перезаливки — иначе «когда скилл появился» врёт.
-- Черновики RK7 XML (`cat=rk7xml-interface`) в работе: установлены `introduction`, `methods-of-executing-commands`, `requests-and-functions`, `getreflist-getrefdata`, `rkeeper-licenseinfo`; собраны черновики `interaction-workflow` (источник «Алгоритм взаимодействия»: права на операции в `OpRights`, base64 -> биты, обратный порядок) и `data-exchange` (источник «Обмен данными»: каркас `RK7Query`/`RK7QueryResult`, разбор ответа справочника `RK7Reference`) - у обоих `validate` 0 warning(s), `scan` чист, `api.py draft` -> `has_draft: true`, `matched: slug`. У `data-exchange` 7 файлов, 2 главы, 50 терминов; все 70 имён из скилла сверены `grep` по сырью (не найдено - ноль).
+- Черновики RK7 XML (`cat=rk7xml-interface`) в работе. Установлены в профиль: `introduction`, `methods-of-executing-commands`, `requests-and-functions`, `getreflist-getrefdata`, `rkeeper-licenseinfo`. Собраны и проверены черновики (лежат в `staging/`, установку делает панель):
+  - `interaction-workflow` - «Алгоритм взаимодействия»: права на операции в `OpRights`, base64 -> биты, обратный порядок; 7 файлов, 2 главы, 22 термина;
+  - `data-exchange` - «Обмен данными»: каркас `RK7Query`/`RK7QueryResult`, разбор ответа справочника `RK7Reference`; 7 файлов, 2 главы, 50 терминов;
+  - `retrieving-the-current-menu` - «Получение актуального меню»: два запроса (`MENUITEMS` + `GetOrderMenu`), связь по `Ident`, цена в копейках, остаток в тысячных; 10 файлов, 5 глав, 72 термина.
+  У всех трёх: `validate_skill.py --lens hermes` 0 warning(s), `scan_generated_skill.py` чист, длинного тире нет, `api.py draft --src` отдаёт `has_draft: true` и `matched: slug`. Имена скиллов сверяются с сырьём через `grep` по каждому идентификатору (у `data-exchange` 70 из 70, у `retrieving-the-current-menu` 146 из 146).
 
 ## Открытые вопросы (нужны ответы владельца)
 
