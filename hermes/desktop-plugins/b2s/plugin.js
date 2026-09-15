@@ -251,6 +251,14 @@ const BTN_FIT = { minWidth: 0, flexShrink: 1, maxWidth: '100%' }
    локальный режим / нет связи с ядром): иначе при смене состояния строка прыгает. */
 const BADGE_FIT = Object.assign({}, BTN_FIT, { paddingTop: 1, paddingBottom: 3 })
 
+/* Посадка подписи-хинта в шапке поля (`Field`). Лейбл 11 px и хинт 10 px стоят в одной
+   строке по `items-center`, но меньший кегль садится оптически ВЫШЕ лейбла - владелец
+   поймал глазами («после лейбла "Имя скилла" идёт подробность "свободно - новый": эту
+   строку надо опустить, а то она выше основной»). Сдвигаем через `position: relative;
+   top` - это не трогает layout шапки (высота жёстко `h-4`) и не двигает соседние поля.
+   Константа одна на все шесть хинтов: иначе подписи разъедутся по вертикали. */
+const HINT_FIT = { position: 'relative', top: 1 }
+
 /* Значение комбобокса. Radix `SelectValue` рендерит голый span и НАМЕРЕННО выбрасывает
    из props `className` и `style` (проверено на живом DOM плагина: `title` и `data-*`
    доезжают, классы и стили — нет, см. references/desktop-plugin-pane.md). Поэтому
@@ -538,7 +546,11 @@ function Field({ label, hint, children }) {
         children: [
           jsx('span', Ell(label, 'text-[0.6875rem] text-(--ui-text-tertiary)')),
           hint
-            ? jsx('span', Ell(hint, 'text-[0.625rem] text-(--ui-text-tertiary) opacity-70'))
+            ? jsx('span', Object.assign(
+              {},
+              Ell(hint, 'text-[0.625rem] text-(--ui-text-tertiary) opacity-70'),
+              { style: Object.assign({}, CUT, HINT_FIT) }
+            ))
             : null
         ]
       }),

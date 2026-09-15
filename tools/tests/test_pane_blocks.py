@@ -229,6 +229,11 @@ def main() -> int:
           "className: 'flex h-4 items-center gap-2'" in src and
           "className: 'flex items-baseline gap-2'" not in src,
           "владелец: «Имя скилла на 1-2 px ниже Категории» - у поля с хинтом шапка выше")
+    check("подпись-хинт посажена на HINT_FIT, а не «висит» выше лейбла",
+          "const HINT_FIT = {" in src and
+          "style: Object.assign({}, CUT, HINT_FIT)" in src,
+          "владелец: после лейбла «Имя скилла» подпись «свободно - новый» стояла ВЫШЕ "
+          "основной строки - кегль 10 px против 11 px садится выше при items-center")
     check("главная кнопка шага отбита от содержимого (футер с pt-1)",
           "className: 'flex min-w-0 items-center gap-2 px-2 pb-2 pt-1'" in src,
           "владелец: кнопки «ДАЛЕЕ» и «Предпросмотр» надо опустить минимум на 3 px")
