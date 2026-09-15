@@ -109,6 +109,10 @@ def setup() -> None:
         shutil.rmtree(STAGING)
     STAGING.mkdir(parents=True)
     (STAGING / "SKILL.md").write_text(skill_md("probe-cat"), encoding="utf-8")
+    # Маркер готовности: без него ядро (и это правильно) не пускает черновик в
+    # профиль - «каталог найден» больше не значит «черновик написан».
+    (STAGING / "READY.json").write_text(
+        '{"ready": true, "by": "test", "at": "2026-09-15T00:00:00"}\n', encoding="utf-8")
 
 
 print("== 1. categories: состояние описания каждой категории")

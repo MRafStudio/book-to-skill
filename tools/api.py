@@ -623,10 +623,13 @@ def _draft_info(d: Path) -> dict:
     mtimes = [p.stat().st_mtime for p in files] or [d.stat().st_mtime]
     meta = _read_json(d / "metadata.json")
     inst = meta.get("installed") if isinstance(meta.get("installed"), dict) else {}
+    ready = _draft_ready(d)
     return {
         "key": d.name,
         "src": _draft_meta_src(d),
         "files": len(files),
+        "ready": ready["ready"],              # «написан» против «пишется»
+        "ready_at": ready["at"],
         "bytes": sum(p.stat().st_size for p in files),
         "mtime": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(max(mtimes))),
         "probe": d.name.startswith("_"),
@@ -635,6 +638,61 @@ def _draft_info(d: Path) -> dict:
         "installed_skill": str(inst.get("skill") or ""),
         "installed_target": str(inst.get("target") or ""),
     }
+
+
+def _draft_ready(d: Path) -> dict:
+    """Готов ли черновик: читаем маркер ``READY.json``, который кладёт LLM.
+
+    Пока маркера нет, каталог может быть найден, но черновик ещё пишется - панель
+    по этому признаку гасит «ДАЛЕЕ», «Критику» и запись в профиль, чтобы в скилл не
+    уехал обрывок. Маркер необязателен для чтения черновика: он только про запись.
+    """
+    raw = _read_json(d / DRAFT_READY_NAME)
+    if not isinstance(raw, dict) or not raw:
+        return {"ready": False, "at": "", "by": "", "note": "",
+                "files": 0, "chapters": 0, "terms": 0}
+    # Явное ``"ready": false`` тоже считается «ещё не готов»: так агент может
+    # отозвать маркер, если после проверки нашёл дефект и вернулся к правкам.
+    ok = bool(raw.get("ready", True))
+    return {
+        "ready": ok,
+        "at": str(raw.get("at") or ""),
+        "by": str(raw.get("by") or ""),
+        "note": str(raw.get("note") or ""),
+        "files": int(raw.get("files") or 0),
+        "chapters": int(raw.get("chapters") or 0),
+        "terms": int(raw.get("glossary_terms") or raw.get("terms") or 0),
+    }
+
+
+def do_mark_ready(name: str = "", src: str = "", ready: bool = True,
+                  note: str = "", by: str = "",
+                  files: int = 0, chapters: int = 0, terms: int = 0) -> dict:
+    """Поставить (или снять) маркер готовности черновика.
+
+    Пишет ``READY.json`` в каталог черновика. Основной автор маркера - LLM (агент,
+    дописавший главы); функция нужна и ядру: ею помечаются черновики, собранные до
+    появления маркера, и ею же пользуются тесты.
+    """
+    try:
+        d, matched = _draft_lookup(name, src)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    if not d.is_dir():
+        return {"ok": False, "error": f"нет черновика: {d}"}
+    payload = {
+        "ready": bool(ready),
+        "by": str(by or _STAMP_CREATOR),
+        "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "note": str(note or ""),
+    }
+    if files or chapters or terms:
+        payload.update({"files": int(files), "chapters": int(chapters),
+                        "glossary_terms": int(terms)})
+    (d / DRAFT_READY_NAME).write_bytes(
+        (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+    return {"ok": True, "name": d.name, "key": d.name, "matched": matched,
+            "dir": str(d), "ready": bool(ready), "at": payload["at"]}
 
 
 def _mark_installed(staging: Path, skill: str, cat: str, mode: str, target: Path) -> dict:
@@ -689,7 +747,14 @@ def _retitle_skill_md(staging: Path, skill: str) -> dict:
 # (`merge-plan.json`) пишет ядро, и в профиль ему ехать незачем. Прежний
 # `copytree` копировал каталог целиком, поэтому служебный план лежал у всех
 # установленных скиллов. В staging он остаётся (панель его читает), в скилл - нет.
-_SERVICE_FILES = frozenset({"merge-plan.json"})
+_SERVICE_FILES = frozenset({"merge-plan.json", "READY.json"})
+
+# Маркер готовности черновика. Его кладёт LLM (агент) ПОСЛЕДНИМ шагом, когда главы,
+# глоссарий и проверки уже на месте. Нужен потому, что «каталог найден» и «черновик
+# написан» - разные вещи: агент пишет файлы по одному, и панель, считая готовностью
+# первый же записанный файл, открывала кнопку «ДАЛЕЕ» и запись в профиль на середине
+# работы - скилл уезжал обрезанным. Пока маркера нет, черновик для панели «пишется».
+DRAFT_READY_NAME = "READY.json"
 
 _STAMP_CREATOR = "BookToSkill"       # подпись плагина в шапке скилла
 _STAMP_KEYS = ("creator", "created", "updated")
@@ -970,7 +1035,8 @@ def do_draft(name: str = "", src: str = "") -> dict:
     try:
         d, matched = _draft_lookup(name, src)
     except ValueError as exc:
-        return {"ok": True, "has_draft": False, "error": str(exc),
+        return {"ok": True, "has_draft": False, "ready": False, "writing": False,
+                "error": str(exc),
                 "drafts": [p.name for p in dirs], "key": _draft_key(src)}
 
     files: list[dict] = []
@@ -980,6 +1046,8 @@ def do_draft(name: str = "", src: str = "") -> dict:
         rel = p.relative_to(d).as_posix()
         if rel == "merge-plan.json":
             continue        # служебный план раскладки, не содержимое скилла
+        if rel == DRAFT_READY_NAME:
+            continue        # маркер готовности: не файл скилла и не глава
         row = {"rel": rel, "kind": "index" if rel == "SKILL.md" else _kind(rel)}
         row.update(_md_stat(p))
         files.append(row)
@@ -1002,9 +1070,20 @@ def do_draft(name: str = "", src: str = "") -> dict:
             encoding="utf-8", errors="replace").splitlines() if line.startswith("**"))
 
     newest = max((p.stat().st_mtime for p in d.rglob("*") if p.is_file()), default=0)
+    r = _draft_ready(d)
     return {
         "ok": True,
         "has_draft": True,
+        # Готовность - ОТДЕЛЬНЫЙ признак: «каталог найден» ≠ «черновик написан».
+        # Панель по `ready` отпирает «ДАЛЕЕ» и запись в профиль; пока он false,
+        # черновик считается пишущимся, и файлы могут ещё прибавляться.
+        "ready": r["ready"],
+        "writing": not r["ready"],
+        "ready_at": r["at"],
+        "ready_by": r["by"],
+        "ready_note": r["note"],
+        "ready_counts": {"files": r["files"], "chapters": r["chapters"],
+                         "terms": r["terms"]},
         "name": d.name,
         "key": d.name,
         "matched": matched,
@@ -1531,6 +1610,21 @@ def do_install(name: str, cat: str = "", confirm: bool = False,
         return {"ok": False, "error": f"нет черновика: {staging}",
                 "hint": "сначала шаг 2 - «Сделать черновик» (это уже LLM, идёт в чате)"}
 
+    # Предохранитель от обрывка. Панель гасит кнопку записи, но ядро на интерфейс
+    # не полагается: недописанный черновик уезжает в профиль молча и живёт там как
+    # рабочий скилл, а «доклеить» его потом нечем. Поэтому пишем только тот
+    # черновик, который LLM пометила готовым (``READY.json``).
+    ready = _draft_ready(staging)
+    if not ready["ready"]:
+        return {
+            "ok": False, "dry_run": not confirm, "ready": False,
+            "name": skill, "category": category, "mode": wanted,
+            "staging": str(staging), "staging_key": staging.name, "matched": matched,
+            "error": "черновик не помечен готовым: он ещё пишется (нет READY.json)",
+            "hint": "дождись, пока агент допишет главы и положит маркер готовности; "
+                    "поставить маркер вручную - do_mark_ready(name, src)",
+        }
+
     target = hermes_home() / "skills" / category / skill
     target_exists = target.is_dir() and any(target.iterdir())
     # Режим фиксируем ЯВНО: «auto» — это решение по состоянию цели, а не отдельный
@@ -1740,6 +1834,18 @@ def main(argv: list[str] | None = None) -> int:
     p_dtext.add_argument("--offset", type=int, default=0)
     p_dtext.add_argument("--limit", type=int, default=0, help="0 = весь файл")
 
+    p_ready = sub.add_parser("mark-ready", help="маркер готовности черновика (его кладёт LLM последним шагом)")
+    p_ready.add_argument("--name", default="", help="имя скилла; по умолчанию - самый свежий черновик")
+    p_ready.add_argument("--src", default="", help="источник: по нему ищется черновик (слаг)")
+    p_ready.add_argument("--no", dest="ready", action="store_false",
+                         help="СНЯТЬ маркер: агент вернулся к правкам, черновик снова «пишется»")
+    p_ready.set_defaults(ready=True)
+    p_ready.add_argument("--note", default="", help="короткая пометка для панели (необязательно)")
+    p_ready.add_argument("--by", default="", help="кто поставил; по умолчанию - подпись плагина")
+    p_ready.add_argument("--files", type=int, default=0)
+    p_ready.add_argument("--chapters", type=int, default=0)
+    p_ready.add_argument("--terms", type=int, default=0)
+
     p_inst = sub.add_parser("install", help="перенести черновик в skills/ (по умолчанию предпросмотр)")
     p_inst.add_argument("--name", required=True)
     p_inst.add_argument("--cat", default="")
@@ -1816,6 +1922,9 @@ def main(argv: list[str] | None = None) -> int:
         out = do_draft(args.name, args.src)
     elif args.cmd == "draft-text":
         out = do_draft_text(args.name, args.rel, args.offset, args.limit, args.src)
+    elif args.cmd == "mark-ready":
+        out = do_mark_ready(args.name, args.src, args.ready, args.note, args.by,
+                            args.files, args.chapters, args.terms)
     elif args.cmd == "plan":
         out = do_chapter_plan(args.name, args.cat, args.mode, args.save, args.threshold, args.src)
     elif args.cmd == "desc":

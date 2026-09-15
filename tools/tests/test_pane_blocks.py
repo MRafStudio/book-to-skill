@@ -222,11 +222,11 @@ def main() -> int:
           "имя снова стало входом разбора")
     check("пустое имя гасит «ДАЛЕЕ» блока 3 и установку в блоке 5, а не разбор",
           "disabled: !!busy || nameWarn || nameBad," in src and
-          "disabled: !!busy || !hasDraft || !!installed || nameWarn || nameBad," in src and
+          "disabled: !!busy || !draftReady || !readySeen || !!installed || nameWarn || nameBad," in src and
           "disabled: !!busy || !hasDraft,   // имя" not in src,
           "пустое имя стало входом разбора или потеряло замок")
     check("имя обязательно там, где пишется каталог (блок 5)",
-          "disabled: !!busy || !hasDraft || !!installed || nameWarn || nameBad," in src and
+          "disabled: !!busy || !draftReady || !readySeen || !!installed || nameWarn || nameBad," in src and
           "нужно имя скилла: пустым не поставим - каталог в skills/ должен быть назван" in src,
           "установка пойдёт без имени")
     # Имя, которое линза Hermes не примет, - такая же незаполненная обязательная
@@ -315,9 +315,10 @@ def main() -> int:
           "const next3 = () => {" in src and "if (nameWarn)" in src and
           "каталог установки называется именем" in src,
           "«ДАЛЕЕ» блока 3 пускает к черновику без имени")
-    check("переход из блока 4 требует черновик в staging (hasDraft)",
-          "const next4 = () => {" in src and "if (!hasDraft)" in src,
-          "«ДАЛЕЕ» блока 4 не проверяет staging")
+    check("переход из блока 4 требует ГОТОВЫЙ черновик (маркер от LLM)",
+              "const next4 = () => {" in src and "if (!hasDraft)" in src
+              and "if (!draftReady)" in src and "маркер готовности" in src,
+              "«ДАЛЕЕ» блока 4 пускает на пишущемся черновике")
     check("шапка пропущенного блока 2 подписана «пропущен: файл уже markdown»",
           "пропущен: файл уже markdown" in src)
     check("открытым может быть только один блок (onlyB сбрасывает остальные)",

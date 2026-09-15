@@ -48,6 +48,9 @@ def write_draft(url: str, title: str, extra_chapter: str = "") -> None:
         "source": {"url": url, "title": title, "fetched_at": "2026-09-12",
                    "strategy": "trafilatura", "chars": 1000},
     }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    # Маркер готовности: без него черновик для ядра - «пишется», и запись закрыта.
+    (STAGING / "READY.json").write_text(
+        '{"ready": true, "by": "test", "at": "2026-09-15T00:00:00"}\n', encoding="utf-8")
     if extra_chapter:
         chapters = STAGING / "chapters"
         chapters.mkdir(exist_ok=True)

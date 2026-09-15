@@ -196,8 +196,15 @@ def main() -> int:
           out["installed_with_plan"] == "Успешно установлен",
           f"{out['installed_with_plan']!r} - иначе второй клик предложит снести каталог заново")
     check("кнопка гаснет, пока цель установлена (disabled: … || !!installed)",
-          re.search(r"disabled:\s*!!busy \|\| !hasDraft \|\| !!installed", src) is not None,
+          re.search(r"disabled:\s*!!busy \|\| !draftReady \|\| !readySeen \|\| !!installed", src) is not None,
           "иначе повторный клик пишет в skills/… ещё раз")
+    check("запись требует ГОТОВОГО черновика, а не просто каталога в staging",
+          "disabled: !!busy || !draftReady || !readySeen" in src and
+          "сначала пройди «ДАЛЕЕ» в блоке 4: запись открывается только после готового черновика" in src,
+          "в профиль уедет обрывок: маркер готовности от LLM не проверяется")
+    check("пишущийся черновик запирает запись и называет причину",
+          "черновик ещё пишется - записывать нечего, дождись маркера готовности" in src and
+          "черновик ещё пишется: ядро не пустит запись, пока LLM не положит маркер готовности (READY.json)" in src)
     check("факт установки ставится по факту записи, а не по «нет замечаний»",
           "setInstalled({ target: out.target" in src and "} else if (out.ok) {" in src and
           "if (out.dry_run === false || out.installed) {" in src,

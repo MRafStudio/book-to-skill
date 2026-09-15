@@ -378,6 +378,19 @@ function draftBitsOf({ draft, want, busy }) {
     bits.push('черновик делает кнопка ✎ в этом блоке')
     return bits
   }
+  /* Каталог найден - это ещё НЕ «черновик готов»: агент пишет файлы по одному, и
+     пока он не положил маркер готовности (READY.json), в staging лежит обрывок.
+     Раньше панель считала готовностью первый же файл и открывала «ДАЛЕЕ» и запись
+     в профиль на середине работы. Владелец: «прыткий пользователь перейдёт к блоку 5
+     и запишет обрезанный скилл». */
+  if (draft.writing) {
+    const wc = draft.counts || {}
+    bits.push('⏳ черновик пишется')
+    if (wc.files != null) bits.push('уже ' + wc.files + ' ' + plural(wc.files, 'файл', 'файла', 'файлов'))
+    if (wc.chapters) bits.push(wc.chapters + ' ' + plural(wc.chapters, 'глава', 'главы', 'глав'))
+    bits.push('кнопки записи ждут готовности')
+    return bits
+  }
   bits.push('черновик готов')
   /* Шапка SKILL.md — не «мелкий недочёт»: без неё Hermes не увидит description
      и не подгрузит скилл никогда. Это ровно тот факт, ради которого не заходят
@@ -600,6 +613,11 @@ function B2SPane({ ctx }) {
      и его футер обязаны это говорить: иначе панель выглядит сломанной — «нажал, а
      ничего не произошло». Гасится вотчером (watchDraft) или по дедлайну. */
   const [draftWait, setDraftWait] = useState(false)
+  /* Прошёл ли человек «ДАЛЕЕ» в блоке 4. Запись в профиль требует и готовности
+     черновика, и этого факта: блок 5 открывается и кликом по заголовку, а тогда
+     человек его не проходил. Владелец: «"Предпросмотр" должна активироваться только
+     после нажатия "ДАЛЕЕ" в группе 4 - когда это позволит сама LLM». */
+  const [readySeen, setReadySeen] = useState(false)
 
   /* Страховка к dropPreview: если входы поменяли руками (набрали другое имя, выбрали
      другую категорию, вставили другой источник, переключили режим/язык), собранный
@@ -1082,6 +1100,9 @@ function B2SPane({ ctx }) {
          Теперь после отправки задания панель сама следит за staging. */
       if (kind === 'draft') {
         setDraftWait(true)
+        /* Новая генерация обнуляет пройденный блок 4: черновик будет переписан,
+           и прежнее «ДАЛЕЕ» относится уже к другому содержимому. */
+        setReadySeen(false)
         watchDraft((name || '').trim(), (src || '').trim())
       }
       return true
@@ -1240,14 +1261,26 @@ function B2SPane({ ctx }) {
           timeoutMs: 8000
         })
         if (out && out.has_draft) {
-          done = true
-          setDraft(out)
-          setDraftWait(false)
-          setTone('done')
-          const c = out.counts || {}
-          setStatus('черновик приехал в staging: ' + (out.name || targetName || targetSrc) +
-            (c.files ? ' - ' + c.files + ' ' + plural(c.files, 'файл', 'файла', 'файлов') : '') +
-            ': можно к блоку 4')
+          setDraft(out)          // прогресс виден и до готовности: файлы прибывают
+          if (out.ready) {
+            done = true
+            setDraftWait(false)
+            setTone('done')
+            const c = out.counts || {}
+            setStatus('черновик готов: ' + (out.name || targetName || targetSrc) +
+              (c.files ? ' - ' + c.files + ' ' + plural(c.files, 'файл', 'файла', 'файлов') : '') +
+              ': можно к блоку 4')
+          } else {
+            /* Каталог появился, но маркера готовности нет - LLM ещё пишет главы.
+               Раньше панель объявляла готовность на первом же файле и отпирала
+               «ДАЛЕЕ»: скилл мог уехать в профиль обрезанным. */
+            const c = out.counts || {}
+            setTone('working')
+            setStatus('черновик пишется: ' +
+              (c.files ? c.files + ' ' + plural(c.files, 'файл', 'файла', 'файлов') : 'файлы в staging') +
+              (c.chapters ? ', ' + c.chapters + ' ' + plural(c.chapters, 'глава', 'главы', 'глав') : '') +
+              ' - жду маркер готовности от LLM')
+          }
         }
       } catch (err) { /* ещё не готов — ждём дальше, молча */ }
       finally {
@@ -1258,7 +1291,7 @@ function B2SPane({ ctx }) {
           if (!done && late) {
             setDraftWait(false)
             setTone('error')
-            setStatus('черновик за 15 минут не появился в staging - смотри ответ агента в чате')
+            setStatus('черновик за 15 минут не помечен готовым (LLM ещё пишет или упал) - смотри ответ агента в чате')
           }
         }
       }
@@ -2374,6 +2407,11 @@ function B2SPane({ ctx }) {
      и говорим причину подписью у кнопки (hint), а не молчанием. Никакого REST в
      самих проверках — только состояние панели. */
   const hasDraft = !!(draft && draft.has_draft)
+  /* Готовность - отдельный признак от «каталог найден»: её объявляет сам LLM
+     маркером READY.json. Пока маркера нет, черновик ПИШЕТСЯ, и всё, что пишет в
+     профиль, заперто - иначе в скилл уедет обрывок. */
+  const draftReady = !!(draft && draft.ready)
+  const draftWriting = !!(draft && draft.has_draft && !draft.ready)
 
   /* Шаг 1 → 2 (или сразу 3, если источник — готовый markdown). Разбор запускаем
      заодно: «ДАЛЕЕ» значит «идём дальше», а не «вернись и нажми ещё раз». */
@@ -2433,15 +2471,26 @@ function B2SPane({ ctx }) {
     onlyB(4)
   }
 
-  /* Шаг 4 → 5: записывать в профиль можно только то, что лежит в staging. */
-  const next4 = () => {
-    if (!hasDraft) {
-      setTone('error')
-      setStatus('блок 4 · черновика в staging нет - нажми «Сделать черновик»')
-      return
+  /* Шаг 4 → 5: записывать в профиль можно только ГОТОВЫЙ черновик.
+       Каталога в staging мало: пока LLM не положила маркер готовности, там обрывок. */
+    const next4 = () => {
+      if (!hasDraft) {
+        setTone('error')
+        setStatus('блок 4 · черновика в staging нет - нажми «Сделать черновик»')
+        return
+      }
+      if (!draftReady) {
+        setTone('working')
+        const c = (draft && draft.counts) || {}
+        setStatus('блок 4 · черновик ещё пишется' +
+          (c.files ? ' (' + c.files + ' ' + plural(c.files, 'файл', 'файла', 'файлов') +
+            (c.chapters ? ', ' + c.chapters + ' ' + plural(c.chapters, 'глава', 'главы', 'глав') : '') + ')' : '') +
+          ' - кнопка записи откроется, когда LLM допишет и положит маркер готовности')
+        return
+      }
+      setReadySeen(true)
+      onlyB(5)
     }
-    onlyB(5)
-  }
 
   return jsxs('div', {
     ref: bodyRef,
@@ -2852,26 +2901,38 @@ function B2SPane({ ctx }) {
       jsx(PaneBlock, {
         n: 4,
         title: 'Черновик скилла - без записи',
-        state: hasDraft
-          ? 'есть - в staging'
-          : (draftWait ? 'задание в чате - жду staging' : (busy === 'draft' ? 'пишется' : 'нет')),
-        tone: hasDraft ? 'done' : null,
+        state: draftReady
+          ? 'готов - в staging'
+          : (draftWriting
+              ? '⏳ пишется - в профиль не пойдёт'
+              : (draftWait ? 'задание в чате - жду staging' : (busy === 'draft' ? 'пишется' : 'нет'))),
+        /* Готовность - единственное состояние, которое красит блок зелёным:
+           «каталог найден» ещё не значит «черновик написан». */
+        tone: draftReady ? 'done' : (draftWriting ? 'working' : null),
         open: !!openB[4],
         onToggle: () => toggleB(4),
         style: { backgroundColor: openB[4] ? BLOCK_BG : 'transparent' },
-        hint: hasDraft
-          ? 'черновик на месте - можно записывать в профиль'
-          : (draftWait
-              ? 'задание ушло в чат - файлы приедут в staging сами, панель следит'
-              : (mdSrc
-                  ? 'блок 2 пропущен: источник уже markdown - жми «✎ Сделать черновик»'
-                  : 'черновика нет: жми «✎ Сделать черновик» - прозу пишет LLM в чате')),
+        hint: draftReady
+          ? 'черновик готов - можно записывать в профиль'
+          : (draftWriting
+              ? 'черновик ещё пишется: кнопка записи откроется, когда LLM положит маркер готовности'
+              : (draftWait
+                  ? 'задание ушло в чат - файлы приедут в staging сами, панель следит'
+                  : (mdSrc
+                      ? 'блок 2 пропущен: источник уже markdown - жми «✎ Сделать черновик»'
+                      : 'черновика нет: жми «✎ Сделать черновик» - прозу пишет LLM в чате'))),
         foot: jsx(NextBtn, {
           label: 'ДАЛЕЕ →',
           onClick: next4,
-          disabled: !!busy || !hasDraft,
-          fill: STEP_BG,
-          title: hasDraft ? 'открыть запись в профиль - имя и категорию собрали в блоке 3' : 'сначала сделай черновик кнопкой «✎» выше'
+          /* Заперто на ГОТОВНОСТИ, а не на «каталог найден»: иначе прыткий
+             пользователь уйдёт в блок 5 на середине и запишет обрывок. */
+          disabled: !!busy || !draftReady,
+          fill: draftReady ? STEP_BG : undefined,
+          title: draftReady
+            ? 'открыть запись в профиль - имя и категорию собрали в блоке 3'
+            : (draftWriting
+                ? 'черновик ещё пишется - дождись маркера готовности от LLM'
+                : 'сначала сделай черновик кнопкой «✎» выше')
         }),
         children: [
           jsx('div', {
@@ -2883,9 +2944,13 @@ function B2SPane({ ctx }) {
                 children: jsxs(Button, {
                   size: 'sm',
                   variant: 'ghost',
-                  disabled: !!busy,
+                  /* Пока идёт генерация, второй запуск запрещён: две прозы пишутся в
+                     один каталог и мешают друг другу. */
+                  disabled: !!busy || draftWriting,
                   onClick: () => sendIntent('draft'),
-                  title: hasDraft ? TIP.redraft : TIP.draft,
+                  title: draftWriting
+                    ? 'черновик ещё пишется - дождись маркера готовности'
+                    : (hasDraft ? TIP.redraft : TIP.draft),
                   className: 'h-7 justify-start text-xs text-(--ui-text-primary)',
                   style: BTN_FIT,
                   children: [
@@ -2901,9 +2966,13 @@ function B2SPane({ ctx }) {
                 variant: 'ghost',
                 /* Без черновика гаснет: критиковать нечего, а задание в чат — платное.
                    Причина не молчит — она в тултипе и в подписи под рядом кнопок. */
-                disabled: !!busy || !hasDraft,
+                /* Критика - разбор готового черновика: на пишущемся нечего разбирать,
+                   а задание в чат - платное. Причина не молчит: она в тултипе. */
+                disabled: !!busy || !draftReady,
                 onClick: () => sendIntent('review'),
-                title: hasDraft ? TIP.review : TIP.reviewOff,
+                title: draftReady
+                  ? TIP.review
+                  : (draftWriting ? 'черновик ещё пишется: критиковать пока нечего' : TIP.reviewOff),
                 /* Кегль и цвет — как у соседей по ряду («Перегенерировать», «План по
                    главам»): свой 0.625rem читался «другим центрированием», хотя
                    flex-центр совпадал (замер: 0.00 px у обоих) — мелкая строка в
@@ -2912,14 +2981,16 @@ function B2SPane({ ctx }) {
                 style: Object.assign({ backgroundColor: REVIEW_BG }, BTN_FIT),
                 children: [
                   jsx('span', { 'aria-hidden': true, style: { flexShrink: 0 }, children: '🔍' }),
-                  cutSpan('Критика и список правок', undefined, hasDraft ? TIP.review : TIP.reviewOff)
+                  cutSpan('Критика и список правок', undefined, draftReady ? TIP.review : (draftWriting ? 'черновик ещё пишется: критиковать пока нечего' : TIP.reviewOff))
                 ]
               })
             ]
           }),
-          jsx('span', Ell(hasDraft
+          jsx('span', Ell(draftReady
             ? 'Правки к черновику и повторный прогон считаются заново: счёт растёт с числом итераций.'
-            : '«Критика» включится, когда в staging появится черновик - его делает кнопка «✎» выше (она не гаснет).',
+            : (draftWriting
+                ? 'Черновик ещё пишется: «Критика» и «ДАЛЕЕ» включатся, когда LLM положит маркер готовности.'
+                : '«Критика» включится, когда в staging появится готовый черновик - его делает кнопка «✎» выше (она не гаснет).'),
             'pl-1 text-[0.625rem] leading-snug text-(--ui-text-tertiary)')),
           mdSrc && !hasDraft
             ? jsx('span', Ell('источник - готовый markdown: текст уже добыт шагом 1, анализ (блок 2) не нужен, черновик можно делать сразу.',
@@ -2937,9 +3008,12 @@ function B2SPane({ ctx }) {
         title: 'Запись в профиль',
         state: installed
           ? 'установлен в ' + installed.target
-          : (preview
-            ? (preview.mode === 'replace' ? 'подтверди ЗАМЕНУ' : 'подтверди запись')
-            : (existing ? 'долив в ' + (existing.category || 'без категории') : 'новый скилл')),
+          : (!draftReady
+              ? (draftWriting ? '⏳ черновик ещё пишется' : 'черновика нет')
+              : (!readySeen ? 'пройди «ДАЛЕЕ» в блоке 4'
+                : (preview
+                  ? (preview.mode === 'replace' ? 'подтверди ЗАМЕНУ' : 'подтверди запись')
+                  : (existing ? 'долив в ' + (existing.category || 'без категории') : 'новый скилл')))),
         tone: (preview || installed) ? 'done' : null,
         open: !!openB[5],
         onToggle: () => toggleB(5),
@@ -2959,30 +3033,43 @@ function B2SPane({ ctx }) {
               ? (preview.mode === 'replace' ? 'Подтвердить ЗАМЕНУ' : 'Установить')
               : 'Предпросмотр'),
           onClick: () => runInstall(!!preview),
-          disabled: !!busy || !hasDraft || !!installed || nameWarn || nameBad,
-          fill: hasDraft ? STEP_BG : undefined,
+          /* Запись заперта на двух замках: черновик ГОТОВ (маркер от LLM) и человек
+             прошёл «ДАЛЕЕ» в блоке 4. Так в профиль не уедет ни обрывок, ни план,
+             собранный в обход блока 4. */
+          disabled: !!busy || !draftReady || !readySeen || !!installed || nameWarn || nameBad,
+          fill: (draftReady && readySeen) ? STEP_BG : undefined,
           title: installed
             ? 'скилл уже записан в ' + installed.target + ' - чтобы поставить заново, измени черновик или входы'
             : (nameWarn
               ? 'нужно имя скилла: пустым не поставим - каталог в skills/ должен быть назван'
               : (nameBad
                 ? 'такое имя Hermes не примет: нужны строчные латинские буквы, цифры, «-», «_», «.» - линза валит шапку сразу после записи'
-                : (!hasDraft
-                  ? 'сначала сделай черновик - записывать нечего'
-                  : (preview
-                    ? 'второй клик пишет в skills/<категория>/<имя>/'
-                    : '«Предпросмотр» соберёт план и ничего не запишет - пишет только «Установить»'))))
+                : (!draftReady
+                  ? (draftWriting
+                    ? 'черновик ещё пишется - записывать нечего, дождись маркера готовности'
+                    : 'сначала сделай черновик - записывать нечего')
+                  : (!readySeen
+                    ? 'сначала пройди «ДАЛЕЕ» в блоке 4: запись открывается только после готового черновика'
+                    : (preview
+                      ? 'второй клик пишет в skills/<категория>/<имя>/'
+                      : '«Предпросмотр» соберёт план и ничего не запишет - пишет только «Установить»')))))
         }),
         children: [
           jsx('span', Ell(installed
             ? 'записан в ' + installed.target + ' - второй клик не нужен: кнопка гаснет до правки черновика или входов'
-            : (preview
-                ? (preview.mode === 'replace'
-                  ? 'второй клик = снести каталог и залить черновик целиком; бэкап снимается до записи'
-                  : 'второй клик = записать план в skills/<категория>/<имя>/')
-                : (existing
-                  ? 'имя занято → долив: новые главы лягут рядом, старое не тронем. План соберёт «Предпросмотр»'
-                  : 'перенос в skills/ - сначала «Предпросмотр» без записи, пишет только «Установить». Любое действие в блоках 1-4 сбрасывает план')),
+            : (!draftReady
+                ? (draftWriting
+                  ? 'черновик ещё пишется: ядро не пустит запись, пока LLM не положит маркер готовности (READY.json)'
+                  : 'черновика нет: сначала кнопка «✎ Сделать черновик» в блоке 4')
+                : (!readySeen
+                  ? 'черновик готов, но блок 4 не пройден: жми «ДАЛЕЕ →» там - запись откроется после этого'
+                  : (preview
+                    ? (preview.mode === 'replace'
+                      ? 'второй клик = снести каталог и залить черновик целиком; бэкап снимается до записи'
+                      : 'второй клик = записать план в skills/<категория>/<имя>/')
+                    : (existing
+                      ? 'имя занято → долив: новые главы лягут рядом, старое не тронем. План соберёт «Предпросмотр»'
+                      : 'перенос в skills/ - сначала «Предпросмотр» без записи, пишет только «Установить». Любое действие в блоках 1-4 сбрасывает план')))),
             'text-[0.625rem] leading-snug text-(--ui-text-tertiary)')),
 
           planBlock
@@ -2992,7 +3079,7 @@ function B2SPane({ ctx }) {
       jsxs('div', {
         className: 'flex flex-col gap-0.5 pt-1 text-[0.625rem] text-(--ui-text-tertiary)',
         children: [
-          jsx('span', Ell('REST: /rerun · /install · /plan · /skills · /categories · /text · /drafts · /drop · /prune')),
+          jsx('span', Ell('REST: /rerun · /install · /plan · /skills · /categories · /text · /drafts · /mark_ready · /drop · /prune')),
           jsx('span', Ell('сессия (для чат-шагов): ' + (focusedId || '-')))
         ]
       })

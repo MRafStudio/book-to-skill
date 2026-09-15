@@ -72,7 +72,28 @@ for want in ("apk-to-maui", "python-pathlib"):
                              f"глав={hit[0]['chapters']}" if hit else "НЕТ в профиле"))
 os.environ["HERMES_HOME"] = str(FAKE)
 
-print("\n=== 1. план без записи (цели нет → create) ===")
+print("\n=== 1. ПРЕДОХРАНИТЕЛЬ: без маркера готовности запись заперта ===")
+show("без маркера (план)", api.do_install("_probe", "software-development"))
+show("без маркера (запись)", api.do_install("_probe", "software-development", confirm=True))
+print(f"    каталог цели не создан: {not target.is_dir()}")
+d_early = api.do_draft("_probe")
+print(f"    сводка: has_draft={d_early['has_draft']} ready={d_early['ready']} writing={d_early['writing']}")
+
+print("\n=== 1б. LLM пометила черновик готовым (маркер READY.json) ===")
+mk = api.do_mark_ready("_probe", files=4, chapters=2, terms=1)
+print(f"    маркер: ok={mk['ok']} ready={mk['ready']} at={mk['at']} файл={Path(mk['dir']) / 'READY.json'}")
+d_ready = api.do_draft("_probe")
+print(f"    сводка: ready={d_ready['ready']} writing={d_ready['writing']} "
+      f"файлов={d_ready['counts']['files']} (маркер в файлы не считается)")
+print(f"    READY.json не попал в список файлов скилла: "
+      f"{not any('READY' in f['rel'] for f in d_ready['files'])}")
+
+print("\n=== 1в. снятый маркер снова запирает запись ===")
+api.do_mark_ready("_probe", ready=False)
+show("маркер снят", api.do_install("_probe", "software-development", confirm=True))
+api.do_mark_ready("_probe", files=4, chapters=2, terms=1)
+
+print("\n=== 1г. план без записи (цели нет → create) ===")
 show("план", api.do_install("_probe", "software-development"))
 
 print("\n=== 2. установка create ===")
@@ -145,6 +166,12 @@ ok("служебный merge-plan.json в профиль не уехал",
    str(target))
 ok("служебный файл не в списке записанного",
    "merge-plan.json" not in (out.get("wrote") or []))
+ok("служебный READY.json в профиль не уехал",
+   (probe / "READY.json").is_file() and not (target / "READY.json").exists(),
+   str(target))
+ok("маркер готовности не в списке записанного",
+   "READY.json" not in (out.get("wrote") or []),
+   str(out.get("wrote")))
 head = (target / "SKILL.md").read_text(encoding="utf-8")
 ok("в шапке скилла стоит метка плагина",
    "creator: BookToSkill" in head and "created: " in head and "updated: " in head,

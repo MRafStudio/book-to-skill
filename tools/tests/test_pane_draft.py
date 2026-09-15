@@ -337,13 +337,14 @@ def main() -> int:
     # подпись звала в «шаг 2» (он же блок 2 — анализ), который при готовом markdown
     # пропускается. Получался тупик: кнопка вроде есть, но сделать нельзя.
     i_watch = src.find("const watchDraft")
-    watch_body = src[i_watch:i_watch + 2000] if i_watch > 0 else ""
+    watch_body = src[i_watch:i_watch + 3600] if i_watch > 0 else ""
     check("есть вотчер черновика (панель не молчит после «Сделать черновик»)",
           i_watch > 0 and "setInterval" in watch_body and "/draft" in watch_body,
           f"watchDraft@{i_watch}")
-    check("вотчер сдаётся по дедлайну и называет это честно",
-          "900000" in watch_body and "не появился в staging" in watch_body,
-          "вотчер будет ждать вечно или промолчит")
+    check("вотчер ждёт МАРКЕР готовности, а не первый файл в staging",
+          "900000" in watch_body and "не помечен готовым" in watch_body
+          and "if (out.ready)" in watch_body and "жду маркер готовности от LLM" in watch_body,
+          "вотчер считает готовностью каталог и объявляет готовность на середине")
     check("интент draft запускает вотчер и поднимает «жду staging»",
           "if (kind === 'draft')" in src and "setDraftWait(true)" in src
           and "watchDraft((name || '').trim(), (src || '').trim())" in src,
@@ -422,9 +423,9 @@ def main() -> int:
           "title: TIP.openFile + r.label" in src)
     check("«Критика и список правок» получила иконку-символ",
           "children: '🔍'" in src)
-    check("«Критика» гаснет без черновика и объясняет причину",
-          "disabled: !!busy || !hasDraft" in src and "TIP.reviewOff" in src
-          and "«Критика» включится, когда в staging появится черновик" in src,
+    check("«Критика» гаснет без ГОТОВОГО черновика и объясняет причину",
+          "disabled: !!busy || !draftReady" in src and "TIP.reviewOff" in src
+          and "«Критика» включится, когда в staging появится готовый черновик" in src,
           "нет ни гашения, ни причины")
     # «Критика и список правок» — рядовой кнопкой того же ряда: свой кегль 0.625rem
     # читался владельцем как «другое центрирование» (замер: flex-центр совпадал, 0.00 px,

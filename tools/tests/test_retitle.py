@@ -62,6 +62,10 @@ def draft(key: str, body: str) -> Path:
     (d / "metadata.json").write_text(json.dumps(
         {"source": {"url": "https://example.org/zz", "cleaned_file": key + ".md"}},
         ensure_ascii=False), encoding="utf-8")
+    # Маркер готовности: запись в профиль ядро пускает только по нему.
+    (d / "READY.json").write_text(
+        json.dumps({"ready": True, "by": "test", "at": "2026-09-15T00:00:00"}) + "\n",
+        encoding="utf-8")
     return d
 
 
