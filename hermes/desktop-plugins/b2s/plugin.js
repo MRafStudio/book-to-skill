@@ -2890,7 +2890,12 @@ function B2SPane({ ctx }) {
                              плашка читалась состоянием даже боковым зрением. Рамку владелец
                              отменил («красную границу выводить не надо») - заливки хватает. */
                           style: Object.assign({}, BTN_FIT, {
-                            backgroundColor: 'rgba(220, 38, 38, 0.32)'
+                            backgroundColor: 'rgba(220, 38, 38, 0.32)',
+                            /* Текст выше центра на 1 px (владелец: «поднять текст на 1
+                               пиксель выше»): базовый `py-0.5` даёт 2 px сверху и снизу,
+                               здесь 1 + 3 - высота плашки та же, строка поднялась. */
+                            paddingTop: 1,
+                            paddingBottom: 3
                           }),
                           className: 'text-amber-600 dark:text-amber-300',
                           title: 'Ядро не отвечает на GET /api/plugins/b2s/health: маршруты /api/plugins/b2s/ ещё не смонтированы, панель уходит в чат. Перезапусти dashboard-службу: tools/restart_dashboard.py',
