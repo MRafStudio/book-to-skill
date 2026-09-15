@@ -110,6 +110,57 @@ check("точка «ядро на связи» красится ЗЕЛЁНЫМ, 
       "dotTone === 'good' ? { backgroundColor: STEP_GREEN }" in src,
       "SDK рисует tone 'good' как bg-primary (акцент темы): на светлой теме точка читается белой")
 
+# ── Плашка «нет связи с ядром»: фон красноватый, буквы оранжевые ──────────────
+# Владелец: «когда в плашке написано "нет связи с ядром" это должно быть красноватым
+# фоном плашки и оранжевыми буквами». Плашка шла с несуществующим у Badge SDK вариантом
+# (в SDK есть только default|muted|success|warn|destructive|outline|solid): cva молча
+# не подставлял ни фона, ни цвета текста.
+#
+# Считаем по КОДУ: комментарии панели цитируют ошибочное имя словами, и поиск по сырому
+# тексту ловил бы прозу вместо дела.
+import os
+import re
+
+code = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+
+i_nolink = code.find("cutSpan('нет связи с ядром')")
+nolink = code[max(0, i_nolink - 1500):i_nolink] if i_nolink > 0 else ""
+check("плашка «нет связи с ядром» идёт с существующим вариантом Badge",
+      "variant: 'destructive'" in nolink and "variant: 'bad'" not in nolink,
+      "у Badge SDK нет варианта 'bad' - плашка выходила прозрачной с обычным цветом текста")
+check("красный фон плашки «нет связи с ядром» — заливка и рамка инлайном",
+      "rgba(220, 38, 38, 0.32)" in nolink and "1px solid rgba(248, 113, 113, 0.55)" in nolink,
+      "владелец: «Фон у плашки можно сделать красным? Я вижу только жёлтыми буквами»; "
+      "класс bg-destructive/10 (10% красного) на тёмной теме не читался")
+check("буквы плашки «нет связи с ядром» — оранжевые (классы варианта warn)",
+      "className: 'text-amber-600 dark:text-amber-300'" in nolink,
+      "владелец: «оранжевыми буквами»; классы уже в бандле, cn = twMerge - оранжевый вытесняет text-destructive")
+
+# Сторож против всего класса ошибки: любой вариант Badge в панели обязан существовать
+# в SDK. Ловит «молчаливое» отсутствие цвета у новой плашки.
+BADGE_SDK = Path("D:/NEURO/Hermes/data/hermes/hermes-agent/apps/desktop/src/components/ui/badge.tsx")
+if not BADGE_SDK.exists():
+    _root = os.environ.get("HERMES_APP_ROOT", "")
+    BADGE_SDK = Path(_root) / "apps/desktop/src/components/ui/badge.tsx" if _root else BADGE_SDK
+
+used_variants = set()
+for m in re.finditer(r"jsx\(Badge,\s*\{", code):
+    v = re.search(r"variant:\s*'([a-z]+)'", code[m.end():m.end() + 400])
+    if v:
+        used_variants.add(v.group(1))
+
+if BADGE_SDK.exists():
+    sdk_src = BADGE_SDK.read_text(encoding="utf-8")
+    sdk_block = sdk_src[sdk_src.find("variant: {"):sdk_src.find("size: {")]
+    known = set(re.findall(r"^\s{8}([a-zA-Z]+):\s*'", sdk_block, re.M))
+    unknown = sorted(used_variants - known)
+    check("все варианты Badge в панели существуют в SDK",
+          not unknown,
+          f"нет в SDK: {', '.join(unknown)}; известные: {', '.join(sorted(known))}")
+else:
+    check("все варианты Badge в панели существуют в SDK", True,
+          note="пропущено: SDK приложения не найден рядом (проверять на живой сборке)")
+
 print(f"\nпроверок: {len(checks)}, провалов: {sum(1 for _, ok in checks if not ok)}")
 if any(not ok for _, ok in checks):
     print("провалено: " + "; ".join(name for name, ok in checks if not ok))
