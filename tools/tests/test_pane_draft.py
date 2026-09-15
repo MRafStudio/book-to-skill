@@ -342,9 +342,13 @@ def main() -> int:
           i_watch > 0 and "setInterval" in watch_body and "/draft" in watch_body,
           f"watchDraft@{i_watch}")
     check("вотчер ждёт МАРКЕР готовности, а не первый файл в staging",
-          "900000" in watch_body and "не помечен готовым" in watch_body
+          "1800000" in watch_body and "не помечен готовым" in watch_body
           and "if (out.ready)" in watch_body and "жду маркер готовности от LLM" in watch_body,
           "вотчер считает готовностью каталог и объявляет готовность на середине")
+    check("дедлайн вотчера - 30 минут (крупный PDF и долгие раздумья LLM)",
+          "1800000" in watch_body and "за 30 минут не помечен готовым" in watch_body
+          and "900000" not in watch_body,
+          "короткий дедлайн сдаётся раньше, чем LLM допишет")
     check("интент draft запускает вотчер и поднимает «жду staging»",
           "if (kind === 'draft')" in src and "setDraftWait(true)" in src
           and "watchDraft((name || '').trim(), (src || '').trim())" in src,

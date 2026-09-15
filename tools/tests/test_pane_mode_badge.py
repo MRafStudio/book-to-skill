@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Плашка режима в шапке панели: «в работе LLM» вместо зелёного «прямой режим».
+
+Зачем: шаги 2-4 уходят в ЧАТ - прозу пишет LLM, и это минуты. Панель в это время
+показывала зелёное «прямой режим · локальный Python» (success), то есть читалась
+как «ядро на связи, всё хорошо», хотя работа идёт и кнопки шага заперты. Владелец:
+«при запуске в 4 группе работы LLM состояние висит как "прямой режим - локальный
+Python" салатового цвета, а по идее должно было переключиться на жёлтый "в работе
+LLM"».
+
+Что проверяем
+-------------
+1. Панель подписана на ЗАНЯТОСТЬ сессии (`host.state.busyBySession`) - тот же
+   сигнал, что пульс в статусбаре: он честно гаснет, когда агент закончил ход;
+2. признак ``llmTurn`` собирается из двух источников: незавершённый черновик
+   (writing) и занятая сессия, куда ушло задание;
+3. ветка «в работе LLM» стоит в шапке ПЕРВОЙ - выше «работаю» и «прямой режим»:
+   иначе жёлтое не покажется никогда;
+4. подпись задачи едет из одной карты ``LLM_LABEL`` (черновик, критика, описание),
+   а тултип называет цену шага («платный»), как требует владелец;
+5. успешная отправка задания взводит ``setLlmSid``/``setLlmLabel`` - без этого
+   плашка мёртвая;
+6. зелёное «прямой режим · локальный Python» осталось на месте: когда LLM не
+   работает, шапка по-прежнему говорит правду про локальное ядро.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
+PLUGIN = REPO / "hermes" / "desktop-plugins" / "b2s" / "plugin.js"
+
+checks: list[tuple[str, bool]] = []
+
+
+def check(name: str, ok: bool, detail: str = "", note: str = "") -> None:
+    checks.append((name, ok))
+    if ok:
+        print(f"  OK   {name}" + (f" - {note}" if note else ""))
+    else:
+        print(f"  FAIL {name}" + (f" - {detail}" if detail else ""))
+
+
+src = PLUGIN.read_text(encoding="utf-8")
+check("plugin.js читается", len(src) > 10000, str(PLUGIN))
+
+check("панель слушает занятость сессии (busyBySession), а не только факт отправки",
+      "useValue(host.state.busyBySession)" in src,
+      "без подписки на занятость плашка гаснет сразу после prompt.submit")
+
+check("llmTurn = незавершённый черновик ИЛИ занятая сессия",
+      "const llmTurn = !!(draftWriting || (llmSid && busyMap && busyMap[llmSid]))" in src,
+      "признак работы LLM собран не из тех источников")
+
+i_note = src.find("Работа LLM - ПЕРВОЙ веткой")
+i_llm = src.find("llmTurn", i_note) if i_note > 0 else -1
+i_is = src.find(": isWorking", i_llm) if i_llm > 0 else -1
+check("ветка «в работе LLM» стоит первой в шапке (перед «работаю» и «прямой режим»)",
+      i_note > 0 and 0 < i_llm < i_is,
+      f"note@{i_note} llm@{i_llm} isWorking@{i_is}")
+
+if i_llm > 0 and i_is > i_llm:
+    head = src[i_llm:i_is]
+    check("в первой ветке стоит жёлтая плашка «в работе LLM»",
+          "variant: 'warn'" in head and "в работе LLM" in head,
+          "подпись не найдена или плашка не жёлтая")
+    check("подпись задачи приезжает из llmLabel",
+          "llmLabel ? ' · ' + llmLabel : ''" in head, "нет подписи задачи в плашке")
+    check("тултип называет цену шага (владелец: цена кнопки - в подсказке)",
+          "платный шаг" in head and "счёт растёт" in head,
+          "тултип не говорит, что шаг платный")
+else:
+    check("в первой ветке стоит жёлтая плашка «в работе LLM»", False, "ветка не выделена")
+    check("подпись задачи приезжает из llmLabel", False, "ветка не выделена")
+    check("тултип называет цену шага (владелец: цена кнопки - в подсказке)", False,
+          "ветка не выделена")
+
+check("карта подписей задач одна на все чат-шаги (draft/redraft/review)",
+      "const LLM_LABEL = {" in src and "redraft: 'перегенерация черновика'" in src
+      and "review: 'критика черновика'" in src,
+      "подписи задач разъедутся с кнопками")
+
+i_send = src.find("const sendIntent")
+i_send_end = src.find("const note =", i_send) if i_send > 0 else -1
+send_body = src[i_send:i_send_end] if 0 < i_send < i_send_end else ""
+check("отправка задания в чат взводит llmSid и llmLabel",
+      "setLlmSid(sid)" in send_body and "setLlmLabel(LLM_LABEL[kind] || '')" in send_body,
+      "плашка не узнает, что задание ушло")
+
+check("«прямой режим · локальный Python» остался: когда LLM не работает - это правда",
+      "cutSpan('прямой режим · локальный Python')" in src,
+      "зелёная плашка прямого режима потерялась")
+
+print(f"\nпроверок: {len(checks)}, провалов: {sum(1 for _, ok in checks if not ok)}")
+if any(not ok for _, ok in checks):
+    print("провалено: " + "; ".join(name for name, ok in checks if not ok))
+    sys.exit(1)

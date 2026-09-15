@@ -618,6 +618,11 @@ function B2SPane({ ctx }) {
      человек его не проходил. Владелец: «"Предпросмотр" должна активироваться только
      после нажатия "ДАЛЕЕ" в группе 4 - когда это позволит сама LLM». */
   const [readySeen, setReadySeen] = useState(false)
+  /* Что именно LLM делает прямо сейчас: сессия, куда ушло задание, и подпись задачи.
+     Плашка под заголовком читает занятость этой сессии - так «в работе LLM» гаснет
+     ровно тогда, когда агент закончил ход, а не сразу после отправки. */
+  const [llmSid, setLlmSid] = useState('')
+  const [llmLabel, setLlmLabel] = useState('')
 
   /* Страховка к dropPreview: если входы поменяли руками (набрали другое имя, выбрали
      другую категорию, вставили другой источник, переключили режим/язык), собранный
@@ -674,6 +679,10 @@ function B2SPane({ ctx }) {
   }, [curB])
 
   const focusedId = useValue(host.state.focusedSessionId)
+  /* Занятость сессии по её runtime-id: тот же сигнал, что пульс в статусбаре.
+     Нужен, чтобы плашка под заголовком говорила правду: пока LLM пишет прозу,
+     панель НЕ в прямом режиме, и зелёное «ядро на связи» читалось как «готово». */
+  const busyMap = useValue(host.state.busyBySession)
 
   /* Занятое имя скилла — это не ошибка ввода, а состояние: скилл с таким именем
      уже стоит, и источник доливается в него. Отсюда и режим установки. */
@@ -1087,6 +1096,10 @@ function B2SPane({ ctx }) {
     setBusy(kind)
     try {
       await host.request('prompt.submit', { session_id: sid, text: intentText })
+      /* Плашка «в работе LLM» загорается по ЗАНЯТОСТИ этой сессии, а не по факту
+         отправки: задание уходит мгновенно, а агент думает минутами. */
+      setLlmSid(sid)
+      setLlmLabel(LLM_LABEL[kind] || '')
       setTone('sent')
       setStatus('→ ушло в чат агенту: ' + intentText)
       /* Описание категории пишет агент, а не панель: без слежения за целью красная
@@ -1246,7 +1259,11 @@ function B2SPane({ ctx }) {
       могли поправить, пока агент писал главы, а черновик принадлежит источнику. */
   const watchDraft = (targetName, targetSrc) => {
     if (!targetName && !targetSrc) return
-    const deadline = Date.now() + 900000     // проза глав идёт минутами — пятнадцати хватит
+    /* Проза главы идёт минутами, а на крупном PDF агент ещё и долго думает над
+       планом: пятнадцати минут не хватало и панель сдавалась раньше LLM.
+       Тридцати хватает с запасом; при этом маркер готовности - единственный
+       признак завершения, поэтому дедлайн только снимает ожидание. */
+    const deadline = Date.now() + 1800000
     let inFlight = false
     const id = setInterval(async () => {
       if (inFlight) return
@@ -1291,7 +1308,7 @@ function B2SPane({ ctx }) {
           if (!done && late) {
             setDraftWait(false)
             setTone('error')
-            setStatus('черновик за 15 минут не помечен готовым (LLM ещё пишет или упал) - смотри ответ агента в чате')
+            setStatus('черновик за 30 минут не помечен готовым (LLM ещё пишет или упал) - смотри ответ агента в чате')
           }
         }
       }
@@ -1666,6 +1683,17 @@ function B2SPane({ ctx }) {
     catDesc: 'Задание агенту в чате: написать description категории - файл скилла не трогается',
     catDescFix: 'Задание агенту в чате: обернуть готовый текст категории в frontmatter, тело сохранится',
     prune: 'Убрать лишние рабочие каталоги: установленные старше срока и свежие сверх лимита. Сырьё уходит с ними, скиллы в профиле не трогаются'
+  }
+
+  /* Подпись задачи для плашки «в работе LLM»: что именно пишет агент в чате.
+     Одна карта на все чат-шаги, чтобы подпись не разъезжалась с кнопками. */
+  const LLM_LABEL = {
+    draft: 'черновик скилла',
+    redraft: 'перегенерация черновика',
+    review: 'критика черновика',
+    plan: 'план по главам',
+    desc: 'описание категории',
+    'desc-fix': 'правка описания'
   }
   /* Чипса категории — «суть категории», а не служебная подпись. Описание берём
      ровно то, что читает Hermes: `description` из DESCRIPTION.md уезжает в промпт
@@ -2412,6 +2440,11 @@ function B2SPane({ ctx }) {
      профиль, заперто - иначе в скилл уедет обрывок. */
   const draftReady = !!(draft && draft.ready)
   const draftWriting = !!(draft && draft.has_draft && !draft.ready)
+  /* Идёт ли работа LLM прямо сейчас: либо агент занят в сессии, куда ушло задание
+     (сигнал хоста - тот же пульс, что в статусбаре), либо черновик начат и маркера
+     готовности ещё нет. Плашка под заголовком показывает это жёлтым: зелёное
+     «прямой режим» в эти минуты - неправда. */
+  const llmTurn = !!(draftWriting || (llmSid && busyMap && busyMap[llmSid]))
 
   /* Шаг 1 → 2 (или сразу 3, если источник — готовый markdown). Разбор запускаем
      заодно: «ДАЛЕЕ» значит «идём дальше», а не «вернись и нажми ещё раз». */
@@ -2513,28 +2546,38 @@ function B2SPane({ ctx }) {
               jsx('span', Ell('BOOK → SKILL', 'text-xs font-medium text-(--ui-text-primary)'))
             ]
           }),
-          isWorking
-            ? jsx(Badge, { variant: 'warn', style: BTN_FIT, children: cutSpan('работаю') })
-            : core === null
-              ? jsx(Badge, {
-                  variant: 'muted', style: BTN_FIT,
-                  title: 'проверяю ответ локального ядра: GET /api/plugins/b2s/health',
-                  children: cutSpan('проба ядра…')
-                })
-              : core
-                /* Зелёный success, а не серый muted: «на связи» — это норма, и она должна
-                   читаться состоянием, а не фоном; подробности (staging, python, черновики) —
-                   в наведении. Badge SDK тоже `shrink-0 whitespace-nowrap` в базовом классе,
-                   поэтому сжимается инлайном BTN_FIT + подпись cutSpan (грабля 15). */
+          /* Работа LLM - ПЕРВОЙ веткой: в эти минуты панель не в прямом режиме, и
+             зелёная плашка «ядро на связи» читалась как «всё готово». Владелец:
+             «при работе LLM состояние висит как прямой режим, а должно быть жёлтое
+             "в работе LLM"». Тултип называет задачу и цену - счёт растёт в чате. */
+          llmTurn
+            ? jsx(Badge, {
+                variant: 'warn', style: BTN_FIT,
+                title: 'Агент пишет ' + (llmLabel || 'задачу') + ' в чате - платный шаг: счёт растёт с каждой итерацией. Панель ждёт результат и заперла кнопки этого шага',
+                children: cutSpan('в работе LLM' + (llmLabel ? ' · ' + llmLabel : ''))
+              })
+            : isWorking
+              ? jsx(Badge, { variant: 'warn', style: BTN_FIT, children: cutSpan('работаю') })
+              : core === null
                 ? jsx(Badge, {
-                    variant: 'success', style: BTN_FIT, title: coreTip,
-                    children: cutSpan('прямой режим · локальный Python')
+                    variant: 'muted', style: BTN_FIT,
+                    title: 'проверяю ответ локального ядра: GET /api/plugins/b2s/health',
+                    children: cutSpan('проба ядра…')
                   })
-                : jsx(Badge, {
-                    variant: 'warn', style: BTN_FIT,
-                    title: 'Маршруты /api/plugins/b2s/ ещё не смонтированы - панель уходит в чат. Перезапусти dashboard-службу: tools/restart_dashboard.py',
-                    children: cutSpan('ядро не ответило - перезапусти dashboard')
-                  })
+                : core
+                  /* Зелёный success, а не серый muted: «на связи» — это норма, и она должна
+                     читаться состоянием, а не фоном; подробности (staging, python, черновики) —
+                     в наведении. Badge SDK тоже `shrink-0 whitespace-nowrap` в базовом классе,
+                     поэтому сжимается инлайном BTN_FIT + подпись cutSpan (грабля 15). */
+                  ? jsx(Badge, {
+                      variant: 'success', style: BTN_FIT, title: coreTip,
+                      children: cutSpan('прямой режим · локальный Python')
+                    })
+                  : jsx(Badge, {
+                      variant: 'warn', style: BTN_FIT,
+                      title: 'Маршруты /api/plugins/b2s/ ещё не смонтированы - панель уходит в чат. Перезапусти dashboard-службу: tools/restart_dashboard.py',
+                      children: cutSpan('ядро не ответило - перезапусти dashboard')
+                    })
         ]
       }),
       /* Назначение инструмента — одной строкой с многоточием: при сужении панели
