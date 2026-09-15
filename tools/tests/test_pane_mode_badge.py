@@ -95,6 +95,12 @@ check("«прямой режим · локальный Python» остался: 
       "cutSpan('прямой режим · локальный Python')" in src,
       "зелёная плашка прямого режима потерялась")
 
+i_tip = src.find("const coreTip")
+tip_slice = src[i_tip:i_tip + 700] if i_tip > 0 else ""
+check("подсказка ядра без лекции про «шаги 1 и 3 идут мимо чата»",
+      bool(tip_slice) and "шаги 1 и 3 идут мимо чата" not in tip_slice,
+      "владелец: дополнение излишне - в подсказке нужны факты ядра, а не рассказ о шагах")
+
 check("точка «ядро на связи» красится ЗЕЛЁНЫМ, а не акцентом темы",
       "dotTone === 'good' ? { backgroundColor: STEP_GREEN }" in src,
       "SDK рисует tone 'good' как bg-primary (акцент темы): на светлой теме точка читается белой")
