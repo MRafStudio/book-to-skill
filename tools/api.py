@@ -57,6 +57,7 @@ for _stream in (sys.stdout, sys.stderr):
 import dashboard as dash  # noqa: E402
 from serve import (  # noqa: E402  — логику прогона переиспользуем, не копируем
     explain_failure,
+    failure_kind,
     load_state,
     run_fetch,
     save_state,
@@ -406,6 +407,9 @@ def do_rerun(src: str = "", strat: str = "", mode: str = "",
         "report_at": st.get("report_at") or "",
         "message": summary_line(report),
         "warning": None if ok else explain_failure(st["src"], st.get("strat") or "", report),
+        # Чей шаг краснеет при провале: 'source' - шаг 1 (источник не получен),
+        # 'strategy' - шаг 2 (источник есть, не подошёл разбор).
+        "failure_kind": None if ok else failure_kind(st["src"], st.get("strat") or "", report),
     }
     result["headings"] = report.get("headings")
     result["coverage"] = report.get("coverage")

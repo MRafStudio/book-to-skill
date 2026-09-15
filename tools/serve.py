@@ -111,6 +111,22 @@ def save_state(st: dict) -> None:
     STATE_FILE.write_text(json.dumps(st, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
+def failure_kind(src: str, strat: str, report: dict) -> str:
+    """Где сорвался прогон: 'source' - источник не получен, 'strategy' - не подошёл разбор.
+
+    Панель по этому признаку решает, ЧЕЙ шаг краснеет. Провал получения источника -
+    это шаг 1 («Источник»): владелец ввёл в поле произвольную строку и получал красную
+    границу у блока 2 («Анализ источника»), до которого дело даже не дошло. Красная
+    граница блока 2 - только про сам разбор, когда источник уже есть на руках.
+    """
+    low = (src or "").lower()
+    if strat == "raw-md" and not low.endswith((".md", ".markdown")):
+        return "strategy"
+    if low.endswith((".md", ".markdown")) and strat in ("trafilatura", "bs4", "stdlib"):
+        return "strategy"
+    return "source"
+
+
 def explain_failure(src: str, strat: str, report: dict) -> str:
     """Человеческая причина провала вместо «no plugin matched this URL»."""
     low = (src or "").lower()
@@ -164,6 +180,8 @@ def run_fetch(st: dict) -> dict:
             "src": src,
             "seconds": report["_seconds"],
             "message": explain_failure(src, strat, report),
+            # Чей это провал: получение источника (шаг 1) или выбор разбора (шаг 2).
+            "kind": failure_kind(src, strat, report),
         }
     save_state(st)
     return report

@@ -665,6 +665,11 @@ function B2SPane({ ctx }) {
      обновится позже повторного клика в том же тике, а ref держит запрет сразу. */
   const busyRef = useRef(false)
   const [rerunErr, setRerunErr] = useState('')
+  /* ЧЕЙ это провал, а не просто «что-то сорвалось»: 'source' - источник не получен
+     (блок 1), 'strategy' - не подошёл выбранный разбор (блок 2). Красная граница ставится
+     тому шагу, где не хватает обязательного: при 'source' краснеет блок 1, а блок 2
+     молчит, иначе он кричал о пустом поле на шаге, куда дело не дошло (владелец). */
+  const [rerunErrKind, setRerunErrKind] = useState('')
   /* Какой набор входов ядро УЖЕ разобрало (отпечаток, не только URL). */
   const [fetchedSig, setFetchedSig] = useState('')
   /* Ключ черновика = слаг ИСТОЧНИКА (не имя скилла): его отдаёт ядро в /state и
@@ -1331,7 +1336,7 @@ function B2SPane({ ctx }) {
      исходному состоянию, иначе панель показывала бы данные убранного черновика. */
   const resetAfterPurge = () => {
     setText(''); setTextInfo(null); setOutOpen(false)
-    setReport(null); setFetchedSig(''); setRerunErr('')
+    setReport(null); setFetchedSig(''); setRerunErr(''); setRerunErrKind('')
     setName(''); setStrat('auto'); setMode('technical'); setLang('ru'); setAct('auto')
     setCatDesc(''); setCatErr(''); setNameAuto(false)
     setDraft(null); setDraftText(null); setDraftFile(''); setDraftOpen(false)
@@ -1447,7 +1452,7 @@ function B2SPane({ ctx }) {
     busyRef.current = true
     setBusy('rerun')
     dropPreview()   // новый прогон источника — план записи по прежнему тексту недействителен
-    setRerunErr('')
+    setRerunErr(''); setRerunErrKind('')   // провал — из прошлого прогона, новый его не наследует
     setTone('working')
     setStatus('источник · загрузка и очистка…')
     try {
@@ -1494,6 +1499,8 @@ function B2SPane({ ctx }) {
       setTone('error')
       setStatus('источник не разобран: ' + why)
       setRerunErr(why)
+      // Ядро говорит, чей это провал: получение источника (блок 1) или разбор (блок 2).
+      setRerunErrKind(out.failure_kind || 'source')
       return { ok: false, why }
     } catch (err) {
       /* Раньше здесь был тихий уход в чат (`sendIntent('rerun')`): сбой ядра
@@ -1504,6 +1511,7 @@ function B2SPane({ ctx }) {
       const why = 'REST-ядро недоступно (' + note(err) + ')'
       setStatus(why + ' - источник ещё не прогнан')
       setRerunErr(why)
+      setRerunErrKind('core')
       return { ok: false, why }
     } finally {
       busyRef.current = false
@@ -2827,7 +2835,12 @@ function B2SPane({ ctx }) {
                 ? (isRemoteSrc(trimSrc) ? 'URL - анализ завершён' : 'файл - анализ завершён')
                 : (isRemoteSrc(trimSrc) ? 'URL - нужен разбор' : 'файл - нужен разбор')))),
         tone: trimSrc
-          ? (mdSrc || analyzed ? 'done' : (busy === 'rerun' ? 'working' : (rerunErr ? 'bad' : null)))
+          ? (mdSrc || analyzed
+            ? 'done'
+            /* Красная граница — только за дефицит СВОЕГО шага: источник не получен
+               (нет доступа, файла нет). Провал разбора — это блок 2, там и краснеет;
+               авария REST-ядра — не вина источника, у неё своя строка статуса. */
+            : (busy === 'rerun' ? 'working' : (rerunErrKind === 'source' ? 'bad' : null)))
           : 'bad',
         open: !!openB[1],
         onToggle: () => toggleB(1),
@@ -2840,7 +2853,11 @@ function B2SPane({ ctx }) {
               ? 'иду разбор источника: загрузка, очистка, метрики'
               : (analyzed
                 ? 'источник разобран - можно делать черновик'
-                : (rerunErr ? 'разбор не прошёл: ' + rerunErr : 'Следующий шаг проанализирует источник данных')))),
+                : (rerunErr
+                  ? (rerunErrKind === 'strategy'
+                    ? 'разбор не прошёл: ' + rerunErr
+                    : (rerunErrKind === 'source' ? 'не удалось получить источник: ' + rerunErr : rerunErr))
+                  : 'Следующий шаг проанализирует источник данных')))),
         foot: jsx(NextBtn, {
           label: 'ДАЛЕЕ →',
           onClick: next1,
@@ -2949,8 +2966,18 @@ function B2SPane({ ctx }) {
             ? 'разбираю прямо сейчас'
             : (analyzed
               ? 'готов - ' + (report && report.chars ? fmtInt(report.chars) + ' симв.' : 'отчёт есть')
-              : (staleReport ? 'Нажми на «Анализ источника» чтобы повторить обработку' : (rerunErr ? 'сорвался' : 'ещё не запускался')))),
-        tone: mdSrc ? 'skip' : (busy === 'rerun' ? null : (analyzed ? 'done' : (rerunErr ? 'bad' : null))),
+              : (staleReport
+                ? 'Нажми на «Анализ источника» чтобы повторить обработку'
+                : (rerunErr
+                  /* Источник не получен - это блок 1, блок 2 до работы не дошёл и
+                     «сорвался» о себе не заявляет (владелец: ввёл в поле «1»). */
+                  ? (rerunErrKind === 'source' ? 'ждёт источник' : 'сорвался')
+                  : 'ещё не запускался')))),
+        /* Красная граница — только когда источник уже на руках, а разбор не прошёл:
+           при 'source' краснеет блок 1, при аварии ядра — никто (есть строка статуса). */
+        tone: mdSrc
+          ? 'skip'
+          : (busy === 'rerun' ? null : (analyzed ? 'done' : (rerunErrKind === 'strategy' ? 'bad' : null))),
         open: !!openB[2],
         onToggle: () => toggleB(2),
         style: { backgroundColor: openB[2] ? BLOCK_BG : 'transparent' },
@@ -2958,14 +2985,22 @@ function B2SPane({ ctx }) {
           ? 'markdown - уже текст: чистить нечего, метрики посмотреть можно'
           : (busy === 'rerun'
             ? 'ядро читает источник прямо сейчас - мимо чата'
-            : ((analyzed || staleReport) ? 'Следующим шагом укажи категорию и имя скилла' : 'скачать и вычистить текст: мимо чата, прямо в ядро')),
+            : (rerunErr
+              ? (rerunErrKind === 'source'
+                ? 'источник не получен - причина и повтор в блоке 1'
+                : (rerunErrKind === 'strategy'
+                  ? 'разбор не прошёл - прогони заново или смени стратегию'
+                  : 'ядро не ответило - прогони заново'))
+              : ((analyzed || staleReport) ? 'Следующим шагом укажи категорию и имя скилла' : 'скачать и вычистить текст: мимо чата, прямо в ядро'))),
         foot: jsx(NextBtn, {
           label: 'ДАЛЕЕ →',
           onClick: next2,
           disabled: !!busy || !analyzed,
           fill: STEP_BG,
           title: analyzed ? 'открыть черновик'
-            : (staleReport ? 'входы изменились - прогони разбор заново' : 'сначала прогони анализ источника')
+            : (staleReport
+              ? 'входы изменились - прогони разбор заново'
+              : (rerunErrKind === 'source' ? 'сначала получи источник в блоке 1' : 'сначала прогони анализ источника'))
         }),
         children: [
           mdSrc
@@ -3014,7 +3049,11 @@ function B2SPane({ ctx }) {
             ]
           }),
           rerunErr
-            ? jsx('div', Ell('прогон источника сорвался: ' + rerunErr + ' - в чат это не ушло, разбор делает ядро',
+            ? jsx('div', Ell(rerunErrKind === 'source'
+                /* Не «прогон сорвался»: разбор вообще не начинался - источник не пришёл.
+                   Владелец: «Я бы сказал в случае группы 1 - "не удалось получить источник"». */
+                ? 'источник не получен: ' + rerunErr + ' - повтор в блоке 1'
+                : 'прогон источника сорвался: ' + rerunErr + ' - в чат это не ушло, разбор делает ядро',
                 'text-[0.625rem] leading-snug text-(--ui-text-primary)'))
             : null,
           resultBlock

@@ -243,9 +243,9 @@ def main() -> int:
     check("во время разбора заголовок блока 1 говорит, что идёт работа",
           "URL - разбираю…" in src and "иду разбор источника" in src,
           "нет промежуточного состояния")
-    check("завершённый анализ красит блок 1 зелёным, авария - красным",
-          "mdSrc || analyzed ? 'done'" in src and "busy === 'rerun' ? 'working'" in src
-          and "rerunErr ? 'bad'" in src, "цвет блока 1 не связан с состоянием разбора")
+    check("завершённый анализ красит блок 1 зелёным, а непройденный источник - красным",
+          "mdSrc || analyzed" in src and "? 'done'" in src and "busy === 'rerun' ? 'working'" in src
+          and "rerunErrKind === 'source' ? 'bad'" in src, "цвет блока 1 не связан с состоянием разбора")
 
     paste_from = src.index("const pasteSrc")
     paste = src[paste_from:src.index("const loadText")]

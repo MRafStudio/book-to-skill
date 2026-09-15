@@ -76,7 +76,7 @@ const stub = (name) => (v) => { calls.push([name, v]) }
 const forbidden = { src: 0, cat: 0 }
 const factory = new Function(
   'ctx', 'setBusy', 'setTone', 'setStatus', 'note',
-  'setText', 'setTextInfo', 'setOutOpen', 'setReport', 'setFetchedSig', 'setRerunErr',
+  'setText', 'setTextInfo', 'setOutOpen', 'setReport', 'setFetchedSig', 'setRerunErr', 'setRerunErrKind',
   'setName', 'setStrat', 'setMode', 'setLang', 'setAct', 'setCatDesc', 'setCatErr',
   'setNameAuto', 'setDraft', 'setDraftText', 'setDraftFile', 'setDraftOpen',
   'setDrafts', 'setInstalled', 'setChapterPlan', 'setChapterOpen', 'setPreview',
@@ -88,7 +88,7 @@ const factory = new Function(
 function build(restImpl) {
   const map = {}
   for (const n of ['setBusy','setTone','setStatus','setText','setTextInfo','setOutOpen','setReport',
-    'setFetchedSig','setRerunErr','setName','setStrat','setMode','setLang','setAct','setCatDesc',
+    'setFetchedSig','setRerunErr','setRerunErrKind','setName','setStrat','setMode','setLang','setAct','setCatDesc',
     'setCatErr','setNameAuto','setDraft','setDraftText','setDraftFile','setDraftOpen','setDrafts',
     'setInstalled','setChapterPlan','setChapterOpen','setPreview','setReadySeen','setDraftWait',
     'setLlmSid','setLlmLabel','onlyB']) {
@@ -99,7 +99,7 @@ function build(restImpl) {
   return factory(
     { rest: restImpl },
     map.setBusy, map.setTone, map.setStatus, String,
-    map.setText, map.setTextInfo, map.setOutOpen, map.setReport, map.setFetchedSig, map.setRerunErr,
+    map.setText, map.setTextInfo, map.setOutOpen, map.setReport, map.setFetchedSig, map.setRerunErr, map.setRerunErrKind,
     map.setName, map.setStrat, map.setMode, map.setLang, map.setAct, map.setCatDesc, map.setCatErr,
     map.setNameAuto, map.setDraft, map.setDraftText, map.setDraftFile, map.setDraftOpen,
     map.setDrafts, map.setInstalled, map.setChapterPlan, map.setChapterOpen, map.setPreview,
