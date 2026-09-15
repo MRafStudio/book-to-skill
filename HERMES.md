@@ -293,3 +293,13 @@
   вывод прогонять через `sed "s/${GITHUB_TOKEN}/<TOKEN>/g"`. Льём ТОЛЬКО ветку
   `agent/url-dashboard` (`origin` - наш форк), в upstream не лезем; после пуша сверять
   `git ls-remote origin refs/heads/agent/url-dashboard` с локальным `HEAD`.
+- **Сеттер состояния без объявления - невидимая поломка**: вызов `setStatus(...)` без пары
+  `const [status, setStatus] = useState('')` не ловится ни `node --check` (неопределённое имя не
+  синтаксис), ни тестами по тексту: панель рисуется, а первый же `say()` бросает
+  `ReferenceError: setStatus is not defined`, уходит в `catch` с `setCore(false)` - и владелец
+  видит «нет связи с ядром» при ЖИВОМ ядре. Как отличить живое ядро: `GET
+  /api/plugins/b2s/health` отдаёт **HTTP 401** (маршрут смонтирован, нужен токен окна), а не 404;
+  порт ядра - строка `HERMES_BACKEND_READY port=...` в `D:\NEURO\Hermes\data\hermes\logs\desktop.log`
+  (порт динамический, каждый запуск свой), ошибки рендерера - там же, `[renderer console:main]`.
+  Сторож - `tools/tests/test_pane_declared_state.py`: сеттеры без объявления, тело `say`,
+  чтение состояния в рендере; проверен негативно (3 провала на сломанном файле, 0 на целом).
