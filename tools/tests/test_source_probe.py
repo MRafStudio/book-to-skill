@@ -29,7 +29,14 @@
 8. недоступный хост - провал, причина не пустая;
 9. ``api.do_probe`` - та же логика, что у ядра (одна правда, не две);
 10. пробу видно снаружи: маршрут ``/probe`` у плагина, ``/api/probe`` у сервера,
-    ``probe`` в CLI и вызов из панели.
+    ``probe`` в CLI и вызов из панели;
+11. схемы: ftp и ftps - тоже URL (владелец: «на крайняк с ftp:// или ftps://»),
+    причём ftps идёт своим путём, потому что urllib этой схемы не знает;
+12. ``@url:`…``` - обёртка журнала/панели - разворачивается, а не считается мусором;
+13. вход, который НЕ источник («3»), панель отвергает СРАЗУ, не дожидаясь ядра:
+    иначе «проверяю источник…» висело бы до ответа, которого может не быть вовсе;
+14. молчащее ядро панель называет вслух (kind ``core``), а не оставляет человека
+    гадать над бесконечным «проверяю…».
 
 Сеть в тесте - только своя: локальный HTTP-сервер на 127.0.0.1, никаких внешних
 сайтов, поэтому проверка детерминирована и работает без интернета.
@@ -39,6 +46,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -152,8 +160,44 @@ def main() -> int:
 
     pane = (REPO / "hermes" / "desktop-plugins" / "b2s" / "plugin.js").read_text(encoding="utf-8")
     check("панель спрашивает пробу при вводе источника",
-          "ctx.rest('/probe'" in pane and "setSrcProbe(out)" in pane,
+          "ctx.rest('/probe'" in pane and "setSrcProbe(out" in pane,
           "нет вызова пробы - граница блока 1 останется без критерия")
+
+    print("\nсхемы и обёртки:")
+    check("ftp и ftps считаются URL, а не путями",
+          "ftp://" in serve.SRC_URL_SCHEMES and "ftps://" in serve.SRC_URL_SCHEMES,
+          "«ftps://host/f» уходил бы на проверку файла на диске")
+    check("у ftps свой путь проверки (urllib схемы ftps не знает)",
+          "_probe_ftps(" in serve_src and "ftplib" in serve_src
+          and 'startswith("ftps://")' in serve_src,
+          "честный ftps-источник показывался бы как битая ссылка")
+    check("@url:`…` - обёртка разворачивается, а не считается мусором",
+          serve.source_status("@url:`" + str(real_md) + "`")["ok"] is True,
+          "источник, скопированный из журнала, читался бы как невалидный ввод")
+    t0 = time.time()
+    ftps_out = serve.source_status("ftps://127.0.0.1:9/nope.zip", timeout=3)
+    dt = time.time() - t0
+    check("недоступный ftps - провал с причиной и без зависания",
+          ftps_out["ok"] is False and "FTPS недоступен" in ftps_out["detail"] and dt < 6,
+          f"{dt:.2f}s, {ftps_out}")
+    base_src = (REPO / "book_to_skill" / "plugins" / "base.py").read_text(encoding="utf-8")
+    check("контракт base знает ftps (иначе ftps уходил в пути)",
+          '"ftps://"' in base_src.split("URL_PREFIXES")[1][:200],
+          "looks_like_path('ftps://host/f') вернул бы True: в строке есть слэш")
+
+    print("\nневалидный ввод виден панели без ядра:")
+    check("панель знает форму ввода: схемы URL и вид пути",
+          "SRC_URL_RE" in pane and "SRC_PATH_RE" in pane and "srcShape" in pane,
+          "без разбора формы панель обязана спрашивать ядро о заведомом мусоре")
+    check("«3» отвергается ДО обращения к ядру (мгновенно, без ожидания)",
+          pane.index("srcShape(asked) === 'none'") < pane.index("ctx.rest('/probe'"),
+          "«проверяю источник…» висело бы, пока ядро соберётся ответить")
+    check("в заголовке блока 1 для такого ввода - «не источник: …», не «проверяю…»",
+          "'не источник: ' + unwrapSrc(trimSrc)" in pane,
+          "человек видел бы «проверяю источник…» и ждал бы проверки мусора до утра")
+    check("молчащее ядро названо вслух (kind: 'core'), а не бесконечное «проверяю…»",
+          "kind: 'core'" in pane and "не ответило на пробу источника" in pane,
+          "нет маршрута /probe - и панель молчала бы вместе с ядром")
 
     bad = [n for n, ok in checks if not ok]
     print(f"\nпроверок: {len(checks)}, провалов: {len(bad)}")

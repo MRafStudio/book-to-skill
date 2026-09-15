@@ -74,7 +74,10 @@ def decode(body: bytes, headers: dict) -> str:
         return body.decode("utf-8", errors="replace")
 
 
-URL_PREFIXES = ("http://", "https://", "ftp://", "file://")
+# Схемы URL. Владелец: «валидные url начинаются с http:// или https:// на крайняк с
+# ftp:// или ftps://» - поэтому ftps тут же, иначе «ftps://host/f» падал в пути по
+# признаку «есть слэш» и уходил на проверку файла на диске.
+URL_PREFIXES = ("http://", "https://", "ftp://", "ftps://", "file://")
 
 
 def looks_like_path(src: str) -> bool:

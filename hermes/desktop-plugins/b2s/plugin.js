@@ -311,6 +311,31 @@ const looksLikePath = (s) => typeof s === 'string' && /[\\/]/.test(s.trim()) && 
 const MD_EXT = /\.(md|markdown)$/i
 const stripQuery = (s) => String(s || '').trim().split(/[?#]/)[0]
 const isRemoteSrc = (s) => /^[a-z][a-z0-9+.-]*:\/\//i.test(String(s || '').trim())
+
+/* Форма источника видна из САМОЙ строки, и это главное про шаг 1: «3» не станет
+   URL или путём ни через секунду, ни через час. Спрашивать про такую строку ядро -
+   значит держать человека перед «проверяю источник…» неизвестно сколько, если ядро
+   молчит. Владелец: «что там его проверять? Он явно невалидный! Что, ждать какой то
+   там таймаут которого никогда не произойдёт?… будет сидеть до утра и ждать».
+   Схемы: http/https/ftp/ftps/file (владелец: «валидные url начинаются с http:// или
+   https:// на крайняк с ftp:// или ftps://»); пути: D:\…, /home/…, \\share, ~/, ./ */
+const SRC_URL_RE = /^(https?|ftps?|file):\/\//i
+const SRC_PATH_RE = /^(\\\\|[a-zA-Z]:[\\/]|\/|~[\\/]|\.{1,2}[\\/])/
+const unwrapSrc = (s) => {
+  let t = String(s || '').trim()
+  if (/^@url:/i.test(t)) {
+    t = t.slice(5).trim()
+    if (t.length > 1 && '`"\''.indexOf(t[0]) >= 0 && t[t.length - 1] === t[0]) t = t.slice(1, -1).trim()
+  }
+  return t
+}
+const srcShape = (s) => {
+  const t = unwrapSrc(s)
+  if (!t) return 'empty'
+  if (SRC_URL_RE.test(t)) return 'url'
+  if (SRC_PATH_RE.test(t)) return 'path'
+  return 'none'
+}
 const srcIsMarkdown = (s) => {
   const v = String(s || '').trim()
   if (!v) return false
@@ -1058,12 +1083,30 @@ function B2SPane({ ctx }) {
   }, [src])
 
   /* Проба источника — критерий шага 1: «успех, если указанный в поле файл или url
-     существует/доступен» (владелец). Спрашиваем ядро при вводе (debounce 600 мс) и ДО
+     существует/доступен» (владелец). Спрашиваем ядро при вводе (debounce 400 мс) и ДО
      разбора: путь оно проверяет на диске, URL — запросом. Нейтральная граница, пока
-     ответа нет, честнее зелёной: панель ещё ничего не знает об этом вводе. */
+     ответа нет, честнее зелёной: панель ещё ничего не знает об этом вводе.
+
+     Но есть ввод, про который мы знаем БЕЗ ядра: «3» не станет URL или путём никогда.
+     Такой ответ даём мгновенно (kind: 'none'), не уходя в ядро: иначе «проверяю
+     источник…» ждало бы ответа, которого может не быть вовсе. Владелец: «что там его
+     проверять? Он явно невалидный! Что, ждать какой то там таймаут которого никогда не
+     произойдёт?… будет сидеть до утра и ждать, а потом психанёт и разломает компьютер».
+
+     И про молчащее ядро: путь /probe поднимается на старте плагина, а если маршрута нет
+     или процесс лежит — говорим об этом прямо (kind: 'core'), а не оставляем человека
+     гадать над бесконечным «проверяю…». */
   useEffect(() => {
     const asked = (src || '').trim()
     if (!asked) { setSrcProbe(null); return undefined }
+    if (srcShape(asked) === 'none') {
+      setSrcProbe({
+        ok: false, kind: 'none', instant: true,
+        detail: 'не похоже ни на URL, ни на путь к файлу: ' + unwrapSrc(asked),
+        rules: 'URL начинается с http://, https://, ftp:// или ftps:// · путь - с D:\\ или /'
+      })
+      return undefined
+    }
     let alive = true
     setSrcProbe(null)
     const t = setTimeout(async () => {
@@ -1071,9 +1114,17 @@ function B2SPane({ ctx }) {
         const out = await ctx.rest('/probe', {
           method: 'POST', body: { src: asked }, timeoutMs: 15000
         })
-        if (alive && out) setSrcProbe(out)
-      } catch (err) { /* ядро промолчало: граница нейтральна, аварию назовёт строка статуса */ }
-    }, 600)
+        if (!alive) return
+        setSrcProbe(out || { ok: false, kind: 'core', detail: 'ядро не ответило на пробу источника' })
+      } catch (err) {
+        if (!alive) return
+        setSrcProbe({
+          ok: false, kind: 'core',
+          detail: 'ядро не ответило на пробу источника: ' + ((err && err.message) || err) +
+            ' · маршрут /probe поднимается на старте - перезапусти Desktop'
+        })
+      }
+    }, 400)
     return () => { alive = false; clearTimeout(t) }
   }, [src])
 
@@ -2867,7 +2918,11 @@ function B2SPane({ ctx }) {
             : (!srcProbe
               ? 'проверяю источник…'
               : (!srcProbe.ok
-                ? srcProbe.detail
+                /* «3» в поле - это не «источник не получен», это вообще не источник:
+                   коротко называем строку и не держим человека перед «проверяю…». */
+                ? (srcProbe.kind === 'none'
+                  ? 'не источник: ' + unwrapSrc(trimSrc)
+                  : srcProbe.detail)
                 : (mdSrc
                   ? 'markdown: блок 2 пропустим'
                   : (analyzed
@@ -2896,8 +2951,12 @@ function B2SPane({ ctx }) {
               ? 'проверяю источник: есть ли файл на диске и отвечает ли URL'
               : (!srcProbe.ok
                 /* Причина отказа - словами ядра: «файла нет по пути…», «URL ответил
-                   HTTP 404…», «не похоже ни на URL, ни на путь к файлу: 1». */
-                ? 'источник не получен - ' + srcProbe.detail
+                   HTTP 404…», «не похоже ни на URL, ни на путь к файлу: 1». А для
+                   строки, которая ни на что не похожа, добавляем правила формы: человек
+                   должен видеть, ЧТО от него ждут, а не ждать «проверку». */
+                ? (srcProbe.kind === 'none'
+                  ? 'проверять нечего: ' + srcProbe.detail + ' · ' + (srcProbe.rules || '')
+                  : 'источник не получен - ' + srcProbe.detail)
                 : (mdSrc
                   ? 'файл уже markdown - анализ пропустим'
                   : (analyzed

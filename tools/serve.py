@@ -121,6 +121,21 @@ def save_state(st: dict) -> None:
     STATE_FILE.write_text(json.dumps(st, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
+# Схемы, которые считаем URL. Владелец: «валидные url начинаются с http:// или
+# https:// на крайняк с ftp:// или ftps://» - поэтому и ftp здесь, а не отговорка.
+SRC_URL_SCHEMES = ("http://", "https://", "ftp://", "ftps://", "file://")
+
+
+def _unwrap_src(raw: str) -> str:
+    """Развернуть обёртку ``@url:`https://…` `` (так источник записан в панели/журнале)."""
+    text = (raw or "").strip()
+    if text.lower().startswith("@url:"):
+        text = text[5:].strip()
+        if len(text) > 1 and text[0] == text[-1] and text[0] in "`\"'":
+            text = text[1:-1].strip()
+    return text
+
+
 def failure_kind(src: str, strat: str, report: dict) -> str:
     """Где сорвался прогон: 'source' - источник не получен, 'strategy' - не подошёл разбор.
 
@@ -132,7 +147,7 @@ def failure_kind(src: str, strat: str, report: dict) -> str:
     low = (src or "").lower()
     # Строка вообще не похожа на источник (владелец ввёл «1»): виноват шаг подачи,
     # чем бы ни была настроена очистка - до разбора дело не дошло.
-    if not (low.startswith(("http://", "https://")) or Path((src or "").strip()).exists()):
+    if not (low.startswith(SRC_URL_SCHEMES) or Path(_unwrap_src(src)).exists()):
         return "source"
     if strat == "raw-md" and not low.endswith((".md", ".markdown")):
         return "strategy"
@@ -155,12 +170,16 @@ def source_status(src: str, timeout: int = 8) -> dict:
 
     ``kind``: url | file | dir | path | none | empty.
     """
-    raw = (src or "").strip()
+    raw = _unwrap_src(src)
     if not raw:
         return {"ok": False, "kind": "empty",
                 "detail": "поле пустое - впиши URL или путь к файлу"}
-    low = raw.lower()
-    if low.startswith(("http://", "https://")):
+    if raw.lower().startswith("ftps://"):
+        # У urllib нет схемы ftps вовсе («unknown url type: ftps»), а владелец назвал
+        # ftps валидным: проверяем его родным ftplib, иначе честный источник выглядел бы
+        # как битая ссылка.
+        return _probe_ftps(raw, timeout)
+    if raw.lower().startswith(SRC_URL_SCHEMES):
         return _probe_url(raw, timeout)
     path = Path(raw).expanduser()
     try:
@@ -178,6 +197,37 @@ def source_status(src: str, timeout: int = 8) -> dict:
             "detail": "не похоже ни на URL, ни на путь к файлу: " + raw}
 
 
+def _probe_ftps(url: str, timeout: int = 8) -> dict:
+    """Отвечает ли FTPS-сервер. Отдельным путём: urllib схемы ``ftps`` не знает.
+
+    Нам нужен факт ответа, а не файлы: соединяемся, поднимаем TLS (AUTH), логинимся
+    анонимно и уходим. Ошибка на любом шаге - это и есть «источник недоступен».
+    """
+    from ftplib import FTP_TLS, all_errors
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    port = parts.port or 21
+    if not host:
+        return {"ok": False, "kind": "url", "detail": "в источнике нет имени хоста: " + url}
+    ftp = FTP_TLS(timeout=timeout)
+    try:
+        ftp.connect(host, port)
+        ftp.auth()                       # без TLS это был бы обычный ftp, а не ftps
+        ftp.login("anonymous", "anonymous@")
+        ftp.voidcmd("NOOP")
+    except all_errors as exc:            # noqa: BLE001 - сеть/SSL/TLS отвечают разным
+        return {"ok": False, "kind": "url",
+                "detail": "FTPS недоступен: " + (str(exc) or f"нет ответа от {host}:{port}")}
+    finally:
+        try:
+            ftp.close()
+        except Exception:  # noqa: BLE001 - закрываем что осталось, ошибки не важны
+            pass
+    return {"ok": True, "kind": "url", "detail": f"FTPS доступен · {host}:{port}"}
+
+
 def _probe_url(url: str, timeout: int = 8) -> dict:
     """Отвечает ли URL. HEAD, а если сайт его не отдаёт - GET без чтения тела.
 
@@ -186,10 +236,13 @@ def _probe_url(url: str, timeout: int = 8) -> dict:
     повторяем GET и закрываем соединение, не читая тело: нам нужны ЗАГОЛОВКИ,
     то есть сам факт ответа, а не содержимое.
     """
-    def _ask(method: str, extra: dict | None = None):
+    web = url.lower().startswith(("http://", "https://"))
+
+    def _ask(method: str | None, extra: dict | None = None):
         headers = {"User-Agent": USER_AGENT, "Accept": "*/*"}
         headers.update(extra or {})
-        req = urllib.request.Request(url, headers=headers, method=method)
+        # ``ftp://`` и ``file://`` метода HEAD не знают: там просто открываем и закрываем.
+        req = urllib.request.Request(url, headers=headers, method=method if web else None)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return getattr(resp, "status", None) or 200
 
