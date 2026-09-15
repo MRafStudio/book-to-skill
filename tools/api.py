@@ -1032,6 +1032,49 @@ def do_purge_all() -> dict:
             "kept": kept, "staging": str(STAGING), "fetched": str(FETCH_DIR)}
 
 
+def _load_audit_links():
+    """Загрузить ``tools/audit/links.py`` (модуль аудита живёт рядом с ядром).
+
+    Импортом через importlib, а не ``import audit.links``: ядро запускают и как
+    ``python tools/api.py``, и как модуль плагина, и от текущего каталога зависеть
+    нельзя.
+    """
+    import importlib.util
+
+    path = Path(__file__).resolve().parent / "audit" / "links.py"
+    if not path.is_file():
+        raise FileNotFoundError(f"нет модуля аудита: {path}")
+    spec = importlib.util.spec_from_file_location("b2s_audit_links", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def do_audit_links(cat: str = "", apply: bool = False) -> dict:
+    """Аудит перекрёстных ссылок ВНУТРИ одной категории скиллов.
+
+    Граф строится по именам скиллов в бэктиках внутри ``.md`` - и только внутри
+    указанной категории: соседи из других категорий в него не попадают по построению.
+    С ``apply`` ядро переписывает ``related_skills`` в шапках по факту графа.
+    Скиллы из профиля при этом не удаляются и не переименовываются - правится одна
+    строка связей.
+    """
+    try:
+        category = _safe_category(cat)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    root = skills_root() / category
+    if not root.is_dir():
+        return {"ok": False, "error": f"категории нет в профиле: {category}"}
+
+    module = _load_audit_links()
+    report = module.build_report(root)
+    out = {"ok": True, "category": category, **report}
+    if apply:
+        out["apply"] = module.apply_related(root, {tuple(e) for e in report["edges"]})
+    return out
+
+
 def _draft_file(dir_path: Path, rel: str = "") -> Path:
     """Файл ВНУТРИ каталога черновика — панель не читает произвольный путь.
 
@@ -1952,6 +1995,10 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("purge", help="убрать ВСЁ промежуточное: черновики в staging и сырьё - без ожидания сроков")
 
+    p_audit = sub.add_parser("audit-links", help="граф ссылок внутри категории скиллов (найденное и пропущенное)")
+    p_audit.add_argument("--cat", required=True, help="категория скиллов, например rk7xml-interface")
+    p_audit.add_argument("--apply", action="store_true", help="обновить related_skills по факту графа")
+
     args = parser.parse_args(argv)
     if args.cmd == "health":
         out = do_health()
@@ -1987,6 +2034,8 @@ def main(argv: list[str] | None = None) -> int:
         out = do_prune_staging(args.keep, args.days, args.src, args.apply)
     elif args.cmd == "purge":
         out = do_purge_all()
+    elif args.cmd == "audit-links":
+        out = do_audit_links(args.cat, args.apply)
     else:
         out = do_install(args.name, args.cat, args.confirm, args.force,
                          args.mode, args.allow_overwrite, args.cat_desc, args.src)

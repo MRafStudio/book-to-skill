@@ -1326,6 +1326,38 @@ function B2SPane({ ctx }) {
     onlyB(1)
   }
 
+  /* Аудит связей внутри категории. Отдельное окно, а не молчаливый клик: владелец
+     просил показать текущую категорию и предупредить, что граф строится только по ней,
+     а связи обновятся только между её скиллами. Два действия: «Проверить» (только
+     чтение) и «Обновить связи» (ядро перепишет related_skills). */
+  const [auditOpen, setAuditOpen] = useState(false)
+  const [auditBusy, setAuditBusy] = useState('')
+  const [auditRep, setAuditRep] = useState(null)
+
+  const runAudit = async (apply) => {
+    setAuditBusy(apply ? 'apply' : 'read')
+    try {
+      const out = await ctx.rest('/audit_links', {
+        method: 'POST', body: { cat, apply: !!apply }, timeoutMs: 30000
+      })
+      if (out && out.ok) {
+        setAuditRep(out)
+        const ap = out.apply || null
+        setTone('idle')
+        setStatus('аудит «' + (out.category || cat) + '»: скиллов ' + (out.count || 0) +
+          ', связей ' + (out.edge_count || 0) +
+          (ap ? ', related_skills обновлено у ' + ((ap.updated || []).length) : '') +
+          ((out.orphans || []).length ? '; сироты: ' + out.orphans.join(', ') : '; сирот нет'))
+      } else {
+        setTone('error')
+        setStatus('аудит не прошёл: ' + ((out && out.error) || 'причина неизвестна'))
+      }
+    } catch (err) {
+      setTone('error')
+      setStatus('аудит не прошёл: ' + note(err))
+    } finally { setAuditBusy('') }
+  }
+
   /** Черновик пишет агент в чате — панель о готовности не узнаёт ниоткуда, и раньше
       после «Сделать черновик» она молчала: человек читал «черновика нет» и решал,
       что кнопка сломана. Теперь панель сама читает staging, пока файлы не появятся
@@ -1765,7 +1797,8 @@ function B2SPane({ ctx }) {
     catDescFix: 'Задание агенту в чате: обернуть готовый текст категории в frontmatter, тело сохранится',
     catDescRewrite: 'Задание агенту в чате: пересоздать описание категории - прежний текст будет заменён',
     prune: 'Убрать лишние рабочие каталоги: установленные старше срока и свежие сверх лимита. Сырьё уходит с ними, скиллы в профиле не трогаются',
-    purgeAll: 'Очистить промежуточные результаты работы и черновики (убрать мусор)'
+    purgeAll: 'Очистить промежуточные результаты работы и черновики (убрать мусор)',
+    auditLinks: 'Проверить связи скиллов текущей категории: граф перекрёстных ссылок внутри неё и обновление related_skills'
   }
 
   /* Подпись задачи для плашки «в работе LLM»: что именно пишет агент в чате.
@@ -2718,6 +2751,18 @@ function B2SPane({ ctx }) {
             /* Подсказка едет через подпись (``fitLabel`` → ``Ell`` ставит title на
                span): SDK-кнопка свой ``title`` в DOM не отдаёт - тултип пропадал. */
             children: fitLabel('🗑️', TIP.purgeAll)
+                      }),
+          /* Аудит связей - рядом с урной, в том же правом верхнем углу. Клик не
+             запускает работу сразу: сначала окно с категорией и предупреждением, что
+             граф строится только по ней (владелец). */
+          jsx(Button, {
+            size: 'sm',
+            variant: 'ghost',
+            disabled: !!busy,
+            onClick: () => { setAuditRep(null); setAuditOpen(true) },
+            className: 'h-6 shrink-0 justify-end text-[0.625rem] text-(--ui-text-primary)',
+            style: CHIP_FIT,
+            children: fitLabel('🔗', TIP.auditLinks)
           })
         ]
       }),
@@ -3290,10 +3335,82 @@ function B2SPane({ ctx }) {
       jsxs('div', {
         className: 'flex flex-col gap-0.5 pt-1 text-[0.625rem] text-(--ui-text-tertiary)',
         children: [
-          jsx('span', Ell('REST: /rerun · /install · /plan · /skills · /categories · /text · /drafts · /mark_ready · /drop · /prune')),
-          jsx('span', Ell('сессия (для чат-шагов): ' + (focusedId || '-')))
-        ]
-      })
+          jsx('span', Ell('REST: /rerun · /install · /plan · /skills · /categories · /text · /drafts · /mark_ready · /drop · /prune · /purge · /audit_links')),
+                    jsx('span', Ell('сессия (для чат-шагов): ' + (focusedId || '-')))
+                  ]
+                }),
+
+        /* Окно аудита связей: категория, предупреждение и два действия. Модалку держим
+        своей разметкой - в SDK её нет: вуаль на весь кадр, карточка по центру. Владелец:
+        «указать текущую категорию и пояснить, что граф строится только для этой
+        категории и связи обновятся только между скиллами из этой категории». */
+        auditOpen
+        ? jsx('div', {
+            className: 'fixed inset-0 z-50 flex items-center justify-center p-3',
+            style: { backgroundColor: 'color-mix(in srgb, #000 45%, transparent)' },
+            onClick: () => { if (!auditBusy) setAuditOpen(false) },
+            children: jsxs('div', {
+                className: 'w-full max-w-sm space-y-2 rounded-md border p-3',
+                style: Object.assign({ borderColor: CHIP_LINE }, PANEL_FILL),
+                'data-glass-raised': '',
+                onClick: (e) => e.stopPropagation(),
+                children: [
+                  jsx('div', { className: 'text-xs font-medium text-(--ui-text-primary)', children: 'Аудит связей скиллов' }),
+                  jsx('div', { className: CHIP_MUTED, children: 'Категория: ' + ((cat || '').trim() || '- не выбрана -') }),
+                  jsx('div', {
+                      className: CHIP_MUTED,
+                      children: 'Граф строится ТОЛЬКО по этой категории: ссылки считаются между её скиллами, ' +
+                      'и «Обновить связи» перепишет related_skills тоже только внутри неё. ' +
+                      'Скиллы не удаляются и не переименовываются.'
+                  }),
+                  !(cat || '').trim()
+                  ? jsx('div', { className: CHIP_MUTED, style: { color: WARN_YELLOW }, children: '⚠ категория не выбрана - аудит не запустится' })
+                  : null,
+                  auditRep
+                  ? jsx('pre', {
+                      className: 'max-h-48 overflow-auto whitespace-pre-wrap break-words rounded px-1.5 py-1 text-[0.625rem] leading-snug text-(--ui-text-secondary)',
+                      style: { border: FIELD_LINE, backgroundColor: PANEL_BG },
+                      children: [
+                        'скиллов: ' + (auditRep.count || 0) + ', связей: ' + (auditRep.edge_count || 0),
+                        'сироты: ' + ((auditRep.orphans || []).join(', ') || 'нет'),
+                        'молчуны: ' + ((auditRep.silent || []).join(', ') || 'нет'),
+                        'связано (related_skills): ' + (auditRep.declared_filled || 0) + ' из ' + (auditRep.count || 0),
+                        auditRep.apply ? 'обновлено: ' + (((auditRep.apply.updated) || []).join(', ') || 'нечего') : ''
+                      ].filter(Boolean).join('\n')
+                  })
+                  : null,
+                  jsxs('div', {
+                      className: 'flex flex-wrap justify-end gap-1 pt-1',
+                      children: [
+                        jsx(Button, {
+                            size: 'sm', variant: 'ghost',
+                            disabled: !!auditBusy || !(cat || '').trim(),
+                            onClick: () => runAudit(false),
+                            className: 'h-6 text-[0.625rem]', style: CHIP_FIT,
+                            children: fitLabel(auditBusy === 'read' ? '⟳ проверяю…' : 'Проверить',
+                              'Построить граф и назвать сирот: только чтение, ничего не пишется')
+                        }),
+                        jsx(Button, {
+                            size: 'sm', variant: 'ghost',
+                            disabled: !!auditBusy || !(cat || '').trim(),
+                            onClick: () => runAudit(true),
+                            className: 'h-6 text-[0.625rem]', style: CHIP_FIT,
+                            children: fitLabel(auditBusy === 'apply' ? '⟳ обновляю…' : 'Обновить связи',
+                              'Переписать related_skills по факту графа - только внутри этой категории')
+                        }),
+                        jsx(Button, {
+                            size: 'sm', variant: 'ghost',
+                            disabled: !!auditBusy,
+                            onClick: () => setAuditOpen(false),
+                            className: 'h-6 text-[0.625rem]', style: CHIP_FIT,
+                            children: fitLabel('Закрыть', 'Закрыть окно')
+                        })
+                      ]
+                  })
+                ]
+            })
+        })
+        : null
     ]
   })
 }

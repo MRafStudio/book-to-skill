@@ -36,6 +36,7 @@ LLM остаётся только там, где без него нельзя: �
     POST /prune   {keep,days} убрать лишние: установленные по TTL, свежие - сверх лимита;
                               сначала план, диск трогает только apply
     POST /purge   {}          убрать ВСЁ промежуточное разом: черновики и сырьё, без сроков
+    POST /audit_links {cat,apply} граф ссылок внутри категории (apply - обновить related_skills)
 
 Зависимостей нет: ядро — обычный Python форка (``tools/api.py``).
 """
@@ -180,6 +181,12 @@ class DescBody(BaseModel):
     text: str = ""
     mode: str = "write"   # write | fix (обернуть в frontmatter прозу без шапки)
     force: bool = False   # перезаписать существующее описание
+
+
+class AuditBody(BaseModel):
+    """Аудит связей внутри ОДНОЙ категории: cat - категория, apply - писать related_skills."""
+    cat: str = ""
+    apply: bool = False
 
 
 class TextBody(BaseModel):
@@ -389,6 +396,17 @@ def prune(body: PruneBody) -> Dict[str, Any]:
     keep = body.keep or module.STAGING_KEEP
     days = body.days or module.STAGING_TTL_DAYS
     return module.do_prune_staging(keep, days, body.src, body.apply)
+
+
+@router.post("/audit_links")
+def audit_links(body: AuditBody) -> Dict[str, Any]:
+    """Аудит перекрёстных ссылок внутри категории: граф, сироты, молчуны.
+
+    Граф строится по именам скиллов в бэктиках и ТОЛЬКО внутри указанной категории.
+    С ``apply`` ядро переписывает ``related_skills`` по факту графа - тоже только
+    между скиллами этой категории. Скиллы не удаляются и не переименовываются.
+    """
+    return core().do_audit_links(body.cat, body.apply)
 
 
 @router.post("/purge")
