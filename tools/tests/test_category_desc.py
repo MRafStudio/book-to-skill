@@ -153,7 +153,18 @@ check("повтор без --force не пишет", again.get("ok"), False)
 check("причина — файл есть", again.get("exists"), True)
 ok("прежний текст цел", "Пустая категория" in (SKILLS / "blank" / "DESCRIPTION.md").read_text(encoding="utf-8"))
 
-print("== 3. desc --mode fix: прозу наконец видит Hermes")
+print("== 3. desc --mode rewrite: переСОЗДАНИЕ заменяет прежнее, --force не нужен")
+remade = api("desc", "--cat", "blank", "--mode", "rewrite",
+             "--text", "Пустая категория - пересоздано.")
+check("пересоздано", remade.get("ok"), True)
+check("состояние ok", remade.get("desc_state"), "ok")
+check("файла не создавали заново", remade.get("created"), False)
+check("прежний текст телом не тащим", remade.get("kept_body"), False)
+blank = (SKILLS / "blank" / "DESCRIPTION.md").read_text(encoding="utf-8")
+ok("новый текст в шапке", "пересоздано" in blank, blank[:90])
+ok("старого текста в файле нет", "сюда кладём пробы" not in blank, blank[:90])
+
+print("== 4. desc --mode fix: прозу наконец видит Hermes")
 fixed = api("desc", "--cat", "apple", "--mode", "fix",
             "--text", "Apple / macOS skills — tools that interact with the Mac desk.")
 check("починено", fixed.get("ok"), True)
@@ -163,7 +174,7 @@ apple = (SKILLS / "apple" / "DESCRIPTION.md").read_text(encoding="utf-8")
 ok("шапка добавлена", apple.startswith("---\ndescription: Apple"), apple[:60])
 ok("проза осталась в теле", "interact with the Mac desk" in apple.split("---", 2)[2])
 
-print("== 4. враждебный ввод за пределы skills/ не выходит")
+print("== 5. враждебный ввод за пределы skills/ не выходит")
 bad = api("desc", "--cat", "../evil", "--text", "x")
 check("выход наверх отвергнут", bad.get("ok"), False)
 ok("ничего не создано выше skills", not (HOME / "evil").exists())

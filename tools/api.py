@@ -338,7 +338,7 @@ def do_write_category_desc(cat: str, text: str = "", mode: str = "write",
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
     wanted = (mode or "write").strip().lower()
-    if wanted not in ("write", "fix"):
+    if wanted not in ("write", "fix", "rewrite"):
         return {"ok": False, "error": f"неизвестный режим: {mode!r}"}
 
     root = skills_root()
@@ -354,6 +354,11 @@ def do_write_category_desc(cat: str, text: str = "", mode: str = "write",
             # уходит то же самое одной строкой — Hermes её наконец видит.
             body = here["desc_raw"]
             one_line = one_line or body
+        elif wanted == "rewrite":
+            # Пересоздание: владелец сам просит заменить вывеску (категория выросла,
+            # текст устарел). Прежний текст НЕ тащим телом - иначе файл зарастает
+            # старьём, а смысл действия ровно в замене. `--force` тут не нужен.
+            pass
         elif not force:
             return {"ok": False, "exists": True, "desc_state": here["desc_state"],
                     "desc": here["desc"] or here["desc_raw"], "path": str(path),
@@ -1921,8 +1926,9 @@ def main(argv: list[str] | None = None) -> int:
     p_desc = sub.add_parser("desc", help="описание категории: что Hermes скажет агенту (DESCRIPTION.md)")
     p_desc.add_argument("--cat", required=True)
     p_desc.add_argument("--text", default="", help="текст описания (одной строкой)")
-    p_desc.add_argument("--mode", default="write", choices=["write", "fix"],
-                        help="fix - обернуть в frontmatter прозу, которую Hermes сейчас не видит")
+    p_desc.add_argument("--mode", default="write", choices=["write", "fix", "rewrite"],
+                        help="fix - обернуть в frontmatter прозу, которую Hermes сейчас не видит; "
+                             "rewrite - пересоздать описание, заменив прежнее")
     p_desc.add_argument("--force", action="store_true", help="перезаписать существующее описание")
 
     p_drafts = sub.add_parser("drafts", help="черновики в staging + вердикт уборки (что уйдёт)")

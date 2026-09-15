@@ -506,9 +506,9 @@ function intentOf(kind, f) {
   /* Описание категории — отдельное действие: ни имя скилла, ни стратегия, ни
      режим тут не нужны, они улетели бы агенту шумом. Текст описания едет, только
      если человек вписал его сам: иначе агент сочинит по категории. */
-  if (kind === 'desc' || kind === 'desc-fix') {
+  if (kind === 'desc' || kind === 'desc-fix' || kind === 'desc-rewrite') {
     push('cat', f.cat)
-    push('dmode', kind === 'desc-fix' ? 'fix' : 'write')
+    push('dmode', kind === 'desc-fix' ? 'fix' : (kind === 'desc-rewrite' ? 'rewrite' : 'write'))
     push('desc', f.desc)
     return parts.join(' | ')
   }
@@ -1118,7 +1118,7 @@ function B2SPane({ ctx }) {
       setStatus('→ ушло в чат агенту: ' + intentText)
       /* Описание категории пишет агент, а не панель: без слежения за целью красная
          рамка и кнопка «написать» остались бы в панели до её переоткрытия. */
-      if (kind === 'desc' || kind === 'desc-fix') {
+      if (kind === 'desc' || kind === 'desc-fix' || kind === 'desc-rewrite') {
         const m = (catMeta || {})[cat]
         watchDesc(cat, (m && m.desc_state) || 'no-file')
       }
@@ -1740,6 +1740,7 @@ function B2SPane({ ctx }) {
     openFile: 'Показать текст файла черновика: ',
     catDesc: 'Задание агенту в чате: написать description категории - файл скилла не трогается',
     catDescFix: 'Задание агенту в чате: обернуть готовый текст категории в frontmatter, тело сохранится',
+    catDescRewrite: 'Задание агенту в чате: пересоздать описание категории - прежний текст будет заменён',
     prune: 'Убрать лишние рабочие каталоги: установленные старше срока и свежие сверх лимита. Сырьё уходит с ними, скиллы в профиле не трогаются',
     purgeAll: 'Очистить промежуточные результаты работы и черновики (убрать мусор)'
   }
@@ -1752,7 +1753,8 @@ function B2SPane({ ctx }) {
     review: 'критика черновика',
     plan: 'план по главам',
     desc: 'описание категории',
-    'desc-fix': 'правка описания'
+    'desc-fix': 'правка описания',
+    'desc-rewrite': 'пересоздание описания'
   }
   /* Чипса категории — «суть категории», а не служебная подпись. Описание берём
      ровно то, что читает Hermes: `description` из DESCRIPTION.md уезжает в промпт
@@ -1892,12 +1894,20 @@ function B2SPane({ ctx }) {
         'data-glass-raised': '',
         style: catTone,
         children: catState === 'ok'
-          ? jsx('div', { className: GROUP_LEAD, style: GROUP_CAP, children: [
-              jsx('div', { className: CHIP_CHIEF, children: catInfo.desc }),
-              catEmpty
-                ? jsx('div', { className: CHIP_MUTED, children: 'каталог пока пуст: в нём ни одного скилла' })
-                : null
-            ] })
+          ? [
+              jsx('div', { className: GROUP_LEAD, style: GROUP_CAP, children: [
+                jsx('div', { className: CHIP_CHIEF, children: catInfo.desc }),
+                catEmpty
+                  ? jsx('div', { className: CHIP_MUTED, children: 'каталог пока пуст: в нём ни одного скилла' })
+                  : null
+              ] }),
+              /* Описание есть - но прятать кнопку нельзя: переписать вывеску иногда
+                 нужно (категория разрослась, текст устарел). Владелец: «кнопка не
+                 должна исчезать, если описание уже есть - а вдруг надо пересоздать». */
+              jsx('div', { className: 'pt-1', children:
+                chipAction('♻ Пересоздать описание категории',
+                  () => sendDesc('desc-rewrite'), busy === 'desc-rewrite', 'fix', TIP.catDescRewrite) })
+            ]
           : catState === 'no-frontmatter'
             ? [
                 jsx('div', { className: GROUP_LEAD, style: GROUP_CAP, children: [

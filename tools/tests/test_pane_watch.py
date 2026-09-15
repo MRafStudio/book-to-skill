@@ -16,7 +16,7 @@
    в выпадашке к этому моменту выбрана другая категория;
 4. состояние не изменилось → опрос прекращается по дедлайну с честным текстом
    («смотри ответ агента в чате»), а не висит молча и не крутится вечно;
-5. интенты ``desc`` / ``desc-fix`` этот вотчер запускают — иначе он мёртвый код.
+5. интенты ``desc`` / ``desc-fix`` / ``desc-rewrite`` этот вотчер запускают — иначе он мёртвый код.
 """
 from __future__ import annotations
 
@@ -201,8 +201,8 @@ def main() -> int:
           and not out["emptyTarget"]["hasCb"], f"{out['emptyTarget']!r}")
 
     # Запуск вотчера для обоих интентов — иначе он мёртвый код.
-    hook = re.search(r"if \(kind === 'desc' \|\| kind === 'desc-fix'\) \{", src)
-    check("интенты desc/desc-fix запускают вотчер", bool(hook),
+    hook = re.search(r"if \(kind === 'desc' \|\| kind === 'desc-fix' \|\| kind === 'desc-rewrite'\) \{", src)
+    check("интенты desc/desc-fix/desc-rewrite запускают вотчер", bool(hook),
           "в sendIntent нет ветки запуска watchDesc")
 
     failed = [n for n, ok in checks if not ok]
