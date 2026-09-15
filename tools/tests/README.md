@@ -11,6 +11,9 @@
 
 ```bash
 cd D:/.VS/Projects/BOOK-TO-SKILL/_fork
+# весь пакет сразу (печатает итог и код возврата):
+"D:/NEURO/Hermes/data/hermes/hermes-agent/venv/Scripts/python.exe" tools/tests/run_all.py
+# один тест:
 "D:/NEURO/Hermes/data/hermes/hermes-agent/venv/Scripts/python.exe" tools/tests/test_<имя>.py
 ```
 

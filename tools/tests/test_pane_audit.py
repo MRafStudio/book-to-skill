@@ -48,8 +48,11 @@ def main() -> int:
           "fitLabel('🔗', TIP.auditLinks)" in src)
     check("клик открывает ОКНО, а не запускает аудит сразу",
           "onClick: () => { setAuditRep(null); setAuditOpen(true) }" in src)
-    check("кнопка стоит в одном ряду с урной (после неё)",
-          src.index("fitLabel('🗑️', TIP.purgeAll)") < src.index("fitLabel('🔗', TIP.auditLinks)"))
+    check("связи ЛЕВЕЕ ведра, ведро - крайняя правая кнопка",
+          src.index("fitLabel('🔗', TIP.auditLinks)") < src.index("fitLabel('🗑️', TIP.purgeAll)"))
+    check("обе кнопки в одной группе и впритык (gap-1, как у кнопок блока 1)",
+          "className: 'flex shrink-0 items-center gap-1'" in src,
+          "владелец: «не на расстоянии пушечного выстрела» - разводить их justify-between нельзя")
 
     # 2. окно: категория + предупреждение
     i_open = src.find("Окно аудита связей")

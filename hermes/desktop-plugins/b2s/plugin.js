@@ -2738,31 +2738,38 @@ function B2SPane({ ctx }) {
                         })
             ]
           }),
-          /* Урна - в правом верхнем углу шапки: убрать промежуточное разом, не
-             дожидаясь TTL и лимитов ядра. Скиллы в профиле не трогаются, а панель
-             после уборки сбрасывает поля: остаются источник и категория скилла. */
-          jsx(Button, {
-            size: 'sm',
-            variant: 'ghost',
-            disabled: !!busy,
-            onClick: runPurgeAll,
-            className: 'h-6 shrink-0 justify-end text-[0.625rem] text-(--ui-text-primary)',
-            style: CHIP_FIT,
-            /* Подсказка едет через подпись (``fitLabel`` → ``Ell`` ставит title на
-               span): SDK-кнопка свой ``title`` в DOM не отдаёт - тултип пропадал. */
-            children: fitLabel('🗑️', TIP.purgeAll)
-                      }),
-          /* Аудит связей - рядом с урной, в том же правом верхнем углу. Клик не
-             запускает работу сразу: сначала окно с категорией и предупреждением, что
-             граф строится только по ней (владелец). */
-          jsx(Button, {
-            size: 'sm',
-            variant: 'ghost',
-            disabled: !!busy,
-            onClick: () => { setAuditRep(null); setAuditOpen(true) },
-            className: 'h-6 shrink-0 justify-end text-[0.625rem] text-(--ui-text-primary)',
-            style: CHIP_FIT,
-            children: fitLabel('🔗', TIP.auditLinks)
+          /* Правый верхний угол: две служебные кнопки в ОДНОЙ группе и впритык (gap-1 = 4 px,
+             как между «Выбрать файл» и «Вставить из буфера» в блоке 1): сначала связи,
+             крайняя справа - урна. Разводить их `justify-between` нельзя: при трёх детях
+             шапки урна улетала в середину (владелец: «не на расстоянии пушечного выстрела»). */
+          jsxs('div', {
+            className: 'flex shrink-0 items-center gap-1',
+            children: [
+              /* Аудит связей: клик не запускает работу сразу - сначала окно с категорией
+                 и предупреждением, что граф строится только по ней. */
+              jsx(Button, {
+                size: 'sm',
+                variant: 'ghost',
+                disabled: !!busy,
+                onClick: () => { setAuditRep(null); setAuditOpen(true) },
+                className: 'h-6 shrink-0 justify-end text-[0.625rem] text-(--ui-text-primary)',
+                style: CHIP_FIT,
+                children: fitLabel('🔗', TIP.auditLinks)
+              }),
+              /* Урна: убрать промежуточное разом, не дожидаясь TTL и лимитов ядра.
+                 Скиллы в профиле не трогаются, поля панели сбрасываются. */
+              jsx(Button, {
+                size: 'sm',
+                variant: 'ghost',
+                disabled: !!busy,
+                onClick: runPurgeAll,
+                className: 'h-6 shrink-0 justify-end text-[0.625rem] text-(--ui-text-primary)',
+                style: CHIP_FIT,
+                /* Подсказка едет через подпись (``fitLabel`` → ``Ell`` ставит title на
+                   span): SDK-кнопка свой ``title`` в DOM не отдаёт - тултип пропадал. */
+                children: fitLabel('🗑️', TIP.purgeAll)
+              })
+            ]
           })
         ]
       }),
