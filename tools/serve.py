@@ -120,6 +120,10 @@ def failure_kind(src: str, strat: str, report: dict) -> str:
     граница блока 2 - только про сам разбор, когда источник уже есть на руках.
     """
     low = (src or "").lower()
+    # Строка вообще не похожа на источник (владелец ввёл «1»): виноват шаг подачи,
+    # чем бы ни была настроена очистка - до разбора дело не дошло.
+    if not (low.startswith(("http://", "https://")) or Path((src or "").strip()).exists()):
+        return "source"
     if strat == "raw-md" and not low.endswith((".md", ".markdown")):
         return "strategy"
     if low.endswith((".md", ".markdown")) and strat in ("trafilatura", "bs4", "stdlib"):

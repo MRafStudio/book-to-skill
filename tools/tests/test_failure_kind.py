@@ -27,7 +27,9 @@
 """
 from __future__ import annotations
 
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -57,22 +59,37 @@ def main() -> int:
           failure_kind("https://example.com/a.html", "html-cascade", {}) == "source")
 
     print("\n2. источник есть, а разбор ему не подходит = шаг 2 (краснеет блок «Анализ»)")
-    check("raw-md на HTML → strategy",
-          failure_kind("https://example.com/a.html", "raw-md", {}) == "strategy",
-          failure_kind("https://example.com/a.html", "raw-md", {}))
-    check("trafilatura на markdown → strategy",
-          failure_kind("readme.md", "trafilatura", {}) == "strategy",
-          failure_kind("readme.md", "trafilatura", {}))
-    check("bs4 на markdown → strategy",
-          failure_kind("D:/docs/guide.markdown", "bs4", {}) == "strategy")
+    # Файлы заводим настоящие: признак шага зависит от того, существует ли источник,
+    # и подделка пути («D:/docs/guide.markdown») проверяла бы выдумку, а не код.
+    tmp = Path(tempfile.mkdtemp(prefix="b2s_kind_"))
+    md_file = tmp / "readme.md"
+    md_file.write_text("# заголовок\n", encoding="utf-8")
+    MD_upper = tmp / "GUIDE.MD"
+    MD_upper.write_text("# заголовок\n", encoding="utf-8")
+    html_file = tmp / "page.html"
+    html_file.write_text("<html><body>t</body></html>", encoding="utf-8")
+    check("raw-md на HTML-файл → strategy",
+          failure_kind(str(html_file), "raw-md", {}) == "strategy",
+          failure_kind(str(html_file), "raw-md", {}))
+    check("trafilatura на markdown-файл → strategy",
+          failure_kind(str(md_file), "trafilatura", {}) == "strategy",
+          failure_kind(str(md_file), "trafilatura", {}))
+    check("bs4 на markdown-файл → strategy",
+          failure_kind(str(md_file), "bs4", {}) == "strategy")
+    check("регистр расширения не решает (.MD) → strategy для bs4",
+          failure_kind(str(MD_upper), "bs4", {}) == "strategy")
 
     print("\n3. пары «источник подходит стратегии» остаются шагом 1, а не разбором")
     check("raw-md на .md → source (стратегия подходящая, дело в доступе)",
-          failure_kind("readme.md", "raw-md", {}) == "source")
-    check("trafilatura на HTML → source",
-          failure_kind("https://example.com/a.html", "trafilatura", {}) == "source")
-    check("регистр расширения не решает (.MD) → strategy для raw-md",
-          failure_kind("README.MD", "bs4", {}) == "strategy")
+          failure_kind(str(md_file), "raw-md", {}) == "source")
+    check("trafilatura на HTML-файл → source",
+          failure_kind(str(html_file), "trafilatura", {}) == "source")
+    check("URL + raw-md → strategy (источник заведомо есть, разбор ему не тот)",
+          failure_kind("https://example.com/a.html", "raw-md", {}) == "strategy")
+    check("«1» даже при raw-md → source: это не источник, а строка в поле",
+          failure_kind("1", "raw-md", {}) == "source",
+          failure_kind("1", "raw-md", {}))
+    shutil.rmtree(tmp, ignore_errors=True)
 
     print("\n4. ядро кладёт признак в state и в ответ /rerun")
     serve_src = (REPO / "tools" / "serve.py").read_text(encoding="utf-8", errors="replace")
