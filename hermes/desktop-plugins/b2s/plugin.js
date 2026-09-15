@@ -987,6 +987,16 @@ function B2SPane({ ctx }) {
           const rep = s && s.report && Object.keys(s.report).length ? s.report : null
           if (alive && rep) {
             setReport({ ...rep, at: (s && s.report_at) || '' })
+            /* Отпечаток входов разбора восстанавливаем из состояния ЯДРА: панель
+               перезапускается вместе с приложением, а отчёт на диске остаётся. Без
+               этого `fetchedSig` был бы пуст при каждом старте, `analyzed` - ложью,
+               и живой отчёт по текущему источнику прятался бы как «чужой», а панель
+               звала бы прогонять разбор заново. Берём ровно то, что ядро записало
+               при прогоне: источник, стратегию, режим. */
+            const stt = (s && s.state) || {}
+            if (stt.src) {
+              setFetchedSig(analysisSigOf({ src: stt.src, strat: stt.strat, mode: stt.mode }))
+            }
             loadText(6000)   // текст последнего прогона готов сразу, без кликов
           }
           /* Черновик из /state НЕ берём: там черновик ПОСЛЕДНЕГО ПРОГОНА ядра, а
@@ -2080,7 +2090,13 @@ function B2SPane({ ctx }) {
     ]
   })
 
-  const resultBlock = jsxs('details', {
+  /* «Результат разбора» показываем ТОЛЬКО когда отчёт снят с того набора входов, что
+     стоит в поле (`analyzed`). Иначе спойлер выдавал чужой отчёт за текущий: владелец
+     ввёл новый источник, кнопку «Анализ источника» не нажимал, а в спойлере уже лежали
+     метрики, путь и текст ПРЕЖНЕГО разбора - «берёт данные откуда-то со старого
+     источника, этого быть не должно». Показывать нечего - спойлера нет вовсе; что
+     делать дальше, говорит статус блока 2, а не подсказка. */
+  const resultBlock = !analyzed ? null : jsxs('details', {
     className: 'rounded border px-2 py-1 text-[0.625rem] leading-snug',
     style: { backgroundColor: BLOCK_BG, border: BLOCK_LINE },
     open: outOpen,
@@ -2088,8 +2104,7 @@ function B2SPane({ ctx }) {
     children: [
       jsx('summary', {
         className: 'cursor-pointer select-none text-(--ui-text-secondary)',
-        children: jsx('span', Ell('📊 Результат разбора' + (headBits.length ? ' · ' + headBits.join(' · ') : ' - пока пусто') +
-          (staleReport ? ' · от прежних входов' : '')))
+        children: jsx('span', Ell('📊 Результат разбора' + (headBits.length ? ' · ' + headBits.join(' · ') : ' - пока пусто')))
       }),
 
       /* 2) сводка последнего прогона: стратегия-победитель, объём, путь к файлу */
@@ -2138,7 +2153,7 @@ function B2SPane({ ctx }) {
           })
         : jsx('div', {
             className: 'mt-1 opacity-70',
-            children: 'нажми «Прогнать источник заново» в блоке 1 - вычищенный текст появится здесь'
+            children: 'текст не отдан ядром - нажми «Прогнать заново» в блоке 2, и он появится здесь'
           }),
       textInfo && textInfo.path
         ? jsx('div', Ell(textInfo.path, 'pt-1 opacity-70'))

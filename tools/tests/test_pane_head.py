@@ -203,6 +203,13 @@ def main() -> int:
         check("ядро /state отдаёт отчёт панели (ключ report)", "report" in keys,
               f"ключи: {sorted(keys)}")
         check("ядро /state отдаёт источник отчёта (report_src)", "report_src" in keys)
+        # Входы разбора: по ним панель восстанавливает отпечаток при старте, иначе
+        # живой отчёт по текущему источнику выглядел бы чужим (панель прятала бы
+        # спойлер и звала прогонять разбор заново после каждого перезапуска).
+        st_inner = state.get("state") or {}
+        check("ядро /state отдаёт входы разбора (state.src/strat/mode)",
+              (not st_inner) or all(k in st_inner for k in ("src", "strat", "mode")),
+              f"ключи state: {sorted(st_inner)[:12]}")
         rep = state.get("report") or {}
         check("в отчёте нет preview (текст — отдельным маршрутом /text)",
               "preview" not in rep, f"ключи отчёта: {sorted(rep)[:12]}")
