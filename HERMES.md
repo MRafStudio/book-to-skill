@@ -186,7 +186,7 @@
 Пайплайн долива закрыт: файловый план → план по главам → установка с бэкапом.
 - Имя скилла, подхваченное из прошлого захода, приводится к нижнему регистру: жёлтая подсветка на восстановленном `license-Info` читалась как поломка панели (владелец: «я ничего не делал, а он ругается»). Сторож — `test_pane_name.py` (8).
 - Служебные метки `creator`/`created`/`updated` в наших скиллах: `created` правится по первой установке из `install_log` (`metadata.json`), а не по времени последней перезаливки — иначе «когда скилл появился» врёт.
-- Черновики RK7 XML (`cat=rk7xml-interface`) в работе: установлены `introduction`, `methods-of-executing-commands`, `requests-and-functions`, `getreflist-getrefdata`, `rkeeper-licenseinfo`; собран черновик `interaction-workflow` (источник «Алгоритм взаимодействия»: права на операции в `OpRights`, base64 -> биты, обратный порядок) - 7 файлов, 2 главы, 22 термина, `validate` 0 warning(s), `scan` чист, `api.py draft` -> `has_draft: true`, `matched: slug`.
+- Черновики RK7 XML (`cat=rk7xml-interface`) в работе: установлены `introduction`, `methods-of-executing-commands`, `requests-and-functions`, `getreflist-getrefdata`, `rkeeper-licenseinfo`; собраны черновики `interaction-workflow` (источник «Алгоритм взаимодействия»: права на операции в `OpRights`, base64 -> биты, обратный порядок) и `data-exchange` (источник «Обмен данными»: каркас `RK7Query`/`RK7QueryResult`, разбор ответа справочника `RK7Reference`) - у обоих `validate` 0 warning(s), `scan` чист, `api.py draft` -> `has_draft: true`, `matched: slug`. У `data-exchange` 7 файлов, 2 главы, 46 терминов; все 70 имён из скилла сверены `grep` по сырью (не найдено - ноль).
 
 ## Открытые вопросы (нужны ответы владельца)
 
