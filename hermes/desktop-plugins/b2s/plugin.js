@@ -484,7 +484,11 @@ function Field({ label, hint, children }) {
     className: 'flex min-w-0 flex-col gap-1',
     children: [
       jsxs('span', {
-        className: 'flex items-baseline gap-2',
+        /* Высота шапки ФИКСИРОВАНА: у полей с подписью-хинтом (`hint`, 10px) и без неё
+           строка по `items-baseline` выходила разной высоты, и соседние поля вставали
+           вразнобой - владелец глазами поймал «Имя скилла на 1-2 px ниже Категории».
+           Теперь обе шапки ровно `h-4`, независимо от наличия хинта. */
+        className: 'flex h-4 items-center gap-2',
         children: [
           jsx('span', Ell(label, 'text-[0.6875rem] text-(--ui-text-tertiary)')),
           hint

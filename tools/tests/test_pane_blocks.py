@@ -216,6 +216,10 @@ def main() -> int:
           "nameWarn ? 'обязательное: пустым не поставим'" in src)
     check("подпись «такого скилла нет - будет создан новый» (без обрубка «будет новый»)",
           "такого скилла нет - будет создан новый" in src and "будет новый'" not in src)
+    check("шапка Field одной высоты - поля не «пляшут» по вертикали",
+          "className: 'flex h-4 items-center gap-2'" in src and
+          "className: 'flex items-baseline gap-2'" not in src,
+          "владелец: «Имя скилла на 1-2 px ниже Категории» - у поля с хинтом шапка выше")
     check("блок 1 требует ТОЛЬКО источник: имя уехало в блок 3",
           "disabled: !!busy || !trimSrc," in src and
           "disabled: !!busy || !trimSrc || nameWarn" not in src,
