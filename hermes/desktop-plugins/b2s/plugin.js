@@ -1011,6 +1011,11 @@ function B2SPane({ ctx }) {
      уже по новому ключу — она либо найдётся, либо честно скажет «черновика нет». */
   useEffect(() => {
     setDraft(null); setDraftText(null); setDraftFile(''); setInstalled(null)
+    /* План по главам живёт вместе с черновиком и снимается вместе с ним: он построен
+       по содержимому ПРЕЖНЕГО черновика, и при переходе к новому источнику старые
+       строки висели в спойлере (владелец: «висит со старыми записями, даже при
+       нажатии Сгенерировать черновик»). */
+    setChapterPlan(null); setChapterOpen(false)
     dropPreview()
     if (!draftKey) return
     loadDraft(true)
@@ -1116,6 +1121,8 @@ function B2SPane({ ctx }) {
         /* Новая генерация обнуляет пройденный блок 4: черновик будет переписан,
            и прежнее «ДАЛЕЕ» относится уже к другому содержимому. */
         setReadySeen(false)
+        /* Раскладка по главам — тоже по прежнему тексту: новая проза её отменяет. */
+        setChapterPlan(null); setChapterOpen(false)
         watchDraft((name || '').trim(), (src || '').trim())
       }
       return true
@@ -2596,16 +2603,33 @@ function B2SPane({ ctx }) {
       jsx(PaneBlock, {
         n: 1,
         title: 'Источник',
+        /* Состояние источника меняется ПО ФАКТУ разбора, а не только по виду входа:
+           «ДАЛЕЕ» блока 1 запускает анализ, и пока он шёл, заголовок всё ещё говорил
+           «нужен разбор» (владелец: «анализ завершён - тогда и менять состояние»). */
         state: !trimSrc
           ? 'пусто'
-          : (mdSrc ? 'markdown: блок 2 пропустим' : (isRemoteSrc(trimSrc) ? 'URL - нужен разбор' : 'файл - нужен разбор')),
-        tone: trimSrc ? (mdSrc ? 'done' : null) : 'bad',
+          : (mdSrc
+            ? 'markdown: блок 2 пропустим'
+            : (busy === 'rerun'
+              ? (isRemoteSrc(trimSrc) ? 'URL - разбираю…' : 'файл - разбираю…')
+              : (analyzed
+                ? (isRemoteSrc(trimSrc) ? 'URL - анализ завершён' : 'файл - анализ завершён')
+                : (isRemoteSrc(trimSrc) ? 'URL - нужен разбор' : 'файл - нужен разбор')))),
+        tone: trimSrc
+          ? (mdSrc || analyzed ? 'done' : (busy === 'rerun' ? 'working' : (rerunErr ? 'bad' : null)))
+          : 'bad',
         open: !!openB[1],
         onToggle: () => toggleB(1),
         style: { backgroundColor: openB[1] ? BLOCK_BG : 'transparent' },
         hint: !trimSrc
           ? 'впиши URL или путь к файлу'
-          : (mdSrc ? 'файл уже markdown - анализ пропустим' : 'блок 2 разберёт источник'),
+          : (mdSrc
+            ? 'файл уже markdown - анализ пропустим'
+            : (busy === 'rerun'
+              ? 'иду разбор источника: загрузка, очистка, метрики'
+              : (analyzed
+                ? 'источник разобран - можно делать черновик'
+                : (rerunErr ? 'разбор не прошёл: ' + rerunErr : 'блок 2 разберёт источник')))),
         foot: jsx(NextBtn, {
           label: 'ДАЛЕЕ →',
           onClick: next1,

@@ -109,16 +109,19 @@ const out = {}
 /* Прогон 2: смена ключа снимает всё, что относилось к прежнему источнику. */
 {
   const run = new Function('draftKey', 'setDraft', 'setDraftText', 'setDraftFile',
-                           'setInstalled', 'dropPreview', 'loadDraft', 'loadDrafts', RESET)
+                           'setInstalled', 'setChapterPlan', 'setChapterOpen',
+                           'dropPreview', 'loadDraft', 'loadDrafts', RESET)
   const seen = { calls: [], reads: 0 }
   const rec = (name) => (v) => seen.calls.push(name + '=' + JSON.stringify(v === undefined ? null : v))
   run('novaya-stranica', rec('draft'), rec('draftText'), rec('draftFile'),
-      rec('installed'), () => seen.calls.push('dropPreview'), () => { seen.reads++ },
+      rec('installed'), rec('chapterPlan'), rec('chapterOpen'),
+      () => seen.calls.push('dropPreview'), () => { seen.reads++ },
       () => { seen.reads++ })
   out.resetFilled = seen
   const seen2 = { calls: [], reads: 0 }
   const rec2 = (name) => (v) => seen2.calls.push(name)
   run('', rec2('draft'), rec2('draftText'), rec2('draftFile'), rec2('installed'),
+      rec2('chapterPlan'), rec2('chapterOpen'),
       () => seen2.calls.push('dropPreview'), () => { seen2.reads++ }, () => { seen2.reads++ })
   out.resetEmpty = seen2
 }
@@ -214,6 +217,8 @@ def main() -> int:
     check("панель: смена ключа снимает текст черновика", "draftText=null" in called, called)
     check("панель: смена ключа снимает план записи и статус установки",
           "installed=null" in called and "dropPreview" in called, called)
+    check("панель: смена ключа снимает раскладку по главам (она из прежнего текста)",
+          "chapterPlan=null" in called and "chapterOpen=false" in called, called)
     check("панель: по новому ключу сводка читается заново", f["reads"] == 2, f"reads={f['reads']}")
     e = out["resetEmpty"]
     check("панель: пустой ключ тоже снимает чужое, но ядро не дёргает",
