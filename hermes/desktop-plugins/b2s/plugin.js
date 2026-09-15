@@ -615,7 +615,12 @@ function B2SPane({ ctx }) {
      оставшаяся от прежнего ввода, врала о чужой работе. Теперь она гаснет вместе с
      вводом. `say('текст')` без отпечатка - сообщение не про источник (ядро, уборка,
      аудит) и живёт само по себе. */
+  const [status, setStatus] = useState('')      // текст строки состояния
   const [statusSig, setStatusSig] = useState('')
+  /* Антирекурсия: внутренний `say` пишет НАПРЯМУЮ в сеттер состояния, а не зовёт
+     себя же. Без объявления пары `status/setStatus` (его снесла правка отпечатка
+     ввода) `say()` падал с `ReferenceError: setStatus is not defined` — проба ядра
+     уходила в catch, и панель показывала «нет связи с ядром» при живом ядре. */
   const say = (text, sig) => { setStatusSig(sig == null ? '' : sig); setStatus(text) }
   const [tone, setTone] = useState('idle')
   const [busy, setBusy] = useState('')
