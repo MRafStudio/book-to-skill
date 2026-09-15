@@ -247,3 +247,11 @@
   U+4E00–9FFF, U+FF00–FFEF); fullwidth `＋`/`＝` в подписях панели — ложное срабатывание.
 - Файлы контекста сканируются на промпт-инъекции: попавшее под шаблон — **блокируется**,
   поэтому в них только обычная проза, без «служебных» инструкций.
+- **Пуш в наш форк идёт токеном из `HERMES_HOME/.env`** (`D:\NEURO\Hermes\data\hermes\.env`,
+  ключ `GITHUB_TOKEN`). В git-bash GCM креду не отдаёт: `git credential fill` по `github.com`
+  пуст, хотя `git credential-manager github list` показывает `MRafStudio` и `x-access-token`,
+  а `curl`-пуш без токена падает на `could not read Username`. Рабочая команда:
+  `git push "https://${GITHUB_TOKEN}@github.com/MRafStudio/book-to-skill.git" agent/url-dashboard`,
+  вывод прогонять через `sed "s/${GITHUB_TOKEN}/<TOKEN>/g"`. Льём ТОЛЬКО ветку
+  `agent/url-dashboard` (`origin` - наш форк), в upstream не лезем; после пуша сверять
+  `git ls-remote origin refs/heads/agent/url-dashboard` с локальным `HEAD`.
