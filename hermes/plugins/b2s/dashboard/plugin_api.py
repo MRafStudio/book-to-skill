@@ -34,7 +34,8 @@ LLM остаётся только там, где без него нельзя: �
                               и вердикт уборки по каждому
     POST /drop    {key|src}   убрать ОДИН рабочий каталог (и его сырьё в b2s_fetched)
     POST /prune   {keep,days} убрать лишние: установленные по TTL, свежие - сверх лимита;
-                              без apply это только план
+                              сначала план, диск трогает только apply
+    POST /purge   {}          убрать ВСЁ промежуточное разом: черновики и сырьё, без сроков
 
 Зависимостей нет: ядро — обычный Python форка (``tools/api.py``).
 """
@@ -388,6 +389,17 @@ def prune(body: PruneBody) -> Dict[str, Any]:
     keep = body.keep or module.STAGING_KEEP
     days = body.days or module.STAGING_TTL_DAYS
     return module.do_prune_staging(keep, days, body.src, body.apply)
+
+
+@router.post("/purge")
+def purge_all() -> Dict[str, Any]:
+    """Убрать ВСЁ промежуточное: черновики в staging и сырьё - одним нажатием.
+
+    Не путать с ``/prune``: там правила (TTL, лимит свежих) и сначала план. Здесь
+    владелец сам просит убрать мусор, не дожидаясь сроков. Скиллы в профиле не
+    трогаются; служебные ``_probe*`` ядро оставляет - на них стоят его тесты.
+    """
+    return core().do_purge_all()
 
 
 @router.post("/plan")

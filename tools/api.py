@@ -985,6 +985,48 @@ def do_prune_staging(keep: int = STAGING_KEEP, ttl_days: int = STAGING_TTL_DAYS,
             "applied": bool(apply), "keep": keep, "ttl_days": ttl_days, "active": active}
 
 
+def do_purge_all() -> dict:
+    """Убрать ВСЁ промежуточное: черновики в ``staging`` и сырьё в ``b2s_fetched``.
+
+    Отличие от ``do_prune_staging``: там правила (TTL, лимит свежих) и сначала план,
+    здесь - прямая уборка по требованию, без ожидания сроков. Скиллы в профиле не
+    трогаются: ``staging`` и ``b2s_fetched`` - мастерская, а не витрина. Служебные
+    ``_probe*`` остаются на месте: на них стоят тесты ядра, и они не мусор.
+    """
+    dirs: list[str] = []
+    kept: list[str] = []
+    files = 0
+    for d in sorted(p for p in STAGING.glob("*") if p.is_dir()):
+        if d.name.startswith("_"):
+            kept.append(d.name)
+            continue
+        files += sum(1 for p in d.rglob("*") if p.is_file())
+        shutil.rmtree(d, ignore_errors=True)
+        if not d.exists():
+            dirs.append(d.name)
+    gone_src: list[str] = []
+    if FETCH_DIR.is_dir():
+        for p in sorted(FETCH_DIR.glob("*")):
+            if not p.is_file():
+                continue
+            try:
+                p.unlink()
+                gone_src.append(p.name)
+            except OSError:
+                pass
+    # Служебные файлы в корне staging (``merge-plan.json`` и родня) - тот же мусор.
+    for name in sorted(_SERVICE_FILES):
+        p = STAGING / name
+        if p.is_file():
+            try:
+                p.unlink()
+                gone_src.append(name)
+            except OSError:
+                pass
+    return {"ok": True, "dirs": dirs, "files": files, "source_files": gone_src,
+            "kept": kept, "staging": str(STAGING), "fetched": str(FETCH_DIR)}
+
+
 def _draft_file(dir_path: Path, rel: str = "") -> Path:
     """Файл ВНУТРИ каталога черновика — панель не читает произвольный путь.
 
@@ -1902,6 +1944,8 @@ def main(argv: list[str] | None = None) -> int:
     p_prune.add_argument("--src", default="", help="активный источник: его черновик не трогаем")
     p_prune.add_argument("--apply", action="store_true", help="реально удалять (иначе план)")
 
+    sub.add_parser("purge", help="убрать ВСЁ промежуточное: черновики в staging и сырьё - без ожидания сроков")
+
     args = parser.parse_args(argv)
     if args.cmd == "health":
         out = do_health()
@@ -1935,6 +1979,8 @@ def main(argv: list[str] | None = None) -> int:
         out = do_drop_draft(args.key, args.src, args.with_source)
     elif args.cmd == "prune":
         out = do_prune_staging(args.keep, args.days, args.src, args.apply)
+    elif args.cmd == "purge":
+        out = do_purge_all()
     else:
         out = do_install(args.name, args.cat, args.confirm, args.force,
                          args.mode, args.allow_overwrite, args.cat_desc, args.src)

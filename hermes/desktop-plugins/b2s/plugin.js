@@ -1268,6 +1268,48 @@ function B2SPane({ ctx }) {
     } finally { setBusy('') }
   }
 
+  /* Урна: убрать промежуточное разом - черновики в staging и сырьё в b2s_fetched,
+     не дожидаясь TTL и лимитов (ядро: ``/purge``). Скиллы в профиле не трогаются:
+     staging - мастерская, а не витрина. */
+  const runPurgeAll = async () => {
+    setBusy('purgeAll')
+    try {
+      const out = await ctx.rest('/purge', { method: 'POST', body: {}, timeoutMs: 30000 })
+      if (out && out.ok) {
+        const dirs = out.dirs || []
+        const srcs = out.source_files || []
+        resetAfterPurge()
+        setTone('idle')
+        setStatus('мусор убран: каталогов ' + dirs.length +
+          (dirs.length ? ' (' + dirs.join(', ') + ')' : '') +
+          ', файлов сырья ' + srcs.length +
+          ((out.kept && out.kept.length) ? '; служебные оставил: ' + out.kept.join(', ') : ''))
+      } else {
+        setTone('error')
+        setStatus('очистка не прошла: ' + ((out && out.error) || 'причина неизвестна'))
+      }
+    } catch (err) {
+      setTone('error')
+      setStatus('очистка не прошла: ' + note(err))
+    } finally { setBusy('') }
+  }
+
+  /* Сброс панели после уборки: владелец просил оставить нетронутыми только строку
+     «Источник» (если не пустая) и выбранную категорию скилла - её выбирают редко
+     и терять не хочется. Всё остальное - поля, сводки, предпросмотр, план - к
+     исходному состоянию, иначе панель показывала бы данные убранного черновика. */
+  const resetAfterPurge = () => {
+    setText(''); setTextInfo(null); setOutOpen(false)
+    setReport(null); setFetchedSig(''); setRerunErr('')
+    setName(''); setStrat('auto'); setMode('technical'); setLang('ru'); setAct('auto')
+    setCatDesc(''); setCatErr(''); setNameAuto(false)
+    setDraft(null); setDraftText(null); setDraftFile(''); setDraftOpen(false)
+    setDrafts(null); setInstalled(null); setChapterPlan(null); setChapterOpen(false)
+    setPreview(null); setReadySeen(false); setDraftWait(false)
+    setLlmSid(''); setLlmLabel('')
+    onlyB(1)
+  }
+
   /** Черновик пишет агент в чате — панель о готовности не узнаёт ниоткуда, и раньше
       после «Сделать черновик» она молчала: человек читал «черновика нет» и решал,
       что кнопка сломана. Теперь панель сама читает staging, пока файлы не появятся
@@ -1698,7 +1740,8 @@ function B2SPane({ ctx }) {
     openFile: 'Показать текст файла черновика: ',
     catDesc: 'Задание агенту в чате: написать description категории - файл скилла не трогается',
     catDescFix: 'Задание агенту в чате: обернуть готовый текст категории в frontmatter, тело сохранится',
-    prune: 'Убрать лишние рабочие каталоги: установленные старше срока и свежие сверх лимита. Сырьё уходит с ними, скиллы в профиле не трогаются'
+    prune: 'Убрать лишние рабочие каталоги: установленные старше срока и свежие сверх лимита. Сырьё уходит с ними, скиллы в профиле не трогаются',
+    purgeAll: 'Очистить промежуточные результаты работы и черновики (убрать мусор)'
   }
 
   /* Подпись задачи для плашки «в работе LLM»: что именно пишет агент в чате.
@@ -2558,47 +2601,76 @@ function B2SPane({ ctx }) {
          2–3 строки (замер: rowH 32/48 вместо 16) и плашка уезжала на 9–17 px вниз.
          В колонке её позиция не зависит от ширины вовсе. */
       jsxs('div', {
-        className: 'flex flex-col items-start gap-1',
+        className: 'flex w-full items-start justify-between gap-2',
         children: [
           jsxs('div', {
-            className: 'flex items-center gap-2 min-w-0',
+            className: 'flex min-w-0 flex-col items-start gap-1',
             children: [
-              jsx(StatusDot, { tone: dotTone, style: { flexShrink: 0 } }),
-              jsx('span', Ell('BOOK → SKILL', 'text-xs font-medium text-(--ui-text-primary)'))
+              jsxs('div', {
+                className: 'flex items-center gap-2 min-w-0',
+                children: [
+                  jsx(StatusDot, {
+                    tone: dotTone,
+                    /* SDK рисует 'good' как `bg-primary` - это АКЦЕНТ ТЕМЫ, а не зелёный:
+                       на светлой теме точка «ядро на связи» выглядела белой (владелец:
+                       «почему шарик белый, а при ошибке красный»). Красный работает,
+                       потому что 'bad' = `bg-destructive`. Зелёный задаём свой - тем же
+                       STEP_GREEN, что у состояния шага; остальные тона SDK красит верно. */
+                    style: Object.assign({ flexShrink: 0 },
+                      dotTone === 'good' ? { backgroundColor: STEP_GREEN } : {}),
+                  }),
+                  jsx('span', Ell('BOOK → SKILL', 'text-xs font-medium text-(--ui-text-primary)'))
+                ]
+              }),
+              /* Работа LLM - ПЕРВОЙ веткой: в эти минуты панель не в прямом режиме, и
+                 зелёная плашка «ядро на связи» читалась как «всё готово». Владелец:
+                 «пиши в плашке просто "Работает LLM..." и всё» - задача в подписи
+                 сбивала с толку: работа идёт не обязательно над черновиком. Тултип
+                 называет цену: счёт растёт в чате. */
+              llmTurn
+                ? jsx(Badge, {
+                    variant: 'warn', style: BTN_FIT,
+                    title: 'Агент работает в чате - платный шаг: счёт растёт с каждой итерацией. Панель ждёт результат и заперла кнопки этого шага',
+                    children: cutSpan('Работает LLM...')
+                  })
+                : isWorking
+                  ? jsx(Badge, { variant: 'warn', style: BTN_FIT, children: cutSpan('работаю') })
+                  : core === null
+                    ? jsx(Badge, {
+                        variant: 'muted', style: BTN_FIT,
+                        title: 'проверяю ответ локального ядра: GET /api/plugins/b2s/health',
+                        children: cutSpan('проба ядра…')
+                      })
+                    : core
+                      /* Зелёный success, а не серый muted: «на связи» — это норма, и она должна
+                         читаться состоянием, а не фоном; подробности (staging, python, черновики) —
+                         в наведении. Badge SDK тоже `shrink-0 whitespace-nowrap` в базовом классе,
+                         поэтому сжимается инлайном BTN_FIT + подпись cutSpan (грабля 15). */
+                      ? jsx(Badge, {
+                          variant: 'success', style: BTN_FIT, title: coreTip,
+                          children: cutSpan('прямой режим · локальный Python')
+                        })
+                      : jsx(Badge, {
+                          variant: 'warn', style: BTN_FIT,
+                          title: 'Маршруты /api/plugins/b2s/ ещё не смонтированы - панель уходит в чат. Перезапусти dashboard-службу: tools/restart_dashboard.py',
+                          children: cutSpan('ядро не ответило - перезапусти dashboard')
+                        })
             ]
           }),
-          /* Работа LLM - ПЕРВОЙ веткой: в эти минуты панель не в прямом режиме, и
-             зелёная плашка «ядро на связи» читалась как «всё готово». Владелец:
-             «при работе LLM состояние висит как прямой режим, а должно быть жёлтое
-             "в работе LLM"». Тултип называет задачу и цену - счёт растёт в чате. */
-          llmTurn
-            ? jsx(Badge, {
-                variant: 'warn', style: BTN_FIT,
-                title: 'Агент пишет ' + (llmLabel || 'задачу') + ' в чате - платный шаг: счёт растёт с каждой итерацией. Панель ждёт результат и заперла кнопки этого шага',
-                children: cutSpan('в работе LLM' + (llmLabel ? ' · ' + llmLabel : ''))
-              })
-            : isWorking
-              ? jsx(Badge, { variant: 'warn', style: BTN_FIT, children: cutSpan('работаю') })
-              : core === null
-                ? jsx(Badge, {
-                    variant: 'muted', style: BTN_FIT,
-                    title: 'проверяю ответ локального ядра: GET /api/plugins/b2s/health',
-                    children: cutSpan('проба ядра…')
-                  })
-                : core
-                  /* Зелёный success, а не серый muted: «на связи» — это норма, и она должна
-                     читаться состоянием, а не фоном; подробности (staging, python, черновики) —
-                     в наведении. Badge SDK тоже `shrink-0 whitespace-nowrap` в базовом классе,
-                     поэтому сжимается инлайном BTN_FIT + подпись cutSpan (грабля 15). */
-                  ? jsx(Badge, {
-                      variant: 'success', style: BTN_FIT, title: coreTip,
-                      children: cutSpan('прямой режим · локальный Python')
-                    })
-                  : jsx(Badge, {
-                      variant: 'warn', style: BTN_FIT,
-                      title: 'Маршруты /api/plugins/b2s/ ещё не смонтированы - панель уходит в чат. Перезапусти dashboard-службу: tools/restart_dashboard.py',
-                      children: cutSpan('ядро не ответило - перезапусти dashboard')
-                    })
+          /* Урна - в правом верхнем углу шапки: убрать промежуточное разом, не
+             дожидаясь TTL и лимитов ядра. Скиллы в профиле не трогаются, а панель
+             после уборки сбрасывает поля: остаются источник и категория скилла. */
+          jsx(Button, {
+            size: 'sm',
+            variant: 'ghost',
+            disabled: !!busy,
+            onClick: runPurgeAll,
+            className: 'h-6 shrink-0 justify-end text-[0.625rem] text-(--ui-text-primary)',
+            style: CHIP_FIT,
+            /* Подсказка едет через подпись (``fitLabel`` → ``Ell`` ставит title на
+               span): SDK-кнопка свой ``title`` в DOM не отдаёт - тултип пропадал. */
+            children: fitLabel('🗑️', TIP.purgeAll)
+          })
         ]
       }),
       /* Назначение инструмента — одной строкой с многоточием: при сужении панели
