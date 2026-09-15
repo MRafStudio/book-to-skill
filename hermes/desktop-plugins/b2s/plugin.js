@@ -2690,10 +2690,13 @@ function B2SPane({ ctx }) {
                       /* Зелёный success, а не серый muted: «на связи» — это норма, и она должна
                          читаться состоянием, а не фоном; подробности (staging, python, черновики) —
                          в наведении. Badge SDK тоже `shrink-0 whitespace-nowrap` в базовом классе,
-                         поэтому сжимается инлайном BTN_FIT + подпись cutSpan (грабля 15). */
+                         поэтому сжимается инлайном BTN_FIT + подпись cutSpan (грабля 15).
+                         Подпись короткая - «локальный режим»: владелец просил без хвоста
+                         «прямой режим · локальный Python» (что LLM не работает, видно из первой
+                         ветки плашки). */
                       ? jsx(Badge, {
                           variant: 'success', style: BTN_FIT, title: coreTip,
-                          children: cutSpan('прямой режим · локальный Python')
+                          children: cutSpan('локальный режим')
                         })
                       : jsx(Badge, {
                           variant: 'warn', style: BTN_FIT,
