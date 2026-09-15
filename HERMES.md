@@ -220,8 +220,9 @@
   прогон так: `"<venv>/Scripts/python.exe" - <<'PYEOF'` с `sys.executable` внутри.
 - **Панель кормит backend ПРИЛОЖЕНИЯ, а не служба dashboard - и это разные двери.**
   Панель b2s ходит в процесс, который Electron поднял сам: его порт виден в
-  `data/hermes/logs/desktop.log` строкой `HERMES_BACKEND_READY port=65250` (сейчас
-  `127.0.0.1:65250`, свой PID, старт 8:39). Служба `HermesGateway` (порт 9119,
+  `data/hermes/logs/desktop.log` строкой `HERMES_BACKEND_READY port=...` (порт
+  динамический: каждый запуск свой, берётся из ПОСЛЕДНЕЙ такой строки в логе; на
+  2026-09-15 это `54552`). Служба `HermesGateway` (порт 9119,
   сетевой dashboard с basic_auth) в этом не участвует: её рестарт оживляет только
   её саму. Признак ошибки: `python tools/probe_route.py draft --post '{"name":"…","src":"…"}'`
   на 9119 отдаёт уже новый ответ (`has_draft: true`, `matched: meta`), а панель
