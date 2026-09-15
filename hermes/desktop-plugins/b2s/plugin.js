@@ -432,21 +432,26 @@ function PaneBlock({ n, title, state, tone, open, onToggle, hint, foot, style, c
     ),
     children: [
       jsxs('div', {
-        className: 'flex min-w-0 cursor-pointer select-none items-center gap-1 rounded-md px-2 py-1',
+        /* Выравнивание по БАЗОВОЙ ЛИНИИ, а не по центру блока: заголовок блока 11px,
+           состояние (« · URL - нужен разбор») 10px, и при `items-center` центры строк
+           разной высоты не совпадали - состояние уезжало вверх на 1-2 px (владелец
+           поймал это на всех блоках, у третьего - на два). Плюс `leading-none` у обоих
+           текстов: одинаковая высота строки убирает разницу от межстрочного. */
+        className: 'flex min-w-0 cursor-pointer select-none items-baseline gap-1 rounded-md px-2 py-1',
         role: 'button',
         'aria-expanded': open ? 'true' : 'false',
         title: (open ? 'свернуть: ' : 'развернуть: ') + n + '. ' + title,
         onClick: onToggle,
         children: [
           jsx('span', {
-            className: 'shrink-0 text-[0.625rem] opacity-60',
+            className: 'shrink-0 text-[0.625rem] leading-none opacity-60',
             'aria-hidden': 'true',
             children: open ? '▾' : '▸'
           }),
-          cutSpan(n + '. ' + title, 'text-[0.6875rem] font-medium'),
-          state ? cutSpan(' · ' + state, 'text-[0.625rem] opacity-80') : null
-        ]
-      }),
+          cutSpan(n + '. ' + title, 'text-[0.6875rem] font-medium leading-none'),
+          state ? cutSpan(' · ' + state, 'text-[0.625rem] leading-none opacity-80') : null
+              ]
+            }),
       open ? jsx('div', { className: 'flex min-w-0 flex-col gap-2 px-2 pb-1', children }) : null,
       open
         ? jsx('div', {

@@ -234,6 +234,11 @@ def main() -> int:
     check("обход закрыт и в обработчиках next3/next4",
           src.count("if (!block2Passed) {") >= 2,
           "кнопки блокируются, а клик по шапке блока открывает его - проверять надо и в переходе")
+    check("состояние в шапке блока выровнено по базовой линии заголовка",
+          "items-baseline gap-1 rounded-md px-2 py-1" in src and
+          "cutSpan(n + '. ' + title, 'text-[0.6875rem] font-medium leading-none')" in src and
+          "cutSpan(' · ' + state, 'text-[0.625rem] leading-none opacity-80')" in src,
+          "владелец: дополнение через точку писалось на 1-2 px выше заголовка блока")
     check("блок 1 требует ТОЛЬКО источник: имя уехало в блок 3",
           "disabled: !!busy || !trimSrc," in src and
           "disabled: !!busy || !trimSrc || nameWarn" not in src,
