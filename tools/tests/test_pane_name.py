@@ -99,6 +99,17 @@ def main() -> int:
     # 3) в живом файле нет старой формы без нормализации
     check("старой формы useState(stored.name || '') нет",
           re.search(r"useState\(\s*stored\.name\s*\|\|", src) is None)
+
+    # 4) подсветка поля: ошибка красит РАМКУ красным (тонко, как блок 3), а подпись
+    #    под полем остаётся оранжевой - владелец просил цвет текста не менять
+    check("ошибка имени красит рамку красным (color-mix 45%, как рамка блока 3)",
+          "color-mix(in srgb, ' + STOP_RED + ' 45%, transparent)" in src,
+          "рамка ошибки не покраснела")
+    check("рамка различает ошибку и предупреждение (красная / оранжевая)",
+          "? { border: '1px solid ' + (nameBad" in src and ": WARN_YELLOW) }" in src)
+    check("цвет ПОДПИСИ под полем остался оранжевым",
+          "style: (nameWarn || nameBad) ? { color: WARN_YELLOW } : null" in src,
+          "текст сообщения перекрасили")
     return report()
 
 

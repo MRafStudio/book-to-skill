@@ -203,12 +203,12 @@ def main() -> int:
           "stored.name || 'python-pathlib'" not in src,
           "панель подставит своё имя, и скилл уедет под чужим (восстановленное из storage "
           "имя нормализуем - подробности и сторож в test_pane_name.py)")
-    check("пустое имя подсвечено жёлтым (окантовка поля + та же краска у подписи)",
+    check("пустое имя подсвечено: рамка ошибки КРАСНАЯ, подпись под полем оранжевая",
           "const nameWarn = !wanted" in src and
-          "border: '1px solid ' + WARN_YELLOW" in src and
+          "color-mix(in srgb, ' + STOP_RED + ' 45%, transparent)" in src and
           "style: (nameWarn || nameBad) ? { color: WARN_YELLOW } : null" in src and
           "text-amber-400" not in src,
-          "палитра Tailwind в панели не подключена - цвет классом не появится")
+          "владелец: рамку ошибки - как тонкую красную у блока 3, а краску текста не трогать")
     check("окантовка имени не жирнее чипсы DESCRIPTION.md: ровно 1 px, без boxShadow",
           "NAME_WARN" not in src and "boxShadow: 'inset 0 0 0 1px '" not in src,
           "borderColor + inset-тень давали двойную линию - владелец: «беспрецедентно толстая»")
