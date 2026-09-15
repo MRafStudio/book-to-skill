@@ -89,6 +89,10 @@ def initial_state() -> dict:
         "cat": dash.DEFAULT_CATEGORY,
         "report": None,           # последний УДАЧНЫЙ отчёт
         "report_at": "",
+        # Входы, по которым снят `report`. Ядро пишет их ТОЛЬКО при удачном прогоне:
+        # `src` же обновляется на любом вводе - иначе панель после провала принимала бы
+        # «текущий ввод» за разобранный источник («1» в поле - и блок 1 зелёный).
+        "report_inputs": None,
         "last_error": None,       # последний провал: причина и время
         "history": [],
     }
@@ -176,6 +180,11 @@ def run_fetch(st: dict) -> dict:
     if report.get("ok"):
         st["report"] = report
         st["report_at"] = time.strftime("%H:%M:%S")
+        # Входы удачного прогона - единственный честный источник отпечатка разбора.
+        # Провал их не переписывает: прежний отчёт остаётся при СВОИХ входах, и панель
+        # не выдаёт провалившийся ввод за «уже разобранный».
+        st["report_inputs"] = {"src": src, "strat": strat or "auto",
+                               "mode": st.get("mode") or ""}
         st["last_error"] = None
     else:
         st["last_error"] = {

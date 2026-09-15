@@ -996,11 +996,15 @@ function B2SPane({ ctx }) {
                перезапускается вместе с приложением, а отчёт на диске остаётся. Без
                этого `fetchedSig` был бы пуст при каждом старте, `analyzed` - ложью,
                и живой отчёт по текущему источнику прятался бы как «чужой», а панель
-               звала бы прогонять разбор заново. Берём ровно то, что ядро записало
-               при прогоне: источник, стратегию, режим. */
+               звала бы прогонять разбор заново.
+               Берём НЕ «текущий ввод» ядра (`state.src`), а входы ОТЧЁТА
+               (`report_inputs`): `src` ядро пишет на любом вводе, даже провальном,
+               поэтому владелец с «1» в поле получал зелёную границу блока 1 -
+               якобы разобранный источник, которого никто не разбирал. */
             const stt = (s && s.state) || {}
-            if (stt.src) {
-              setFetchedSig(analysisSigOf({ src: stt.src, strat: stt.strat, mode: stt.mode }))
+            const ri = stt.report_inputs
+            if (ri && ri.src) {
+              setFetchedSig(analysisSigOf({ src: ri.src, strat: ri.strat, mode: ri.mode }))
             }
             loadText(6000)   // текст последнего прогона готов сразу, без кликов
           }
@@ -1501,6 +1505,10 @@ function B2SPane({ ctx }) {
       setRerunErr(why)
       // Ядро говорит, чей это провал: получение источника (блок 1) или разбор (блок 2).
       setRerunErrKind(out.failure_kind || 'source')
+      /* Отпечаток разбора снимаем: прогон не состоялся, и прежний отпечаток не имеет
+         права подтверждать текущий ввод как «уже разобранный» - иначе провалившийся
+         источник («1» в поле) показывался бы зелёной границей блока 1. */
+      setFetchedSig('')
       return { ok: false, why }
     } catch (err) {
       /* Раньше здесь был тихий уход в чат (`sendIntent('rerun')`): сбой ядра
@@ -1512,6 +1520,7 @@ function B2SPane({ ctx }) {
       setStatus(why + ' - источник ещё не прогнан')
       setRerunErr(why)
       setRerunErrKind('core')
+      setFetchedSig('')   // авария ядра тоже не подтверждает разбор
       return { ok: false, why }
     } finally {
       busyRef.current = false
@@ -1709,7 +1718,11 @@ function B2SPane({ ctx }) {
   const reportOtherSrc = !!report && !!reportSrc && normSrc(reportSrc) !== normSrc(trimSrc)
   const mdSrc = srcIsMarkdown(trimSrc)
   const curSig = analysisSigOf({ src: trimSrc, strat, mode })
-  const analyzed = !!report && report.chars != null && fetchedSig !== '' && fetchedSig === curSig
+  /* Отчёт считается «по этим входам» только если он ещё и принадлежит ЭТОМУ источнику:
+     иначе состояние ядра (прежний удачный отчёт + новый ввод в поле) выдавало бы чужой
+     отчёт за завершённый анализ - с «1» в поле блок 1 красовался зелёной границей. */
+  const analyzed = !!report && report.chars != null && !reportOtherSrc
+    && fetchedSig !== '' && fetchedSig === curSig
   const staleReport = !!report && !analyzed && !reportOtherSrc
   /* «Блок 2 пройден» - отдельный признак, а не синоним `analyzed`: у markdown-источника
      блок 2 панель помечает «пропустим», и требовать разбор там нечего. Нужен, чтобы
