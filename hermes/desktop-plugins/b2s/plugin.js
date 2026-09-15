@@ -1692,10 +1692,17 @@ function B2SPane({ ctx }) {
      обесценивает план в блоке 5. Иначе кнопка обещала бы «Прогнать заново» по отчёту
      от другого источника, а черновик собрался бы по чужим метрикам. */
   const trimSrc = (src || '').trim()
+  /* Отчёт ядра принадлежит ДРУГОМУ источнику: `/state` держит последний прогон, а в поле уже
+     новый вход. Такой отчёт панель не показывает вовсе и не выдаёт за «прежние входы» этого
+     шага: «кнопка не применялась, а он берёт данные откуда-то со старого источника» - владелец.
+     Сравниваем нормализованно (слэши, хвостовой слэш, регистр), как ядро записало ввод. */
+  const normSrc = (v) => String(v || '').trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  const reportSrc = report ? String(report.url || report.src || '').trim() : ''
+  const reportOtherSrc = !!report && !!reportSrc && normSrc(reportSrc) !== normSrc(trimSrc)
   const mdSrc = srcIsMarkdown(trimSrc)
   const curSig = analysisSigOf({ src: trimSrc, strat, mode })
   const analyzed = !!report && report.chars != null && fetchedSig !== '' && fetchedSig === curSig
-  const staleReport = !!report && !analyzed
+  const staleReport = !!report && !analyzed && !reportOtherSrc
   /* «Блок 2 пройден» - отдельный признак, а не синоним `analyzed`: у markdown-источника
      блок 2 панель помечает «пропустим», и требовать разбор там нечего. Нужен, чтобы
      «ДАЛЕЕ» в блоках 3-5 не срабатывала В ОБХОД анализа: блоки открываются кликом по

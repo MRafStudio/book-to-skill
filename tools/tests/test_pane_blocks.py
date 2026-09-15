@@ -348,6 +348,12 @@ def main() -> int:
           "setFetchedSig(analysisSigOf({ src: stt.src, strat: stt.strat, mode: stt.mode }))" in src
           and "const stt = (s && s.state) || {}" in src,
           "после перезапуска панели свежий отчёт выглядит чужим")
+    # Отчёт ЧУЖОГО источника = как отсутствие отчёта: панель не зовёт «повторить обработку»
+    # и не выдаёт чужие метрики за прежние входы этого шага (staleReport гейтится !reportOtherSrc).
+    check("отчёт другого источника не считается прежними входами шага",
+          "const staleReport = !!report && !analyzed && !reportOtherSrc" in src
+          and "const reportOtherSrc = !!report && !!reportSrc && normSrc(reportSrc) !== normSrc(trimSrc)" in src,
+          "панель зовёт «повторить обработку» по отчёту другого источника")
     check("кнопка шага 1 при работе говорит «Идёт разбор…», а не обещает результат",
           "busy === 'rerun' ? 'Идёт разбор…'" in src and "busy === 'rerun' ? '⏳'" in src)
 
