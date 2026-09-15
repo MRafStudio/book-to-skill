@@ -276,6 +276,11 @@ const emojiGlyph = (ch) => jsx('span', { style: EMOJI_FIT, 'aria-hidden': 'true'
 const iconFolder = () => emojiGlyph('📂')
 const iconClipboard = () => emojiGlyph('📋')
 
+/* Тот же кегль (13 px) для эмодзи-пиктограмм в СЛУЖЕБНЫХ кнопках-квадратиках шапки:
+   их размер - `icon-xs` (24×24), как у 📂/📋 в блоке 1. Без инлайнового кегля
+   эмодзи наследует кегль кнопки и картинки в шапке и в блоке 1 выглядят по-разному. */
+const GLYPH_CLS = 'text-[0.8125rem] leading-none'
+
 /* Имя файла из пути — для человеческого тоста («Источник — файл: pathlib.html»),
    при этом полный путь остаётся в detail. */
 const baseNameOf = (p) => String(p || '').split(/[\\/]/).filter(Boolean).pop() || String(p || '')
@@ -2748,26 +2753,24 @@ function B2SPane({ ctx }) {
               /* Аудит связей: клик не запускает работу сразу - сначала окно с категорией
                  и предупреждением, что граф строится только по ней. */
               jsx(Button, {
-                size: 'sm',
+                size: 'icon-xs',
                 variant: 'ghost',
                 disabled: !!busy,
                 onClick: () => { setAuditRep(null); setAuditOpen(true) },
-                className: 'h-6 shrink-0 justify-end text-[0.625rem] text-(--ui-text-primary)',
-                style: CHIP_FIT,
-                children: fitLabel('🔗', TIP.auditLinks)
+                className: 'shrink-0',
+                children: cutSpan('🔗', GLYPH_CLS, TIP.auditLinks)
               }),
               /* Урна: убрать промежуточное разом, не дожидаясь TTL и лимитов ядра.
                  Скиллы в профиле не трогаются, поля панели сбрасываются. */
               jsx(Button, {
-                size: 'sm',
+                size: 'icon-xs',
                 variant: 'ghost',
                 disabled: !!busy,
                 onClick: runPurgeAll,
-                className: 'h-6 shrink-0 justify-end text-[0.625rem] text-(--ui-text-primary)',
-                style: CHIP_FIT,
-                /* Подсказка едет через подпись (``fitLabel`` → ``Ell`` ставит title на
+                className: 'shrink-0',
+                /* Подсказка едет через подпись (``cutSpan`` → ``Ell`` ставит title на
                    span): SDK-кнопка свой ``title`` в DOM не отдаёт - тултип пропадал. */
-                children: fitLabel('🗑️', TIP.purgeAll)
+                children: cutSpan('🗑️', GLYPH_CLS, TIP.purgeAll)
               })
             ]
           })

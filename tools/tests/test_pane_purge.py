@@ -233,7 +233,12 @@ def main() -> int:
           head_slice[:160].replace("\n", " "))
     # 8. кнопка-урна
     check("в шапке есть кнопка-урна, зовущая runPurgeAll",
-          "children: fitLabel('🗑️', TIP.purgeAll)" in src and "onClick: runPurgeAll" in src)
+          "children: cutSpan('🗑️', GLYPH_CLS, TIP.purgeAll)" in src
+          and "onClick: runPurgeAll" in src)
+    check("урна того же размера, что кнопки блока 1 (icon-xs, 24×24)",
+          "size: 'icon-xs'" in src[max(0, src.find("onClick: runPurgeAll") - 400)
+                                    :src.find("onClick: runPurgeAll") + 400],
+          "владелец просил ширину как у «Выбрать файл» / «Вставить из буфера обмена»")
     check("подсказка урны едет подписью, а не title кнопки (SDK title не отдаёт)",
           "title: TIP.purgeAll" not in src)
     # 9. подсказка владельца дословно
