@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -93,7 +94,9 @@ if HOME.exists():
 (SKILLS / "probe-cat").mkdir(parents=True)
 (SKILLS / "probe-cat" / "DESCRIPTION.md").write_text(
     '---\ndescription: "Скиллы про пробу — кавычки."\n---\n', encoding="utf-8")
-check("слаг источника — имя каталога черновика", KEY, "example-com-probe-quoted-html")
+check("ключ источника — читаемая часть + хэш адреса (имя каталога черновика)",
+      KEY.startswith("example-com-probe-quoted-html") and re.search(r"-[0-9a-f]{10}$", KEY) is not None,
+      True)
 
 print("== 1. do_draft: двойные кавычки в шапке")
 d = draft_with(QUOTED)

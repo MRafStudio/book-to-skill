@@ -1,30 +1,31 @@
 #!/usr/bin/env python3
-"""Сторож слага источника: длинные адреса больше не сливаются в один ключ.
+"""Сторож ключа источника: имя файла = читаемый слаг + хэш ПОЛНОГО адреса.
 
-Зачем. Слаг адреса - это и имя файла в ``b2s_fetched``, и ключ каталога в ``staging``.
-До фикса он просто обрезался до 80 знаков, а у длинных ссылок r_keeper номер страницы
-стоит в ХВОСТЕ - значит два разных адреса с общим началом давали один слаг, один файл
-сырья и один каталог черновика. Владелец и поймал это: «каким макаром новый url по
-метрикам сходится с файлом анализа старого url?».
+Зачем. Ключ источника - это имя файла в ``b2s_fetched`` и имя каталога черновика в
+``staging``. Схема «обрезать слаг до 80 знаков» делала РАЗНЫЕ адреса одним ключом: у
+страниц r_keeper различие стоит в хвосте (номер), а у коротких - в схеме, регистре или
+query. Владелец: «в чём проблема отличить два url, у которых отличается один знак?».
 
 Правила, которые сторожим:
-1. короткий адрес - слаг КАК БЫЛ (никакого хэша): ключи существующих черновиков живы;
-2. длинный адрес - к обрезанному слагу добавлен короткий хэш адреса, длина <= 80;
-3. два РАЗНЫХ длинных адреса с общим началом - РАЗНЫЕ слаги;
-4. если по старой (обрезанной) форме в каталоге-хранителе уже что-то лежит, возвращается
-   она: ключ, однажды выданный, не меняется, иначе готовый черновик станет невидимым.
+1. ключ = читаемая часть + '-' + 10 знаков sha1 ПОЛНОГО адреса;
+2. адреса, различающиеся схемой, регистром или query, дают РАЗНЫЕ ключи;
+3. одинаковый адрес всегда даёт ОДИН и тот же ключ (стабильность ключа);
+4. длина ключа <= 80: режется только читаемая часть, хэш не режется никогда;
+5. старый (выданный ранее) ключ возвращается только СВОЕМУ адресу - по URL в шапке файла
+   сырья; чужой адрес с тем же началом его не забирает.
 
 Проверки
 --------
-1-2. короткий/длинный: форма и длина;
-3.   различие двух длинных адресов (главный смысл фикса);
-4.   сохранение выданного ключа (keep_dirs);
-5.   живой случай из проекта: файл сырья по прежнему ключу и его stem совпадают.
+1-3. форма, различия (схема/регистр/query), стабильность;
+4.   предел длины;
+5-6. выдача ключа владельцу и защита от чужих;
+7.   живой ключ проекта: файл сырья, по которому работает панель.
 """
 from __future__ import annotations
 
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -44,58 +45,55 @@ def check(name: str, ok: bool, detail: str = "", note: str = "") -> None:
 SHORT = "https://example.com/guide.html"
 LONG_A = "https://docs.rkeeper.ru/rk7/latest/ru/alcohol-accounting-interface-for-external-services-rkalcoex-dll-140051474.html"
 LONG_B = "https://docs.rkeeper.ru/rk7/latest/ru/alcohol-accounting-interface-for-external-services-rkalcoex-dll-140051475.html"
-LEGACY_A = ("docs-rkeeper-ru-rk7-latest-ru-alcohol-accounting-interface-for-external-services")
+LEGACY_A = "docs-rkeeper-ru-rk7-latest-ru-alcohol-accounting-interface-for-external-services"
 
 s_short = slug_for_url(SHORT)
 s_a = slug_for_url(LONG_A)
 s_b = slug_for_url(LONG_B)
 
-check("короткий адрес сохраняет прежнюю форму слага",
-      s_short == "example-com-guide-html",
-      f"получилось {s_short!r}: хэш полез в короткие адреса и сломал выданные ключи")
+check("ключ = читаемая часть + хэш полного адреса",
+      re.search(r"-[0-9a-f]{10}$", s_short) is not None
+      and s_short.startswith("example-com-guide-html"),
+      f"получилось {s_short!r}")
 
-check("длинный адрес обрезан и помечен хэшем адреса",
-      len(s_a) <= SLUG_MAX and re.search(r"-[0-9a-f]{8}$", s_a) is not None,
-      f"{s_a!r} (длина {len(s_a)})")
+check("два длинных адреса с разницей в хвосте дают РАЗНЫЕ ключи",
+      s_a != s_b, f"A={s_a!r} B={s_b!r}")
 
-check("два РАЗНЫХ длинных адреса дают РАЗНЫЕ слаги",
-      s_a != s_b,
-      "адреса слились в один слаг: файл сырья и каталог черновика будут общими")
+for name, u1, u2 in (("схема", "http://example.com/a", "https://example.com/a"),
+                     ("регистр пути", "https://example.com/a", "https://example.com/A"),
+                     ("query", "https://example.com/page?id=1", "https://example.com/page?id=2")):
+    check(f"адреса, различающиеся только на {name}, дают разные ключи",
+          slug_for_url(u1) != slug_for_url(u2),
+          f"{slug_for_url(u1)!r} против {slug_for_url(u2)!r}")
 
-check("слаг обрезан до общего предела (80)",
-      len(s_b) <= SLUG_MAX, f"длина {len(s_b)}")
+check("один и тот же адрес даёт ОДИН ключ (стабильность)",
+      slug_for_url(LONG_A) == s_a and len({slug_for_url(LONG_A) for _ in range(5)}) == 1,
+      "ключ плавает между вызовами: панель не найдёт свой файл")
 
-# Сохранение выданного ключа: подкладываем файл по СТАРОЙ форме в каталог-хранитель.
-import tempfile  # noqa: E402
+check("длина ключа не превышает 80",
+      max(len(slug_for_url(u)) for u in (SHORT, LONG_A, LONG_B)) <= SLUG_MAX,
+      f"длины: {[len(slug_for_url(u)) for u in (SHORT, LONG_A, LONG_B)]}")
 
 with tempfile.TemporaryDirectory() as tmp:
     keep = Path(tmp)
-    # Файл сырья хранит в шапке свой URL - по нему и узнаём законного владельца ключа.
+    # Файл сырья хранит в шапке свой URL - по нему узнаём законного владельца ключа.
     (keep / (LEGACY_A + ".md")).write_text(f"URL: {LONG_A}\n\nтекст\n", encoding="utf-8")
     s_kept = slug_for_url(LONG_A, keep_dirs=(keep,))
-    check("выданный ключ сохраняется (файл сырья по старой форме)",
-          s_kept == LEGACY_A,
-          f"получилось {s_kept!r}: черновик потерял бы свой каталог")
+    check("выданный ранее ключ возвращается своему владельцу",
+          s_kept == LEGACY_A, f"получилось {s_kept!r}: черновик потерял бы каталог")
     s_new = slug_for_url(LONG_B, keep_dirs=(keep,))
     check("чужой адрес с тем же началом НЕ забирает выданный ключ",
-          s_new != LEGACY_A and s_new != s_kept,
-          f"получилось {s_new!r}: ключ достался не своему источнику - файлы схлопнулись")
+          s_new != LEGACY_A, f"получилось {s_new!r}: файлы разных источников схлопнулись")
 
-# Живой случай проекта: файл сырья, по которому сейчас работает панель.
 FETCH = REPO / "b2s_fetched"
 if FETCH.is_dir():
     stems = {p.stem for p in FETCH.glob("*.md")}
-    checks_live = [st for st in stems if len(st) >= SLUG_MAX]
-    ok_live = bool(checks_live) and all(
-        slug_for_url(LONG_A if st == LEGACY_A else LONG_A, keep_dirs=(FETCH,)) in stems
-        for st in checks_live[:1])
     check("файл сырья на диске адресуется своим прежним ключом",
-          ok_live,
-          f"в b2s_fetched: {sorted(stems)[:3]}",
-          note=f"проверен ключ {LEGACY_A}")
+          LEGACY_A in stems and slug_for_url(LONG_A, keep_dirs=(FETCH,)) == LEGACY_A,
+          f"в b2s_fetched нет {LEGACY_A!r}", note=LEGACY_A)
 
 print(f"\nпроверок: {len(checks)}, провалов: {sum(1 for _, ok in checks if not ok)}")
 if any(not ok for _, ok in checks):
     print("провалено: " + "; ".join(name for name, ok in checks if not ok))
     sys.exit(1)
-print("ВСЁ ЗЕЛЁНОЕ: слаг различает длинные адреса и не ломает уже выданные ключи")
+print("ВСЁ ЗЕЛЁНОЕ: ключ источника различает адреса и не ломает уже выданные")
