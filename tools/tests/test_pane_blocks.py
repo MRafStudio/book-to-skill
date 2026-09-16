@@ -278,10 +278,15 @@ def main() -> int:
           "className: 'flex items-baseline gap-2'" not in src,
           "владелец: «Имя скилла на 1-2 px ниже Категории» - у поля с хинтом шапка выше")
     check("подпись-хинт посажена на HINT_FIT, а не «висит» выше лейбла",
-          "const HINT_FIT = {" in src and
-          "style: Object.assign({}, CUT, HINT_FIT)" in src,
+          "const HINT_FIT = {" in src and "CUT, HINT_FIT, hintDrop ?" in src,
           "владелец: после лейбла «Имя скилла» подпись «свободно - новый» стояла ВЫШЕ "
           "основной строки - кегль 10 px против 11 px садится выше при items-center")
+    i_drop = src.find("hintDrop: ")
+    check("сдвиг хинта (hintDrop) - исключение ровно для одного поля",
+          src.count("hintDrop: ") == 1 and src.count("hintDrop ?") == 1
+          and "hint: 'URL или путь'" in src[max(0, i_drop - 400):i_drop],
+          f"hintDrop встречается {src.count('hintDrop: ')} раз(а): сдвинулись хинты, о которых "
+          "владелец не просил - он просил опустить только подпись «URL или путь» у шага 1")
     check("главная кнопка шага отбита от содержимого (футер с pt-1)",
           "className: 'flex min-w-0 items-center gap-2 px-2 pb-2 pt-1'" in src,
           "владелец: кнопки «ДАЛЕЕ» и «Предпросмотр» надо опустить минимум на 3 px")

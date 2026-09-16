@@ -534,7 +534,7 @@ function NextBtn({ label, onClick, disabled, fill, title }) {
   })
 }
 
-function Field({ label, hint, children }) {
+function Field({ label, hint, hintDrop, children }) {
   return jsxs('label', {
     className: 'flex min-w-0 flex-col gap-1',
     children: [
@@ -550,7 +550,10 @@ function Field({ label, hint, children }) {
             ? jsx('span', Object.assign(
               {},
               Ell(hint, 'text-[0.625rem] text-(--ui-text-tertiary) opacity-70'),
-              { style: Object.assign({}, CUT, HINT_FIT) }
+              /* `hintDrop` - исключение для ОДНОГО поля (владелец просил опустить «URL или
+                 путь» под лейблом «Источник» на 1 px). Общая посадка остаётся HINT_FIT:
+                 иначе сдвинулись бы все шесть хинтов панели. */
+              { style: Object.assign({}, CUT, HINT_FIT, hintDrop ? { top: HINT_FIT.top + hintDrop } : {}) }
             ))
             : null
         ]
@@ -3176,6 +3179,9 @@ function B2SPane({ ctx }) {
           jsx(Field, {
             label: 'Источник',
             hint: 'URL или путь',
+            /* Владелец: «опустить на 1 пиксель строку "URL или путь"» - подпись сидела выше
+               лейбла и читалась отдельной строкой. Общий HINT_FIT даёт top: 1, здесь top: 2. */
+            hintDrop: 1,
             children: jsxs('div', {
               ref: srcRow,
               className: 'flex items-center gap-1',
