@@ -6,6 +6,7 @@ consumes. The URL -> text cascade itself lives in ``book_to_skill/plugins``.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -33,10 +34,65 @@ JUNK_MARKERS = (
 )
 
 
-def slug_for_url(url: str) -> str:
+SLUG_MAX = 80
+# Хэш добавляется ТОЛЬКО при обрезке: короткие адреса сохраняют прежний слаг (и прежние
+# ключи черновиков), а длинные перестают быть неразличимыми между собой.
+SLUG_HASH_LEN = 9          # '-' + 8 знаков sha1
+
+
+def _legacy_owner(d: Path, legacy: str) -> str:
+    """Кому УЖЕ выдан этот ключ: URL владельца, '?' если не понять, '' если ключ свободен.
+
+    Ключ возвращаем только законному хозяину: файл сырья хранит в шапке строку
+    ``URL: <адрес>``, а каталог черновика - источник в ``metadata.json``. Без этой сверки
+    ЛЮБОЙ адрес с тем же 80-символьным началом получал бы чужой ключ - и два разных
+    источника снова схлопывались бы в один файл.
+    """
+    for ext in (".md", ".txt"):
+        f = d / (legacy + ext)
+        if f.is_file():
+            head = f.read_bytes()[:600].decode("utf-8", "replace")
+            m = re.search(r"(?m)^URL:\s*(\S+)", head)
+            return m.group(1).strip() if m else "?"
+    meta = d / legacy / "metadata.json"
+    if meta.is_file():
+        try:
+            data = json.loads(meta.read_text(encoding="utf-8"))
+        except Exception:
+            return "?"
+        src = str(((data.get("source") or {}) if isinstance(data, dict) else {}).get("url") or "")
+        return src.strip() or "?"
+    return ""
+
+
+def slug_for_url(url: str, keep_dirs=()) -> str:
+    """Слаг источника: он же ключ черновика и имя файла в ``b2s_fetched``.
+
+    Слаг обрезается до ``SLUG_MAX``. Раньше обрезка делала РАЗНЫЕ адреса неразличимыми:
+    у длинных ссылок r_keeper (номер страницы уезжает в хвост) два url с общим началом
+    получали один слаг - а значит один файл сырья и один каталог черновика. Владелец:
+    «каким макаром новый url по метрикам сходится с файлом анализа старого url?».
+    Теперь при обрезке к слагу добавляется короткий хэш АДРЕСА, и имена файлов снова
+    различают источники.
+
+    ``keep_dirs`` - каталоги, где слаг уже РАБОТАЕТ (файл сырья, каталог staging). Старая
+    (обрезанная) форма возвращается, только если она принадлежит ЭТОМУ адресу: ключ,
+    однажды выданный, не меняется - иначе готовый черновик стал бы для панели невидимым.
+    """
     slug = re.sub(r"^https?://", "", url)
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", slug).strip("-").lower()
-    return slug[:80] or "fetched"
+    if not slug:
+        return "fetched"
+    if len(slug) <= SLUG_MAX:
+        return slug
+    legacy = slug[:SLUG_MAX]
+    want = url.strip()
+    for d in keep_dirs or ():
+        owner = _legacy_owner(Path(d), legacy)
+        if owner and owner != "?" and owner == want:
+            return legacy
+    digest = hashlib.sha1(url.strip().encode("utf-8", "replace")).hexdigest()[:8]
+    return slug[:SLUG_MAX - SLUG_HASH_LEN].rstrip("-") + "-" + digest
 
 
 def count_junk(text: str) -> dict:
@@ -129,7 +185,7 @@ class Fetcher:
 
         out_dir = Path(out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
-        name = slug_for_url(url) + (".md" if result.kind == "markdown" else ".txt")
+        name = slug_for_url(url, keep_dirs=(out_dir,)) + (".md" if result.kind == "markdown" else ".txt")
         path = out_dir / name
         # The header is provenance for the generated skill: upstream's extractor
         # carries it into full_text.txt, so the source URL survives the pipeline.

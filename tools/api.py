@@ -74,6 +74,16 @@ from book_to_skill.fetcher import slug_for_url  # noqa: E402
 # машину. Здесь определяем только рабочие каталоги самого клона.
 STAGING = REPO / "staging"
 FETCH_DIR = REPO / "b2s_fetched"   # сюда каскад кладёт очищенный текст и report.json
+
+def key_for(src: str) -> str:
+    """Ключ источника: слаг, но с сохранением УЖЕ выданной (обрезанной) формы.
+
+    Ядро и фетчер зовут один ``slug_for_url``; каталоги-хранители ключа (сырьё и staging)
+    передаём здесь, чтобы готовый черновик не стал невидимым после смены формата слага у
+    длинных адресов (см. ``slug_for_url`` в ``book_to_skill/fetcher.py``).
+    """
+    return slug_for_url(src, keep_dirs=(FETCH_DIR, STAGING))
+
 BACKUP_DIR = REPO / "backups"      # копия скилла перед правкой на месте (долив/замена)
 BACKUP_KEEP = 5                    # сколько копий на один скилл держим
 # Интерпретатор для гейтов (validate/scan). Плагин задаёт его через B2S_PYTHON:
@@ -552,7 +562,7 @@ def _draft_key(src: str = "", st: dict | None = None) -> str:
         if stem:
             return stem
     if asked:
-        return slug_for_url(asked)
+        return key_for(asked)
     return Path(str(rep.get("source_file") or "")).stem
 
 
@@ -598,7 +608,7 @@ def _draft_lookup(name: str = "", src: str = "") -> tuple[Path, str]:
     if key:
         for p in dirs:
             meta_src = _draft_meta_src(p)
-            if meta_src and slug_for_url(meta_src) == key:
+            if meta_src and key_for(meta_src) == key:
                 return p, "meta"
     # 3. Наследие: каталог по имени скилла (и источник неизвестен, и метаданных нет).
     if wanted and (STAGING / wanted).is_dir():
@@ -879,12 +889,12 @@ def _is_active_draft(key: str, src: str, active: str) -> bool:
     """
     if not active:
         return False
-    return key == active or bool(src) and slug_for_url(src) == active
+    return key == active or bool(src) and key_for(src) == active
 
 
 def _source_files(src: str, key: str) -> list[Path]:
     """Файлы сырья источника в ``b2s_fetched``: ``<слаг>.md|.txt`` и их отчёты."""
-    stems = {s for s in (key, slug_for_url(src) if (src or "").strip() else "") if s}
+    stems = {s for s in (key, key_for(src) if (src or "").strip() else "") if s}
     out: list[Path] = []
     for stem in sorted(stems):
         out += sorted(p for p in FETCH_DIR.glob(f"{stem}.*") if p.is_file())
