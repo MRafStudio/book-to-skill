@@ -82,6 +82,10 @@ check("кнопка сделана штатным NextBtn панели",
       "jsx(NextBtn, {" in branch,
       "своя кнопка мимо NextBtn: другой размер, другое поведение обрезки текста")
 
+check("кнопка залита как «ДАЛЕЕ» (STEP_BG), а не серым ghost",
+      "fill: STEP_BG" in branch,
+      "владелец: кнопка выбивалась из темы - нужна та же зелёная заливка, что у «ДАЛЕЕ»")
+
 print(f"\nпроверок: {len(checks)}, провалов: {sum(1 for _, ok in checks if not ok)}")
 if any(not ok for _, ok in checks):
     print("провалено: " + "; ".join(n for n, ok in checks if not ok))
