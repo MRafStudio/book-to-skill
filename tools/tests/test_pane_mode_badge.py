@@ -91,9 +91,12 @@ check("отправка задания в чат взводит llmSid и llmLab
       "setLlmSid(sid)" in send_body and "setLlmLabel(LLM_LABEL[kind] || '')" in send_body,
       "плашка не узнает, что задание ушло")
 
-check("плашка локального режима подписана коротко - «локальный режим»",
-      "cutSpan('локальный режим')" in src and "cutSpan('прямой режим · локальный Python')" not in src,
-      "владелец: без хвоста «прямой режим - локальный Python»")
+check("плашка простоя подписана «ожидание задачи»",
+      "cutSpan('ожидание задачи')" in src
+      and "cutSpan('локальный режим')" not in src
+      and "cutSpan('прямой режим · локальный Python')" not in src,
+      "владелец: в простое плашка говорит «ожидание задачи», а не «локальный режим» - "
+      "тот описывал способ работы, а не состояние панели")
 
 i_tip = src.find("const coreTip")
 tip_slice = src[i_tip:i_tip + 700] if i_tip > 0 else ""
