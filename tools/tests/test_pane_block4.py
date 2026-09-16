@@ -336,7 +336,9 @@ def main() -> int:
         "runRerun (разбор источника)": "const runRerun = async ()",
         "runPlan (раскладка по главам)": "const runPlan = async ()",
         "next1 (переход по мастеру)": "const next1 = async ()",
-        "loadText (показать весь текст источника)": "const loadText = async (limit = 6000)",
+        # Сигнатура может расширяться (у loadText появился второй аргумент - путь отчёта):
+        # якорь держим по началу объявления, а не по закрытой скобке.
+        "loadText (показать весь текст источника)": "const loadText = async (limit = 6000",
         "loadDraftText (открыть файл черновика)": "const loadDraftText = async (rel)",
     }
     for name, decl in actions.items():

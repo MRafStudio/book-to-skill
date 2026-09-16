@@ -1012,23 +1012,30 @@ function B2SPane({ ctx }) {
 
   /** Текст источника — тот же шаг 1, но без LLM: ядро отдаёт файл из b2s_fetched.
       limit=0 — файл целиком («показать весь текст»), иначе только первый экран. */
-  const loadText = async (limit = 6000) => {
+  const loadText = async (limit = 6000, path = '') => {
     dropPreview()          // «показать весь текст» — действие блока 2: прежний план записи уже не про это
     setTextBusy(true)
     try {
       const out = await ctx.rest('/text', {
         method: 'POST',
-        body: { limit },
+        /* Путь берём у ОТЧЁТА, а не «последний прогон ядра»: иначе панель показывала текст
+           того источника, который ядро разбирало последним, - ровно та жалоба владельца
+           («в окне - из старого прогона»). Без пути ядро честно отдаёт последний прогон. */
+        body: path ? { path, limit } : { limit },
         timeoutMs: 20000
       })
       if (out && out.ok) {
         setText(out.text || '')
         setTextInfo({ path: out.path, chars: out.chars, lines: out.lines, truncated: out.truncated })
       } else {
-        setTextInfo((prev) => ({ ...(prev || {}), error: (out && out.error) || 'текст недоступен' }))
+        /* Текст не пришёл - прежний НЕ оставляем: окно с чужим текстом и подписью «не отдан»
+           одновременно читается как «разбор прошёл», хотя разбора по этому вводу нет. */
+        setText('')
+        setTextInfo({ path: '', chars: null, lines: null, error: (out && out.error) || 'текст недоступен' })
       }
     } catch (err) {
-      setTextInfo((prev) => ({ ...(prev || {}), error: note(err) }))
+      setText('')
+      setTextInfo({ path: '', chars: null, lines: null, error: note(err) })
     } finally {
       setTextBusy(false)
     }
@@ -1116,7 +1123,7 @@ function B2SPane({ ctx }) {
             if (ri && ri.src) {
               setFetchedSig(analysisSigOf({ src: ri.src, strat: ri.strat, mode: ri.mode }))
             }
-            loadText(6000)   // текст последнего прогона готов сразу, без кликов
+            loadText(6000, (rep && rep.source_file) || '')   // текст последнего прогона готов сразу, без кликов
           }
           /* Черновик из /state НЕ берём: там черновик ПОСЛЕДНЕГО ПРОГОНА ядра, а
              панель обязана говорить про то, что стоит в ПОЛЕ источника. На смене
@@ -1676,7 +1683,7 @@ function B2SPane({ ctx }) {
             partial: true
           })
         }
-        loadText(6000)   // уточняем из файла: весь объём, число строк. Нет маршрута — останется превью
+        loadText(6000, (out.report && out.report.source_file) || '')   // уточняем из файла: весь объём, число строк. Нет маршрута — останется превью
         /* «Не HTML» = текст пришёл как текст. Для .md-источника это и есть ответ
            на вопрос «правда ли он markdown»: решил трафик, а не догадка по имени. */
         return { ok: true, strategy, md: !/html|bs4|trafilatura|stdlib|sphinx/i.test(strategy) }
@@ -1912,6 +1919,19 @@ function B2SPane({ ctx }) {
      шапке, и владелец поймал этот обход - «в группе 3 кнопка доступна, хотя группа 2
      не пройдена». */
   const block2Passed = analyzed || mdSrc
+
+  /* Смена ВВОДА источника гасит экран разбора СРАЗУ, а не через круг по ядру: прежний текст
+     и метрики к новому адресу не относятся. Владелец: «ввёл новый адрес, нажал ДАЛЕЕ, а в
+     "Очищенном тексте источника" - из старого прогона! Почему текст не сбросился в момент,
+     когда я только изменил источник!». Раньше спойлер и текст жили до ответа ядра: пока
+     новый разбор идёт (а «ДАЛЕЕ» в шаге 1 его запускает), человек читал ЧУЖОЙ текст и решал,
+     что разбор уже был.
+     Условие `fetchedSig === curSig` оставляет живым единственный законный случай - отчёт
+     по ЭТОМУ вводу (в том числе восстановленный из состояния ядра при переоткрытии панели). */
+  useEffect(() => {
+    if (fetchedSig !== '' && fetchedSig === curSig) return
+    setText(''); setTextInfo(null); setOutOpen(false)
+  }, [curSig, fetchedSig])
 
   /* Контраст от темы без угадывания имени фонового токена: вуаль берём
      от ЦВЕТА ТЕКСТА темы. В тёмной теме текст светлый — блок выходит
@@ -2384,7 +2404,7 @@ function B2SPane({ ctx }) {
               size: 'sm',
               variant: 'ghost',
               disabled: textBusy,
-              onClick: () => loadText(0),
+              onClick: () => loadText(0, (report && report.source_file) || ''),
               className: 'h-6 justify-start text-[0.625rem]',
               style: CHIP_FIT,
               children: fitLabel('показать весь текст', TIP.showText)
