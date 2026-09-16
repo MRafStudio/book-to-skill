@@ -445,8 +445,12 @@ def main() -> int:
     blocks = re.findall(r"jsx\(PaneBlock, \{\n\s+n: (\d)", src)
     check("в дереве ровно пять блоков мастера (PaneBlock n: 1..5)",
           blocks == ["1", "2", "3", "4", "5"], f"{blocks!r}")
+    # Считаем кнопки В ФУТЕРАХ: правило про «своя кнопка в каждом блоке», а панельная NextBtn
+    # бывает и вне блока (кнопка «СОЗДАТЬ НОВЫЙ СКИЛЛ» под шагом 5) - по общему счёту она
+    # давала шестую и валила проверку.
     check("у каждого блока своя кнопка в футере (NextBtn)",
-          src.count("jsx(NextBtn, {") == 5, f"{src.count('jsx(NextBtn, {')}")
+          src.count("foot: jsx(NextBtn, {") == 5 and src.count("jsx(NextBtn, {") >= 5,
+          f"в футерах: {src.count('foot: jsx(NextBtn, {')}, всего вызовов: {src.count('jsx(NextBtn, {')}")
     check("футер блока: подпись слева, кнопка справа (min-w-0 flex-1 перед foot)",
           src.count("min-w-0 flex-1") >= 1 and "justify-end" in src,
           "нет растяжки подписи перед кнопкой")
