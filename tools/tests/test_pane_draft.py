@@ -461,14 +461,17 @@ def main() -> int:
     check("«Критика и список правок» получила иконку-символ",
           "children: '🔍'" in src)
     check("«Критика» гаснет без ГОТОВОГО черновика и объясняет причину",
-          "disabled: !!busy || !draftReady" in src and "TIP.reviewOff" in src
+          "disabled: !!busy || !draftSettled" in src and "TIP.reviewOff" in src
           and "«Критика» включится, когда в staging появится готовый черновик" in src,
           "нет ни гашения, ни причины")
     # «Критика и список правок» — рядовой кнопкой того же ряда: свой кегль 0.625rem
     # читался владельцем как «другое центрирование» (замер: flex-центр совпадал, 0.00 px,
     # отличался только размер шрифта). В ряду — один кегль и один цветовой токен.
+    # Окно берём до подписи под рядом (`jsx('span', Ell(`): она сама носит 0.625rem,
+    # и по фиксированной длине окна тест ловил ЕЁ, а не кнопку критики.
     i_rev = src.find("sendIntent('review')")
-    rev_btn = src[i_rev:i_rev + 700] if i_rev > 0 else ""
+    rev_end = src.index("jsx('span', Ell(", i_rev) if i_rev > 0 else 0
+    rev_btn = src[i_rev:rev_end] if i_rev > 0 else ""
     check("«Критика и список правок» — тот же кегль и цвет, что у соседей по ряду",
           "text-xs text-(--ui-text-primary)" in rev_btn and "text-[0.625rem]" not in rev_btn,
           f"свой кегль у кнопки критики: {rev_btn[:220]!r}")

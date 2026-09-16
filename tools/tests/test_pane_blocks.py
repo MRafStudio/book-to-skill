@@ -292,7 +292,7 @@ def main() -> int:
           "владелец: кнопки «ДАЛЕЕ» и «Предпросмотр» надо опустить минимум на 3 px")
     check("«ДАЛЕЕ» блоков 3-5 требует ПРОЙДЕННОГО блока 2",
           "disabled: !!busy || nameWarn || nameBad || !block2Passed" in src and
-          "disabled: !!busy || !draftReady || !block2Passed" in src and
+          "disabled: !!busy || !draftSettled || !block2Passed" in src and
           "|| nameWarn || nameBad || !block2Passed," in src,
           "владелец: кнопку нельзя открывать в обход «Анализа источника»")
     check("блок 2 пройден и для markdown-источника (analyzed || mdSrc)",
@@ -488,10 +488,12 @@ def main() -> int:
           "const next3 = () => {" in src and "if (nameWarn)" in src and
           "каталог установки называется именем" in src,
           "«ДАЛЕЕ» блока 3 пускает к черновику без имени")
-    check("переход из блока 4 требует ГОТОВЫЙ черновик (маркер от LLM)",
-              "const next4 = () => {" in src and "if (!hasDraft)" in src
-              and "if (!draftReady)" in src and "маркер готовности" in src,
-              "«ДАЛЕЕ» блока 4 пускает на пишущемся черновике")
+    check("переход из блока 4 требует ГОТОВЫЙ черновик и СВОБОДНОГО агента",
+          "const next4 = () => {" in src and "if (!hasDraft)" in src
+          and "if (!draftSettled)" in src and "маркер готовности" in src
+          and "агент ещё завершает работу над черновиком" in src,
+          "«ДАЛЕЕ» блока 4 пускает на пишущемся черновике или на том, который агент "
+          "ещё правит после маркера")
     check("шапка пропущенного блока 2 подписана «пропущен: файл уже markdown»",
           "пропущен: файл уже markdown" in src)
     check("открытым может быть только один блок (onlyB сбрасывает остальные)",
