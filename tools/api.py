@@ -1076,6 +1076,25 @@ def _load_audit_links():
     return module
 
 
+def _load_audit_attachments():
+    """Загрузить ``tools/audit/attachments.py`` — проверку вложений скилла.
+
+    Отдельный модуль, а не часть ``links.py``: у вложений своя задача (архивы в папке
+    скилла против их описания в ``SKILL.md``), и она идёт ПЕРВОЙ частью аудита - до
+    графа перекрёстных ссылок. Те же правила загрузки, что у ``links``: importlib по
+    пути, чтобы не зависеть от текущего каталога.
+    """
+    import importlib.util
+
+    path = Path(__file__).resolve().parent / "audit" / "attachments.py"
+    if not path.is_file():
+        raise FileNotFoundError(f"нет модуля аудита вложений: {path}")
+    spec = importlib.util.spec_from_file_location("b2s_audit_attachments", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def do_audit_links(cat: str = "", apply: bool = False) -> dict:
     """Аудит перекрёстных ссылок ВНУТРИ одной категории скиллов.
 
@@ -1094,10 +1113,20 @@ def do_audit_links(cat: str = "", apply: bool = False) -> dict:
         return {"ok": False, "error": f"категории нет в профиле: {category}"}
 
     module = _load_audit_links()
+    att = _load_audit_attachments()
+    # ШАГ 1 - вложения: архивы в папках скиллов и их описание в SKILL.md. Идёт первым:
+    # агент узнаёт о вложениях только из текста скилла, и строить граф ссылок раньше,
+    # чем проверено, что вложенные примеры описаны, нельзя.
+    attachments = att.scan(root)
+    # ШАГ 2 - граф перекрёстных ссылок внутри категории и related_skills.
     report = module.build_report(root)
-    out = {"ok": True, "category": category, **report}
+    out = {"ok": True, "category": category, "attachments": attachments, **report}
     if apply:
-        out["apply"] = module.apply_related(root, {tuple(e) for e in report["edges"]})
+        # Порядок применения тот же: сначала дополняем недостающие разделы вложений,
+        # потом переписываем related_skills. Ключ ``updated`` остаётся на месте -
+        # панель показывает его в отчёте и не должна ослепнуть от новой структуры.
+        out["apply"] = {**module.apply_related(root, {tuple(e) for e in report["edges"]}),
+                        "attachments": att.apply_guide(root)}
     return out
 
 

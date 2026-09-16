@@ -3791,9 +3791,10 @@ function B2SPane({ ctx }) {
                   jsx('div', { className: CHIP_MUTED, children: 'Категория: ' + ((cat || '').trim() || '- не выбрана -') }),
                   jsx('div', {
                       className: CHIP_MUTED,
-                      children: 'Граф строится ТОЛЬКО по этой категории: ссылки считаются между её скиллами, ' +
-                      'и «Обновить связи» перепишет related_skills тоже только внутри неё. ' +
-                      'Скиллы не удаляются и не переименовываются.'
+                      children: 'Порядок: СНАЧАЛА вложения - архивы в папке каждого скилла и то, как они ' +
+                      'описаны в SKILL.md (агент узнаёт о вложениях только оттуда); потом граф перекрёстных ' +
+                      'ссылок. Граф строится ТОЛЬКО по выбранной категории, «Обновить» перепишет related_skills ' +
+                      'и дополнит недостающие разделы вложений. Скиллы не удаляются и не переименовываются.'
                   }),
                   !(cat || '').trim()
                   ? jsx('div', { className: CHIP_MUTED, style: { color: WARN_YELLOW }, children: '⚠ категория не выбрана - аудит не запустится' })
@@ -3803,11 +3804,24 @@ function B2SPane({ ctx }) {
                       className: 'max-h-48 overflow-auto whitespace-pre-wrap break-words rounded px-1.5 py-1 text-[0.625rem] leading-snug text-(--ui-text-secondary)',
                       style: { border: FIELD_LINE, backgroundColor: PANEL_BG },
                       children: [
-                        'скиллов: ' + (auditRep.count || 0) + ', связей: ' + (auditRep.edge_count || 0),
+                        /* Вложения - ПЕРВЫМ блоком: это первая проверка аудита, и владелец
+                           должен видеть её результат раньше графа (архив без описания = файл,
+                           которого для агента нет). Слов «шаг N» здесь нет намеренно: шаги -
+                           это мастер панели, и «шаг 2» в окне аудита путал бы с его шагом. */
+                        'ВЛОЖЕНИЯ: архивов ' + ((auditRep.attachments || {}).attachments_count || 0) +
+                        ' в ' + (((auditRep.attachments || {}).skills_with_zips || []).length) + ' скиллах',
+                        'без раздела вложений: ' + (((auditRep.attachments || {}).need_guide || []).join(', ') || 'нет'),
+                        'архив не назван: ' + (((auditRep.attachments || {}).need_naming || []).join(', ') || 'нет'),
+                        'битые архивы: ' + ((((auditRep.attachments || {}).broken || []).length) || 'нет'),
+                        '',
+                        'ГРАФ СВЯЗЕЙ: скиллов: ' + (auditRep.count || 0) + ', связей: ' + (auditRep.edge_count || 0),
                         'сироты: ' + ((auditRep.orphans || []).join(', ') || 'нет'),
                         'молчуны: ' + ((auditRep.silent || []).join(', ') || 'нет'),
                         'связано (related_skills): ' + (auditRep.declared_filled || 0) + ' из ' + (auditRep.count || 0),
-                        auditRep.apply ? 'обновлено: ' + (((auditRep.apply.updated) || []).join(', ') || 'нечего') : ''
+                        auditRep.apply ? 'обновлено: ' + (((auditRep.apply.updated) || []).join(', ') || 'нечего') : '',
+                        auditRep.apply && auditRep.apply.attachments
+                          ? 'разделы вложений дописаны: ' + ((((auditRep.apply.attachments || {}).written) || []).join(', ') || 'нечего')
+                          : ''
                       ].filter(Boolean).join('\n')
                   })
                   : null,
@@ -3828,7 +3842,7 @@ function B2SPane({ ctx }) {
                             onClick: () => runAudit(true),
                             className: 'h-6 text-[0.625rem]', style: CHIP_FIT,
                             children: fitLabel(auditBusy === 'apply' ? '⟳ обновляю…' : 'Обновить связи',
-                              'Переписать related_skills по факту графа - только внутри этой категории')
+                              'Переписать related_skills по факту графа (только внутри этой категории) и дополнить разделы вложений там, где их нет')
                         }),
                         jsx(Button, {
                             size: 'sm', variant: 'ghost',
