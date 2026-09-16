@@ -33,6 +33,28 @@ def check(name: str, ok: bool, detail: str = "", note: str = "") -> None:
 raw = PLUGIN.read_text(encoding="utf-8")
 check("plugin.js читается", len(raw) > 10000, str(PLUGIN))
 
+# 0. РЕГЛАМЕНТ: смена источника чистит шаг 2 ЦЕЛИКОМ.
+i_reg = raw.find("РЕГЛАМЕНТ ВЛАДЕЛЬЦА: поменялся источник")
+i_reg_eff_start = raw.find("useEffect(() => {", i_reg) if i_reg > 0 else -1
+i_reg_end = raw.find("}, [trimSrc])", i_reg_eff_start) if i_reg_eff_start > 0 else -1
+reg = raw[i_reg_eff_start:i_reg_end] if 0 < i_reg_eff_start < i_reg_end else ""
+check("объявлен сброс состояния шага 2 на смену источника",
+      i_reg > 0 and i_reg_eff_start > 0,
+      "нет эффекта на смену строки источника: прежний разбор останется на экране")
+check("сброс сравнивает ПРЕДЫДУЩИЙ ввод, а не отпечаток отчёта",
+      "const prevSrcRef = useRef(trimSrc)" in raw and "if (prevSrcRef.current === trimSrc) return" in reg,
+      "сброс привязан к отпечатку: при переоткрытии панели он бы стирал разбор того же адреса")
+check("сброс убирает отчёт, отпечаток, текст, метрики, спойлер, ошибки и факт установки",
+      all(s in reg for s in ("setReport(null)", "setFetchedSig('')", "setText('')",
+                             "setTextInfo(null)", "setOutOpen(false)",
+                             "setRerunErr('')", "setRerunErrKind('')", "setInstalled(null)")),
+      "сброс неполный: часть прежнего разбора остаётся видимой")
+
+# 0b. Страховка: разбор есть - текст показан.
+check("есть страховка «разбор есть, а текста нет» - текст подтягивается",
+      "if (!analyzed || text || textBusy) return" in raw,
+      "при analyzed с пустым полем текст так и останется пустым")
+
 # 1. Эффект сброса: объявлен по отпечаткам ввода и разбора.
 i_eff = raw.find("}, [curSig, fetchedSig])")
 check("объявлен эффект сброса экрана разбора на смену ввода",
