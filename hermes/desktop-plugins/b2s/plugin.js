@@ -592,6 +592,43 @@ function intentOf(kind, f) {
   return parts.join(' | ')
 }
 
+/* Протокол задания для ЧЕРНОВИКА. Выжимка `b2s draft | src=… | slug=…` агента не
+   инструктирует: он не знает, откуда взять текст, куда положить главы и чем
+   пометить готовность, а скилла с протоколом в профиле нет - задание из чата
+   уходило в пустоту (владелец: «Началась твоя работа в чате… Должен был создаться
+   черновик скилла!»). Поэтому протокол едет ВМЕСТЕ с заданием: координаты, состав
+   черновика, маркер готовности и запрет лезть в профиль (его пишет панель). */
+function draftBrief(f) {
+  const L = []
+  const push = (s) => L.push(s)
+  push('Задание: собери ЧЕРНОВИК скилла из уже разобранного источника. Черновик пишет агент в чате, панель только показывает то, что легло на диск.')
+  push('')
+  push('Вход:')
+  push('- источник: ' + f.src)
+  push('- очищенный текст: ' + (f.text || '<слаг>.md в каталоге b2s_fetched проекта book-to-skill'))
+  push('- ключ черновика (слаг ИСТОЧНИКА): ' + f.slug)
+  push('- имя скилла: ' + f.name + ', категория: ' + f.cat + ', язык: ' + f.lang +
+    ', режим: ' + f.mode + ', действие: ' + f.act)
+  push('')
+  push('Куда писать: ' + (f.stage || 'каталог staging/<слаг> проекта book-to-skill') +
+    '. Каталог называется слагом источника: имя скилла правится свободно и ключом быть не может.')
+  push('Что положить:')
+  push('- SKILL.md: frontmatter name и description («Use when …»), version, license, metadata.hermes (tags, related_skills, creator: BookToSkill, created, updated) и тело: назначение, ключевые правила, ссылки на главы;')
+  push('- chapters/chNN-<тема>.md: главы по разделам источника в его порядке;')
+  push('- glossary.md: термины строками «**Термин** - пояснение»;')
+  push('- cheatsheet.md и patterns.md: если источник даёт материал;')
+  push('- metadata.json: источник (url, title, стратегия разбора, файл сырья, объёмы) и цифры генерации (chapters, files, glossary_terms).')
+  push('Концы строк LF, тексты на языке ' + f.lang + '.')
+  push('')
+  push('Закончив:')
+  push('1) проверь цельность: разделы источника покрыты, обрывков нет, ссылки на главы живые;')
+  push('2) поставь маркер готовности - положи в каталог черновика READY.json с {"ready": true, "by": "Hermes Agent (BookToSkill)", "files": N, "chapters": N, "glossary_terms": M} (то же делает POST на /api/plugins/b2s/mark_ready). Без маркера панель считает черновик обрывком и не отпирает «ДАЛЕЕ»;')
+  push('3) отчитайся в чате: сколько файлов и глав, что покрыто, что помечено дефектом источника.')
+  push('')
+  push('Не делать: не писать скилл в профиль (запись делает панель кнопкой), не трогать b2s_fetched и staging других источников.')
+  return L.join('\n')
+}
+
 /** Строка-выжимка по отчёту прогона: стратегия, объём, мусор. */
 function summaryOf(out) {
   const rep = (out && out.report) || {}
@@ -1255,6 +1292,20 @@ function B2SPane({ ctx }) {
 
   useEffect(() => { loadCats(); loadSkills() }, [])
 
+  /* Координаты для протокола черновика. Путь сырья ядро отдаёт в отчёте
+     (`source_file`), а staging - соседний каталог того же проекта: панель не
+     выдумывает пути, а берёт их из факта разбора. Не дало ядро пути - протокол
+     скажет агенту найти каталог самому, задание от этого не рушится. */
+  const draftPathsOf = () => {
+    const raw = String((report && report.source_file) || (textInfo && textInfo.path) || '')
+    const m = raw.match(/^(.*)[\\/]b2s_fetched[\\/][^\\/]+$/)
+    const sep = raw.indexOf('\\') >= 0 ? '\\' : '/'
+    return {
+      text: m ? raw : '',
+      stage: (m && draftKey) ? m[1] + sep + 'staging' + sep + draftKey : ''
+    }
+  }
+
   const sendIntent = async (kind) => {
     if (busyRef.current) return false     // шаг уже в работе: второй клик не копит вызовы
     const sid = host.state.focusedSessionId.get()
@@ -1265,16 +1316,25 @@ function B2SPane({ ctx }) {
     }
     dropPreview()   // черновик/критика/описание категории — шаги блоков 2–4: план записи устарел
     const intentText = intentOf(kind, { src, name, strat, mode, lang, cat, act, desc: catDesc, slug: draftKey })
+    /* Черновик собирает АГЕНТ в чате, и одной выжимки ему мало: он не знает ни
+       откуда взять текст, ни куда положить главы, ни чем пометить готовность -
+       поэтому задание едет вместе с протоколом (draftBrief). Остальные действия
+       остаются выжимкой: там агенту хватает имени, категории и режима. */
+    const intentBody = kind === 'draft'
+      ? intentText + '\n\n' + draftBrief(Object.assign(
+        { src, slug: draftKey, name, cat, mode, lang, act }, draftPathsOf()))
+      : intentText
     busyRef.current = true
     setBusy(kind)
     try {
-      await host.request('prompt.submit', { session_id: sid, text: intentText })
+      await host.request('prompt.submit', { session_id: sid, text: intentBody })
       /* Плашка «в работе LLM» загорается по ЗАНЯТОСТИ этой сессии, а не по факту
          отправки: задание уходит мгновенно, а агент думает минутами. */
       setLlmSid(sid)
       setLlmLabel(LLM_LABEL[kind] || '')
       setTone('sent')
-      say('→ ушло в чат агенту: ' + intentText)
+      say('→ ушло в чат агенту: ' + intentText +
+        (kind === 'draft' ? ' (+ протокол черновика)' : ''))
       /* Описание категории пишет агент, а не панель: без слежения за целью красная
          рамка и кнопка «написать» остались бы в панели до её переоткрытия. */
       if (kind === 'desc' || kind === 'desc-fix' || kind === 'desc-rewrite') {
