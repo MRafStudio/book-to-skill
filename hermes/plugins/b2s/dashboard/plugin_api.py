@@ -38,6 +38,7 @@ LLM остаётся только там, где без него нельзя: �
                               сначала план, диск трогает только apply
     POST /purge   {}          убрать ВСЁ промежуточное разом: черновики и сырьё, без сроков
     POST /audit_links {cat,apply} граф ссылок внутри категории (apply - обновить related_skills)
+    POST /audit_report {cat,online} отчёт аудита в АУДИТ-СВЯЗЕЙ.md в каталоге категории
 
 Зависимостей нет: ядро — обычный Python форка (``tools/api.py``).
 """
@@ -193,6 +194,12 @@ class AuditBody(BaseModel):
     """Аудит связей внутри ОДНОЙ категории: cat - категория, apply - писать related_skills."""
     cat: str = ""
     apply: bool = False
+
+
+class AuditReportBody(BaseModel):
+    """Отчёт аудита в файл: cat - категория, online - тянуть ли список страниц с портала."""
+    cat: str = ""
+    online: bool = True
 
 
 class TextBody(BaseModel):
@@ -423,6 +430,17 @@ def audit_links(body: AuditBody) -> Dict[str, Any]:
     между скиллами этой категории. Скиллы не удаляются и не переименовываются.
     """
     return core().do_audit_links(body.cat, body.apply)
+
+
+@router.post("/audit_report")
+def audit_report(body: AuditReportBody) -> Dict[str, Any]:
+    """Собрать отчёт аудита в файл ``АУДИТ-СВЯЗЕЙ.md`` в каталоге категории.
+
+    Файл перезаписывается целиком при каждом прогоне. В скиллы ничего не пишется:
+    отчёт только читает профиль. ``online=false`` - офлайн-прогон (список страниц
+    документации берётся из кэша).
+    """
+    return core().do_audit_report(body.cat, body.online)
 
 
 @router.post("/purge")

@@ -1,6 +1,9 @@
 *.pyc
 __pycache__/
 
+# Кэш списка страниц документации (аудит связей): локальный снимок портала, не в git
+tools/audit/.cache/
+
 # Agent session traces (Stone CLI) — never commit
 .stone/
 **/.stone/

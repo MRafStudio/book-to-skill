@@ -1579,6 +1579,51 @@ function B2SPane({ ctx }) {
     } finally { setAuditBusy('') }
   }
 
+  /* «Отчёт в файл»: тот же аудит, но результат ложится файлом АУДИТ-СВЯЗЕЙ.md в каталог
+     категории и открывается системным приложением, связанным с .md. Владелец просил
+     именно этого: файл нужен, чтобы читать и планировать добор, а искать его по диску
+     руками - лишний шаг. Скиллы при этом не правятся: отчёт только читает профиль. */
+  const openReportFile = async (path) => {
+    if (!path) return false
+    /* Путь в file-адрес: сегменты кодируются по отдельности, а «D:» остаётся как есть -
+       иначе буква диска уедет в «D%3A» и адрес перестанет открываться. */
+    const segs = String(path).replace(/\\/g, '/').split('/').filter((s) => s !== '')
+    const uri = 'file:///' + segs.map((s, i) => (i === 0 ? s : encodeURIComponent(s))).join('/')
+    try {
+      if (await ctx.os.openExternal(uri)) return true
+    } catch (err) { /* ниже - запасной путь, он не должен падать */ }
+    try { return await ctx.os.revealPath(path) } catch (err) { return false }
+  }
+
+  const runReport = async () => {
+    setAuditBusy('report')
+    let msg = ''
+    try {
+      const out = await ctx.rest('/audit_report', {
+        method: 'POST', body: { cat, online: true }, timeoutMs: 60000
+      })
+      if (out && out.ok) {
+        setTone('idle')
+        msg = 'отчёт аудита: ' + (out.name || 'АУДИТ-СВЯЗЕЙ.md') + ' в каталоге «' +
+          (out.category || cat) + '» - скиллов ' + (out.skills || 0) +
+          ', связей ' + (out.edges || 0) +
+          (out.docs_pages ? ', страниц без скиллов ' + (out.docs_missing || 0) + ' из ' + out.docs_pages : '') +
+          (out.docs_source === 'cache' ? ' (список страниц из кэша)' : '')
+        const opened = await openReportFile(out.path)
+        if (!opened) msg += '; открыть автоматически не вышло - файл: ' + (out.path || '')
+      } else {
+        setTone('error')
+        msg = 'отчёт не собрался: ' + ((out && out.error) || 'причина неизвестна')
+      }
+    } catch (err) {
+      setTone('error')
+      msg = 'отчёт не собрался: ' + note(err)
+    } finally {
+      setAuditBusy('')
+      if (msg) say(msg)
+    }
+  }
+
   /** Черновик пишет агент в чате — панель о готовности не узнаёт ниоткуда, и раньше
       после «Сделать черновик» она молчала: человек читал «черновика нет» и решал,
       что кнопка сломана. Теперь панель сама читает staging, пока файлы не появятся
@@ -3840,7 +3885,7 @@ function B2SPane({ ctx }) {
       jsxs('div', {
         className: 'flex flex-col gap-0.5 pt-1 text-[0.625rem] text-(--ui-text-tertiary)',
         children: [
-          jsx('span', Ell('REST: /rerun · /install · /plan · /skills · /categories · /text · /drafts · /mark_ready · /drop · /prune · /purge · /audit_links')),
+          jsx('span', Ell('REST: /rerun · /install · /plan · /skills · /categories · /text · /drafts · /mark_ready · /drop · /prune · /purge · /audit_links · /audit_report')),
                     jsx('span', Ell('сессия (для чат-шагов): ' + (focusedId || '-')))
                   ]
                 }),
@@ -3916,6 +3961,14 @@ function B2SPane({ ctx }) {
                             className: 'h-6 text-[0.625rem]', style: CHIP_FIT,
                             children: fitLabel(auditBusy === 'apply' ? '⟳ обновляю…' : 'Обновить связи',
                               'Переписать related_skills по факту графа (только внутри этой категории) и дополнить разделы вложений там, где их нет')
+                        }),
+                        jsx(Button, {
+                            size: 'sm', variant: 'ghost',
+                            disabled: !!auditBusy || !(cat || '').trim(),
+                            onClick: () => runReport(),
+                            className: 'h-6 text-[0.625rem]', style: CHIP_FIT,
+                            children: fitLabel(auditBusy === 'report' ? '⟳ собираю…' : 'Отчёт в файл',
+                              'Собрать АУДИТ-СВЯЗЕЙ.md в каталоге категории, открыть его системным приложением и не трогать скиллы')
                         }),
                         jsx(Button, {
                             size: 'sm', variant: 'ghost',

@@ -1130,6 +1130,282 @@ def do_audit_links(cat: str = "", apply: bool = False) -> dict:
     return out
 
 
+AUDIT_REPORT_NAME = "АУДИТ-СВЯЗЕЙ.md"
+
+# Каталог кэша списка страниц документации: форк его не коммитит (см. ``.cache`` в
+# ``.gitignore``). Отдельной константой, а не литералом на месте, - сторож подменяет
+# её на песочницу и в форке мусора не оставляет.
+AUDIT_CACHE_DIR = Path(__file__).resolve().parent / "audit" / ".cache"
+
+# Категории, у которых документация служит источником скиллов: корневая страница
+# раздела на портале. Категории здесь нет - значит раздел «страницы без скиллов» в
+# отчёт просто не попадает, остальные части строятся как обычно: аудит не должен
+# зависеть от чужого портала.
+DOCS_ROOTS = {
+    "rk7xml-interface": {"root_id": "19605640", "title": "XML-интерфейс r_keeper 7"},
+}
+
+
+def _load_audit_pages():
+    """Загрузить ``tools/audit/pages.py`` - страницы документации против скиллов.
+
+    Те же правила загрузки, что у ``links`` и ``attachments``: importlib по пути,
+    чтобы модуль находился независимо от текущего каталога.
+    """
+    import importlib.util
+
+    path = Path(__file__).resolve().parent / "audit" / "pages.py"
+    if not path.is_file():
+        raise FileNotFoundError(f"нет модуля аудита страниц: {path}")
+    spec = importlib.util.spec_from_file_location("b2s_audit_pages", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _md_cell(text) -> str:
+    """Текст в ячейку markdown-таблицы: пайп и перевод строки ломают разметку."""
+    return str(text if text is not None else "").replace("|", "\\|").replace("\n", " ").strip()
+
+
+def _md_bullets(items, empty: str) -> str:
+    """Список имён в бэктиках либо одна строка «пусто» - без пустых мест в отчёте."""
+    items = list(items or [])
+    if not items:
+        return f"- {empty}"
+    return "\n".join(f"- `{_md_cell(x)}`" for x in items)
+
+
+def _md_skill_list(names) -> str:
+    return ", ".join(f"`{_md_cell(n)}`" for n in (names or [])) or "-"
+
+
+def _render_audit_report(category: str, att: dict, rep: dict, docs: dict, stamp: str) -> str:
+    """Текст ``АУДИТ-СВЯЗЕЙ.md`` из фактов прогона - ничего не выдумывает.
+
+    Порядок разделов повторяет порядок самого аудита: вложения → граф → карта
+    ссылок → страницы без скиллов → выводы. Списки полные, а не «топ-5»: файл
+    читают, чтобы выбирать работу. Тире в текстах - дефис.
+    """
+    skills = rep.get("skills") or []
+    out = rep.get("outgoing") or {}
+    orphans = rep.get("orphans") or []
+    silent = rep.get("silent") or []
+    inbound = rep.get("inbound") or []
+    gaps = rep.get("declared_gaps") or {}
+    need_guide = att.get("need_guide") or []
+    need_naming = att.get("need_naming") or []
+    broken = att.get("broken") or []
+    zips = att.get("skills_with_zips") or []
+    details = {d.get("skill"): d for d in (att.get("details") or []) if isinstance(d, dict)}
+    docus = docs or {}
+    missing = docus.get("missing") or []
+    covered_docs = docus.get("covered") or []
+
+    L: list[str] = []
+    add = L.append
+    add(f"# Аудит связей категории: {category}")
+    add("")
+    add("Файл перезаписывается целиком при каждом нажатии кнопки «Отчёт в файл»: это снимок, а не")
+    add("накопительный журнал. В скиллы отчёт не пишет - он только читает профиль.")
+    add("")
+    add(f"Снимок: {stamp}.")
+    add("")
+    add("## 1. Сводка")
+    add("")
+    add("| что | значение |")
+    add("|---|---|")
+    add(f"| скиллов в категории | {rep.get('count', 0)} |")
+    add(f"| связей (рёбер графа) | {rep.get('edge_count', 0)} |")
+    add(f"| сироты: ни одной входящей ссылки | {len(orphans)} |")
+    add(f"| молчуны: сами ни на кого не ссылаются | {len(silent)} |")
+    add(f"| заявлено связей в related_skills | {len(rep.get('declared_filled') or [])} |")
+    add(f"| расхождений «заявлено, но ссылки нет» | {len(gaps)} |")
+    add(f"| скиллов с вложениями | {len(zips)} |")
+    add(f"| архивов во вложениях | {att.get('attachments_count', 0)} |")
+    if docus:
+        add(f"| страниц раздела не закрыто скиллами | {len(missing)} из {docus.get('pages', 0)} |")
+    add("")
+
+    add("## 2. Вложения")
+    add("")
+    if not zips:
+        add("Архивов в категории нет.")
+    else:
+        add("| скилл | архивов | раздел вложений в SKILL.md | замечания |")
+        add("|---|---|---|---|")
+        for name in zips:
+            det = details.get(name) or {}
+            notes = []
+            if name in need_guide:
+                notes.append("нет раздела с описанием")
+            if name in need_naming:
+                notes.append("архив не назван в разделе")
+            add(f"| `{_md_cell(name)}` | {det.get('zips_count', 0)} | "
+                f"{'да' if det.get('guide_head') else 'нет'} | {'; '.join(notes) or '-'} |")
+    if broken:
+        add("")
+        add("Битые архивы (не читаются): " +
+            ", ".join(f"`{_md_cell(b.get('skill'))}` / {_md_cell(b.get('zip'))}" for b in broken))
+    add("")
+
+    add("## 3. Граф перекрёстных ссылок")
+    add("")
+    add("Ссылкой считается имя соседнего скилла этой же категории в бэктиках. Соседи из других")
+    add("категорий в граф не попадают по построению.")
+    add("")
+    add("### 3.1 Сироты: на них не ссылается никто")
+    add("")
+    add(_md_bullets(orphans, "сирот нет - на каждый скилл категории кто-то ссылается"))
+    add("")
+    add("### 3.2 Молчуны: сами не ссылаются ни на кого")
+    add("")
+    add(_md_bullets(silent, "молчунов нет - каждый скилл кого-то упоминает"))
+    add("")
+    add("### 3.3 Хабы: кого упоминают чаще всего")
+    add("")
+    if inbound:
+        add("| скилл | входящих ссылок |")
+        add("|---|---|")
+        for name, cnt in list(inbound)[:12]:
+            add(f"| `{_md_cell(name)}` | {cnt} |")
+    else:
+        add("Связей нет.")
+    add("")
+    add("### 3.4 Заявлено в related_skills, но ссылки в тексте нет")
+    add("")
+    if gaps:
+        add("| скилл | заявлено, но не упомянуто |")
+        add("|---|---|")
+        for name in sorted(gaps):
+            add(f"| `{_md_cell(name)}` | {_md_skill_list(gaps[name])} |")
+    else:
+        add("Расхождений нет: всё заявленное в related_skills подтверждено текстом.")
+    add("")
+
+    add("## 4. Карта ссылок: кто на кого")
+    add("")
+    add("| скилл | ссылается на |")
+    add("|---|---|")
+    for name in skills:
+        add(f"| `{_md_cell(name)}` | {_md_skill_list(out.get(name))} |")
+    add("")
+
+    add("## 5. Страницы документации без скиллов (для добора)")
+    add("")
+    if not docus:
+        add(f"Раздел документации для категории `{_md_cell(category)}` не задан: добор считается "
+            "по тем категориям, у которых он есть в ядре.")
+    else:
+        add(f"Раздел: {docus.get('title') or ''} (корневая страница {docus.get('root_id')}).")
+        src = docus.get("source")
+        if src == "rest":
+            add(f"Дерево взято с портала, снимок {docus.get('fetched_at')}.")
+        elif src == "cache":
+            add(f"Портал недоступен - дерево взято из кэша, снимок {docus.get('fetched_at') or 'без даты'}.")
+        else:
+            add("Дерево страниц получить не удалось: ни портала, ни кэша.")
+        add("")
+        add(f"Страниц в разделе: {docus.get('pages', 0)}; закрыто скиллами: {len(covered_docs)}. "
+            "Сверка идёт по id страницы, поэтому версия страницы (id отличается на 1) "
+            "считается тем же материалом.")
+        add("")
+        if missing:
+            add("| страница | тип | адрес |")
+            add("|---|---|---|")
+            for m in missing:
+                kind = "контейнер (только ссылки)" if m.get("container") else "материал"
+                url = (docus.get("url_base") or "") + (m.get("webui") or "")
+                # Адрес Confluence длинный и с процентным кодированием: в ячейке он
+                # мешает читать таблицу, поэтому ссылкой с подписью (скобки внутри
+                # адреса ломают markdown - экранируем их).
+                link = f"[открыть]({url.replace('(', '%28').replace(')', '%29')})" if url else "-"
+                add(f"| {_md_cell(m.get('title'))} | {kind} | {link} |")
+        else:
+            add("Все страницы раздела закрыты скиллами: добора нет.")
+    add("")
+
+    add("## 6. Что предлагаю")
+    add("")
+    todo: list[str] = []
+    if orphans:
+        todo.append(f"связать сирот: {_md_skill_list(orphans)} - дать им раздел «Смежное» и "
+                    "дописать related_skills у соседей по теме")
+    if silent:
+        todo.append(f"разговорить молчунов: {_md_skill_list(silent)} - у них нет ни одной ссылки "
+                    "на соседей, хотя повод есть")
+    if gaps:
+        todo.append(f"снять расхождения related_skills: {_md_skill_list(sorted(gaps))} - либо "
+                    "добавить упоминание в текст, либо убрать из шапки")
+    if need_guide:
+        todo.append(f"описать вложения: {_md_skill_list(need_guide)} - в SKILL.md нет раздела "
+                    "с перечнем файлов")
+    if need_naming:
+        todo.append(f"назвать архивы в разделе вложений: {_md_skill_list(need_naming)}")
+    if broken:
+        todo.append(f"починить битые архивы: {len(broken)} шт. - агент прочитает их как рабочие")
+    if missing:
+        todo.append("добрать страницы: " + ", ".join(
+            f"«{_md_cell(m.get('title'))}»" for m in missing) + " - по ним скиллов ещё нет")
+    if todo:
+        for item in todo:
+            add(f"- {item}")
+    else:
+        add("- Всё сходится: сирот, молчунов, расхождений и недобранных страниц нет.")
+    add("")
+    return "\n".join(L)
+
+
+def do_audit_report(cat: str = "", online: bool = True) -> dict:
+    """Собрать ``АУДИТ-СВЯЗЕЙ.md`` в каталоге категории и вернуть путь с числами.
+
+    Файл всегда один и тот же и перезаписывается целиком - «очистился и заполнился
+    актуальным». Кладём его в каталог категории, а не в каталог проекта: анализу
+    подлежит ровно одна категория, рядом со скиллами этот файл и будут искать.
+    Пишется только этот файл: ни скиллы, ни staging отчёт не трогает.
+    ``online=False`` - офлайн-прогон (сторож, отсутствие сети): раздел страниц
+    собирается из кэша.
+    """
+    try:
+        category = _safe_category(cat)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    root = skills_root() / category
+    if not root.is_dir():
+        return {"ok": False, "error": f"категории нет в профиле: {category}"}
+
+    attachments = _load_audit_attachments().scan(root)
+    report = _load_audit_links().build_report(root)
+
+    docs: dict = {}
+    entry = DOCS_ROOTS.get(category)
+    if entry:
+        pages = _load_audit_pages()
+        cache_dir = AUDIT_CACHE_DIR
+        docs = pages.scan(root, entry["root_id"], cache_dir, online=online)
+        docs["title"] = entry["title"]
+
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    text = _render_audit_report(category, attachments, report, docs, stamp)
+    target = root / AUDIT_REPORT_NAME
+    target.write_text(text, encoding="utf-8", newline="\n")
+    return {
+        "ok": True,
+        "category": category,
+        "path": str(target),
+        "name": AUDIT_REPORT_NAME,
+        "chars": len(text),
+        "stamp": stamp,
+        "skills": report.get("count", 0),
+        "edges": report.get("edge_count", 0),
+        "orphans": report.get("orphans") or [],
+        "silent": report.get("silent") or [],
+        "docs_source": docs.get("source") or "",
+        "docs_pages": docs.get("pages") or 0,
+        "docs_missing": len(docs.get("missing") or []),
+    }
+
+
 def _draft_file(dir_path: Path, rel: str = "") -> Path:
     """Файл ВНУТРИ каталога черновика — панель не читает произвольный путь.
 
