@@ -86,11 +86,22 @@ with tempfile.TemporaryDirectory() as tmp:
           s_new != LEGACY_A, f"получилось {s_new!r}: файлы разных источников схлопнулись")
 
 FETCH = REPO / "b2s_fetched"
+# Мастерская может быть ПУСТА - это нормальное состояние после уборки (кнопка 🗑 гасит всё
+# сырьё). Раньше проверка требовала готовый файл на диске и валила регресс на пустой
+# мастерской. Теперь фикстуру создаём сами и убираем за собой; чужой файл не трогаем.
 if FETCH.is_dir():
-    stems = {p.stem for p in FETCH.glob("*.md")}
-    check("файл сырья на диске адресуется своим прежним ключом",
-          LEGACY_A in stems and slug_for_url(LONG_A, keep_dirs=(FETCH,)) == LEGACY_A,
-          f"в b2s_fetched нет {LEGACY_A!r}", note=LEGACY_A)
+    fixture = FETCH / (LEGACY_A + ".md")
+    made = not fixture.exists()
+    try:
+        if made:
+            fixture.write_text(f"URL: {LONG_A}\n\nтекст\n", encoding="utf-8", newline="\n")
+        check("файл сырья в мастерской адресуется своим прежним ключом",
+              slug_for_url(LONG_A, keep_dirs=(FETCH,)) == LEGACY_A,
+              "ключ на диске не совпал: панель искала бы черновик по другому имени",
+              note=LEGACY_A + (" (фикстура теста)" if made else " (живой файл)"))
+    finally:
+        if made:
+            fixture.unlink(missing_ok=True)
 
 print(f"\nпроверок: {len(checks)}, провалов: {sum(1 for _, ok in checks if not ok)}")
 if any(not ok for _, ok in checks):
