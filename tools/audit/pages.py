@@ -154,6 +154,20 @@ def _skill_for(page_id: int, ids: dict[str, str]) -> str | None:
     return None
 
 
+def body_text_len(page_id: str) -> int:
+    """Сколько ЧИСТОГО текста в теле страницы (разметка выкидывается).
+
+    Пустое тело - признак навигационной страницы: у «Примеров работы с заказами» и
+    «Примеров работы со справочниками» в теле ноль знаков, всё содержание лежит в
+    ДОЧЕРНИХ страницах, по которым скиллы уже собраны. Делать скилл по такой странице
+    не из чего - и в список добора она попадать не должна.
+    """
+    data = _api(f"/rest/api/content/{page_id}?expand=body.storage")
+    html = ((data.get("body") or {}).get("storage") or {}).get("value") or ""
+    text = re.sub(r"<[^>]+>", " ", html)
+    return len(re.sub(r"\s+", " ", text).strip())
+
+
 def compare(tree: list[dict], ids: dict[str, str]) -> tuple[list[dict], list[dict]]:
     """``(закрытые, недобранные)`` - по каждой странице дерева.
 
@@ -174,6 +188,9 @@ def compare(tree: list[dict], ids: dict[str, str]) -> tuple[list[dict], list[dic
             "webui": page.get("webui") or "",
             "depth": page.get("depth") or 0,
             "container": str(page.get("id")) in parents,
+            # Признак пустого тела приходит из снимка (см. ``scan``): нужен, чтобы и
+            # офлайн-прогон отличал навигационную страницу от материала.
+            "empty_body": bool(page.get("empty_body")),
         }
         skill = _skill_for(pid, ids)
         if skill:
@@ -212,6 +229,24 @@ def scan(root: pathlib.Path, root_id: str, cache_dir, online: bool = True) -> di
             fetched_at = str(cached.get("fetched_at") or "")
             source = "cache"
     covered, missing = compare(tree, skill_page_ids(root))
+    # Пустое тело проверяем ТОЛЬКО у непокрытых страниц (их единицы): остальные уже
+    # закрыты скиллами, и лишние запросы к порталу ни к чему. Снимок после этого
+    # перезаписывается - иначе офлайн-прогон потеряет признак и покажет каталоги
+    # как недобранный материал.
+    if online and source == "rest" and missing:
+        try:
+            for rec in missing:
+                rec["empty_body"] = body_text_len(rec["id"]) == 0
+            by_id = {rec["id"]: rec["empty_body"] for rec in missing}
+            for page in tree:
+                if str(page.get("id")) in by_id:
+                    page["empty_body"] = by_id[str(page.get("id"))]
+            save_cache(cache_dir, root_id, tree)
+        except Exception:  # noqa: BLE001 - тело не отдалось: считаем материалом
+            for rec in missing:
+                rec.setdefault("empty_body", False)
+    navigational = [rec for rec in missing if rec.get("empty_body")]
+    material = [rec for rec in missing if not rec.get("empty_body")]
     return {
         "ok": True,
         "source": source,
@@ -220,5 +255,6 @@ def scan(root: pathlib.Path, root_id: str, cache_dir, online: bool = True) -> di
         "url_base": BASE,
         "pages": len(tree),
         "covered": covered,
-        "missing": missing,
+        "missing": material,
+        "navigational": navigational,
     }

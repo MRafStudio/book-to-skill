@@ -116,6 +116,10 @@ with tempfile.TemporaryDirectory() as tmp_dir:
          "webui": "/rk7/latest/ru/alko-140051475.html", "depth": 1, "parent": "19605640"},
         {"id": "999999999", "title": "Не разобранная страница",
          "webui": "/rk7/latest/ru/new-999999999.html", "depth": 1, "parent": "19605640"},
+        # Навигационная страница: тело пустое, содержание - в её детях. Признак лежит в
+        # снимке, поэтому офлайн-прогон видит его так же, как сетевой.
+        {"id": "888888888", "title": "Каталог ссылок", "webui": "/rk7/latest/ru/idx-888888888.html",
+         "depth": 1, "parent": "19605640", "empty_body": True},
     ])
     docs = pages.scan(cat, "19605640", cache, online=False)
     check("источник списка - кэш, с датой снимка",
@@ -127,6 +131,21 @@ with tempfile.TemporaryDirectory() as tmp_dir:
     check("неразобранная страница попадает в добор",
           any(m.get("id") == "999999999" for m in docs.get("missing") or []),
           str(docs.get("missing")))
+    # Пустое тело = каталог ссылок: в добор такая страница не идёт, но и не исчезает -
+    # отдельным списком, чтобы было видно, почему незакрытых больше, чем кандидатов.
+    check("пустое тело - навигационная страница, а не материал",
+          any(n.get("id") == "888888888" for n in docs.get("navigational") or [])
+          and not any(m.get("id") == "888888888" for m in docs.get("missing") or []),
+          f"навигационных: {[n.get('id') for n in docs.get('navigational') or []]}, "
+          f"в доборе: {[m.get('id') for m in docs.get('missing') or []]}")
+    report_text = api._render_audit_report(
+        "rk7xml-interface", api._load_audit_attachments().scan(cat),
+        api._load_audit_links().build_report(cat), {**docs, "title": "Раздел"}, "2026-09-17 12:00")
+    check("в отчёте навигационные названы отдельно, добора по ним нет",
+          "Навигационные страницы" in report_text and "«Каталог ссылок»" in report_text
+          and "кандидатов на добор" in report_text
+          and "| из них кандидатов на добор (остальные 1 - навигационные) | 1 |" in report_text,
+          "отчёт не назвал навигационные страницы")
 
     # Офлайн без кэша: раздел честно говорит, что списка нет, а не молчит.
     api.AUDIT_CACHE_DIR = tmp / "empty-cache"

@@ -1224,7 +1224,10 @@ def _render_audit_report(category: str, att: dict, rep: dict, docs: dict, stamp:
     add(f"| скиллов с вложениями | {len(zips)} |")
     add(f"| архивов во вложениях | {att.get('attachments_count', 0)} |")
     if docus:
-        add(f"| страниц раздела не закрыто скиллами | {len(missing)} из {docus.get('pages', 0)} |")
+        nav_count = len(docus.get("navigational") or [])
+        add(f"| страниц раздела не закрыто скиллами | {len(missing) + nav_count} из {docus.get('pages', 0)} |")
+        if nav_count:
+            add(f"| из них кандидатов на добор (остальные {nav_count} - навигационные) | {len(missing)} |")
     add("")
 
     add("## 2. Вложения")
@@ -1291,7 +1294,7 @@ def _render_audit_report(category: str, att: dict, rep: dict, docs: dict, stamp:
         add(f"| `{_md_cell(name)}` | {_md_skill_list(out.get(name))} |")
     add("")
 
-    add("## 5. Страницы документации без скиллов (для добора)")
+    add("## 5. Страницы документации против скиллов (что закрыто, а что нет)")
     add("")
     if not docus:
         add(f"Раздел документации для категории `{_md_cell(category)}` не задан: добор считается "
@@ -1310,6 +1313,7 @@ def _render_audit_report(category: str, att: dict, rep: dict, docs: dict, stamp:
             "Сверка идёт по id страницы, поэтому версия страницы (id отличается на 1) "
             "считается тем же материалом.")
         add("")
+        nav = docus.get("navigational") or []
         if missing:
             add("| страница | тип | адрес |")
             add("|---|---|---|")
@@ -1321,8 +1325,19 @@ def _render_audit_report(category: str, att: dict, rep: dict, docs: dict, stamp:
                 # адреса ломают markdown - экранируем их).
                 link = f"[открыть]({url.replace('(', '%28').replace(')', '%29')})" if url else "-"
                 add(f"| {_md_cell(m.get('title'))} | {kind} | {link} |")
+        elif nav:
+            add("Кандидатов на добор нет: все незакрытые страницы раздела - навигационные.")
         else:
             add("Все страницы раздела закрыты скиллами: добора нет.")
+        if nav:
+            # Пустое тело - не «мелкая страница», а каталог: содержание лежит в её детях,
+            # и они уже собраны. Такие страницы в добор не идут (иначе каждый прогон
+            # предлагал бы работу, которой нет), но и молчать о них нельзя - иначе
+            # непонятно, почему незакрытых страниц больше, чем кандидатов.
+            names = "; ".join(f"«{_md_cell(n.get('title'))}»" for n in nav)
+            add("")
+            add(f"Навигационные страницы (тело пустое: только каталог ссылок на уже собранные "
+                f"материалы, скилл по ним не нужен): {names}.")
     add("")
 
     add("## 6. Что предлагаю")
